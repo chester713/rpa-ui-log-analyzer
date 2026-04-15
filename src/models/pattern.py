@@ -63,6 +63,9 @@ class MethodRecommendation:
     method: Optional[str]
     method_category: Optional[str]
     confidence: float
+    context_switch: bool = False
+    context_switch_from: Optional[str] = None
+    context_switch_to: Optional[str] = None
 
     def to_dict(self) -> dict:
         """Convert to dictionary for output."""
@@ -76,4 +79,7 @@ class MethodRecommendation:
             "method": self.method,
             "method_category": self.method_category,
             "confidence": self.confidence,
+            "context_switch": self.context_switch,
+            "context_switch_from": self.context_switch_from,
+            "context_switch_to": self.context_switch_to,
         }

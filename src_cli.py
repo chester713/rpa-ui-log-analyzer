@@ -68,6 +68,10 @@ Examples:
                 print(f"  Pattern: {rec.pattern.name if rec.pattern else 'None'}")
                 print(f"  Method: {rec.method or 'None'}")
                 print(f"  Category: {rec.method_category or 'None'}")
+                if rec.context_switch:
+                    print(
+                        f"  Context Switch: {rec.context_switch_from} -> {rec.context_switch_to}"
+                    )
 
         sys.exit(0)
 

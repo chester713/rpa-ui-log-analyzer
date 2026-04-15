@@ -151,6 +151,10 @@ class DataPipeline:
 
             event_indices = [e.row_index for e in events if e.row_index is not None]
 
+            context_switch = mapping.attribute_breakdown.get("context_switch", False)
+            context_switch_from = mapping.attribute_breakdown.get("previous_app")
+            context_switch_to = mapping.attribute_breakdown.get("current_app")
+
             action, obj = self._parse_activity_name(activity.name)
 
             recommendation = MethodRecommendation(
@@ -163,6 +167,9 @@ class DataPipeline:
                 method=method,
                 method_category=pattern.category if pattern else None,
                 confidence=activity.confidence,
+                context_switch=context_switch,
+                context_switch_from=context_switch_from,
+                context_switch_to=context_switch_to,
             )
             recommendations.append(recommendation)
 
