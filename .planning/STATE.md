@@ -34,6 +34,12 @@ An AI-powered recommendation system that analyzes UI interaction logs (CSV forma
 - Pattern library needs to be populated from user's PDF definitions
 - Event attributes need to be mapped to execution context (web/desktop/visual)
 
+### Approach
+
+- **Agile methodology** — Iterative development with feedback loops
+- **v1**: CLI-based tool with core functionality
+- **v2**: Web portal, replaceable LLM, skill-based patterns
+
 ---
 
 *Last updated: 2026-04-15*

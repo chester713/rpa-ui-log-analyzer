@@ -44,6 +44,20 @@
 - [ ] **REQ-08**: Add confidence scores for activity inference
 - [ ] **REQ-09**: Provide pattern explanation in output
 
+### v2 - Future Enhancements
+
+- [ ] **REQ-10**: Web portal for UI log upload
+  - Browser-based interface for file upload
+  - Display recommendations in web UI
+
+- [ ] **REQ-11**: Replaceable LLM
+  - Configurable LLM provider for activity inference
+  - Support user-provided API keys
+
+- [ ] **REQ-12**: Skill-based pattern system
+  - Patterns stored as skill.md files
+  - Recommendation approach as separate skill.md
+
 ## Out of Scope
 
 - **GUI interface** — CLI-only for v1

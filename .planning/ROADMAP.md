@@ -65,6 +65,12 @@
 | REQ-04 | Match activities to patterns and recommend methods | Phase 2 |
 | REQ-05 | Build CLI interface for running the system | Phase 3 |
 | REQ-06 | Generate structured output with activity-method mapping | Phase 3 |
+| REQ-07 | (v2) Support multiple event log formats | - |
+| REQ-08 | (v2) Add confidence scores for activity inference | - |
+| REQ-09 | (v2) Provide pattern explanation in output | - |
+| REQ-10 | (v2) Web portal for UI log upload | - |
+| REQ-11 | (v2) Replaceable LLM | - |
+| REQ-12 | (v2) Skill-based pattern system | -
 
 ---
 
