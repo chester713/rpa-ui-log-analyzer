@@ -1,0 +1,11 @@
+event,application,webpage,element_id,element_type
+click_textfield,Chrome,https://example.com/login,username,textfield
+paste,Chrome,https://example.com/login,username,textfield
+change_textfield,Chrome,https://example.com/login,username,textfield
+click_button,Chrome,https://example.com/login,submit,button
+change_checkbox,Chrome,https://example.com/settings,notifications,checkbox
+click_link,Chrome,https://example.com/settings,profile,link
+scroll,Chrome,https://example.com/settings,main,container
+type_text,Excel,Sheet1,A2,cell
+change_cell,Excel,Sheet1,A2,cell
+select_option,Chrome,https://example.com/form,country,dropdown
