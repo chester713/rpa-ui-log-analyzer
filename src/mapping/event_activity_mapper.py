@@ -3,7 +3,7 @@
 from typing import List, Dict, Any
 from ..models.event import Event
 from ..models.activity import Activity, EventActivityMapping
-from ..inference.event_grouper import EventGrouper
+from ..inference.event_grouper import EventGrouper, EventGroup
 from ..inference.activity_inferrer import ActivityInferrer
 
 
@@ -34,19 +34,29 @@ class EventActivityMapper:
         if not events:
             return []
 
-        groups = self.grouper.group_events(events)
-        activities = self.inferrer.infer_activities(groups)
+        groups = self.grouper.group_events_with_context_switches(events)
+        activities = self.inferrer.infer_activities([g.events for g in groups])
 
         mappings = []
         for group, activity in zip(groups, activities):
-            attribute_breakdown = self._build_attribute_breakdown(group)
+            attribute_breakdown = self._build_attribute_breakdown(group.events)
 
             mapping = EventActivityMapping(
                 activity=activity,
-                events=group,
+                events=group.events,
                 confidence=activity.confidence,
                 attribute_breakdown=attribute_breakdown,
             )
+
+            if hasattr(group, "is_context_switch") and group.is_context_switch:
+                mapping.attribute_breakdown["context_switch"] = True
+                mapping.attribute_breakdown["previous_app"] = getattr(
+                    group, "previous_app", None
+                )
+                mapping.attribute_breakdown["current_app"] = getattr(
+                    group, "current_app", None
+                )
+
             mappings.append(mapping)
 
         return mappings
