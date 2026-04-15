@@ -3,11 +3,11 @@
   "granularity": "coarse",
   "parallelization": false,
   "commit_docs": true,
-  "model_profile": "balanced",
+  "model_profile": "quality",
   "workflow": {
-    "research": false,
-    "plan_check": false,
-    "verifier": false,
+    "research": true,
+    "plan_check": true,
+    "verifier": true,
     "nyquist_validation": false,
     "auto_advance": false
   },
