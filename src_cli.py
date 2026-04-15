@@ -59,6 +59,16 @@ Examples:
                     f"  Attribute Breakdown: {mapping.attribute_breakdown.get('shared_attributes', [])}"
                 )
 
+            print("\n=== Method Recommendations ===")
+            for i, rec in enumerate(result.recommendations, 1):
+                print(f"\n--- Recommendation {i} ---")
+                print(f"  Activity: {rec.activity_name}")
+                print(f"  Events: {rec.events}")
+                print(f"  Environment: {rec.execution_environment}")
+                print(f"  Pattern: {rec.pattern.name if rec.pattern else 'None'}")
+                print(f"  Method: {rec.method or 'None'}")
+                print(f"  Category: {rec.method_category or 'None'}")
+
         sys.exit(0)
 
     except ValueError as e:
