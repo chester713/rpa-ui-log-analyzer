@@ -64,7 +64,7 @@
                     <thead>
                         <tr>
                             {% for col in columns %}
-                            <th class="{% if col == detected_column %}recommended{% endif %}" data-column="{{ col }}">{{ col }}</th>
+                            <th class="{% if col == detected_column %}recommended{% endif %}" data-column="{{ col }}" onclick="selectColumn('{{ col }}')">{{ col }}</th>
                             {% endfor %}
                         </tr>
                     </thead>
@@ -86,7 +86,7 @@
         </div>
         
         <div class="button-bar">
-            <button class="btn" id="analyzeBtn" disabled>Analyze</button>
+            <button class="btn" id="analyzeBtn">Analyze</button>
             <a href="/" class="btn btn-secondary">Cancel</a>
         </div>
         
@@ -97,43 +97,27 @@
     </div>
     
     <script>
-        const analyzeBtn = document.getElementById('analyzeBtn');
-        const loading = document.getElementById('loading');
-        const selectedInfo = document.getElementById('selectedInfo');
-        const selectedColumnSpan = document.getElementById('selectedColumn');
         let selectedColumn = {{ detected_column | tojson }};
         
-        console.log('Initial selectedColumn:', selectedColumn);
-        
-        // Initialize
-        updateSelection();
-        
-        document.querySelectorAll('th').forEach(th => {
-            th.addEventListener('click', (e) => {
-                console.log('Clicked column:', th.dataset.column);
-                document.querySelectorAll('th').forEach(el => el.classList.remove('selected'));
-                th.classList.add('selected');
-                selectedColumn = th.dataset.column;
-                console.log('New selectedColumn:', selectedColumn);
-                updateSelection();
-            });
-        });
-        
-        function updateSelection() {
-            console.log('updateSelection called, selectedColumn:', selectedColumn);
+        function selectColumn(col) {
+            console.log('Selected column:', col);
+            selectedColumn = col;
+            
             document.querySelectorAll('th').forEach(th => {
-                th.classList.toggle('selected', th.dataset.column === selectedColumn);
+                th.classList.remove('selected');
+                if (th.dataset.column === col) {
+                    th.classList.add('selected');
+                }
             });
-            selectedColumnSpan.textContent = selectedColumn;
-            selectedInfo.classList.add('show');
-            analyzeBtn.disabled = false;
-            console.log('Button enabled:', !analyzeBtn.disabled);
+            
+            document.getElementById('selectedColumn').textContent = col;
+            document.getElementById('selectedInfo').classList.add('show');
         }
         
-        analyzeBtn.addEventListener('click', async () => {
+        document.getElementById('analyzeBtn').addEventListener('click', async () => {
             console.log('Analyze clicked, using column:', selectedColumn);
-            loading.style.display = 'block';
-            analyzeBtn.disabled = true;
+            
+            document.getElementById('loading').style.display = 'block';
             
             try {
                 const response = await fetch('/analyze', {
@@ -152,10 +136,12 @@
                 
             } catch (err) {
                 alert(err.message);
-                loading.style.display = 'none';
-                analyzeBtn.disabled = false;
+                document.getElementById('loading').style.display = 'none';
             }
         });
+        
+        // Initialize with detected column
+        selectColumn(selectedColumn);
     </script>
 </body>
 </html>
