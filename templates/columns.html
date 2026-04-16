@@ -7,21 +7,20 @@
     <style>
         * { box-sizing: border-box; margin: 0; padding: 0; }
         body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif; background: #f5f5f5; min-height: 100vh; }
-        .container { max-width: 800px; margin: 0 auto; padding: 40px 20px; }
+        .container { max-width: 1000px; margin: 0 auto; padding: 40px 20px; }
         h1 { color: #333; margin-bottom: 10px; }
         .subtitle { color: #666; margin-bottom: 30px; }
         .card { background: white; border-radius: 12px; padding: 30px; box-shadow: 0 2px 8px rgba(0,0,0,0.08); margin-bottom: 20px; }
         .nav { display: flex; gap: 20px; margin-bottom: 30px; }
         .nav a { color: #007bff; text-decoration: none; }
         .nav a:hover { text-decoration: underline; }
-        .column-list { list-style: none; }
-        .column-item { padding: 12px 16px; border: 2px solid #eee; border-radius: 8px; margin-bottom: 10px; cursor: pointer; transition: all 0.2s; }
+        .column-list { list-style: none; display: flex; flex-wrap: wrap; gap: 10px; margin-bottom: 20px; }
+        .column-item { padding: 12px 16px; border: 2px solid #eee; border-radius: 8px; cursor: pointer; transition: all 0.2s; }
         .column-item:hover { border-color: #007bff; }
         .column-item.selected { border-color: #007bff; background: #e7f0ff; }
         .column-item.recommended { border-color: #28a745; background: #e8f5e9; }
         .column-item.recommended::after { content: " (LLM Recommended)"; color: #28a745; font-size: 12px; }
         .column-name { font-weight: 600; color: #333; }
-        .column-desc { font-size: 13px; color: #666; margin-top: 4px; }
         .btn { background: #007bff; color: white; border: none; padding: 12px 24px; border-radius: 6px; cursor: pointer; font-size: 16px; margin-right: 10px; }
         .btn:hover { background: #0056b3; }
         .btn:disabled { background: #ccc; cursor: not-allowed; }
@@ -32,6 +31,12 @@
         @keyframes spin { 0% { transform: rotate(0deg); } 100% { transform: rotate(360deg); } }
         .info { background: #e7f0ff; border-radius: 8px; padding: 16px; margin-bottom: 20px; }
         .info p { color: #333; font-size: 14px; }
+        .preview-table { overflow-x: auto; margin-top: 20px; border: 1px solid #ddd; border-radius: 8px; }
+        table { width: 100%; border-collapse: collapse; font-size: 13px; }
+        th, td { padding: 8px 12px; text-align: left; border-bottom: 1px solid #eee; white-space: nowrap; }
+        th { background: #f8f9fa; font-weight: 600; color: #333; }
+        tr:hover { background: #f8f9fa; }
+        .filename { font-weight: 600; color: #333; margin-bottom: 10px; }
     </style>
 </head>
 <body>
@@ -50,9 +55,38 @@
         </div>
         
         <div class="card">
+            <p class="filename">File: {{ filename }}</p>
+            
+            <p style="margin-bottom: 10px;"><strong>Select a column:</strong></p>
             <ul class="column-list" id="columnList">
-                <!-- Columns will be populated here -->
+                {% for col in columns %}
+                <li class="column-item{% if col == detected_column %} recommended selected{% endif %}" data-column="{{ col }}">
+                    <span class="column-name">{{ col }}</span>
+                </li>
+                {% endfor %}
             </ul>
+            
+            <p style="margin-top: 20px; margin-bottom: 10px;"><strong>Preview (first 10 rows):</strong></p>
+            <div class="preview-table">
+                <table>
+                    <thead>
+                        <tr>
+                            {% for col in columns %}
+                            <th>{{ col }}</th>
+                            {% endfor %}
+                        </tr>
+                    </thead>
+                    <tbody>
+                        {% for row in rows %}
+                        <tr>
+                            {% for col in columns %}
+                            <td>{{ row[col] }}</td>
+                            {% endfor %}
+                        </tr>
+                        {% endfor %}
+                    </tbody>
+                </table>
+            </div>
         </div>
         
         <div>
@@ -70,34 +104,16 @@
         const columnList = document.getElementById('columnList');
         const analyzeBtn = document.getElementById('analyzeBtn');
         const loading = document.getElementById('loading');
-        let selectedColumn = null;
-        let detectedColumn = null;
+        let selectedColumn = {{ detected_column | tojson }};
         
-        // Populate columns from server data
-        const columns = {{ columns | tojson }};
-        detectedColumn = {{ detected_column | tojson }};
-        
-        columns.forEach(col => {
-            const li = document.createElement('li');
-            li.className = 'column-item' + (col === detectedColumn ? ' recommended selected' : '');
-            li.dataset.column = col;
-            li.innerHTML = `
-                <div class="column-name">${col}</div>
-                <div class="column-desc">Click to select this column</div>
-            `;
+        document.querySelectorAll('.column-item').forEach(li => {
             li.addEventListener('click', () => {
                 document.querySelectorAll('.column-item').forEach(el => el.classList.remove('selected'));
                 li.classList.add('selected');
-                selectedColumn = col;
+                selectedColumn = li.dataset.column;
                 analyzeBtn.disabled = false;
             });
-            columnList.appendChild(li);
         });
-        
-        if (detectedColumn) {
-            selectedColumn = detectedColumn;
-            analyzeBtn.disabled = false;
-        }
         
         analyzeBtn.addEventListener('click', async () => {
             loading.style.display = 'block';

@@ -98,6 +98,10 @@ def select_column():
             with open(filepath, "r", encoding="utf-8") as f:
                 reader = csv.DictReader(f)
                 columns = reader.fieldnames
+                rows = []
+                for i, row in enumerate(reader):
+                    if i < 10:  # Preview first 10 rows
+                        rows.append(row)
 
             from src.llm.client import get_llm_client
             from src.parser.csv_loader import CSVLoader
@@ -110,7 +114,11 @@ def select_column():
             session["filename"] = filename
 
             return render_template(
-                "columns.html", columns=columns, detected_column=detected
+                "columns.html",
+                columns=columns,
+                detected_column=detected,
+                rows=rows,
+                filename=filename,
             )
 
         except Exception as e:
