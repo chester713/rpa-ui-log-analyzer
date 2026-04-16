@@ -103,31 +103,35 @@
         const selectedColumnSpan = document.getElementById('selectedColumn');
         let selectedColumn = {{ detected_column | tojson }};
         
+        console.log('Initial selectedColumn:', selectedColumn);
+        
         // Initialize
         updateSelection();
         
         document.querySelectorAll('th').forEach(th => {
-            th.addEventListener('click', () => {
+            th.addEventListener('click', (e) => {
+                console.log('Clicked column:', th.dataset.column);
                 document.querySelectorAll('th').forEach(el => el.classList.remove('selected'));
                 th.classList.add('selected');
                 selectedColumn = th.dataset.column;
+                console.log('New selectedColumn:', selectedColumn);
                 updateSelection();
-                analyzeBtn.disabled = false;
             });
         });
         
         function updateSelection() {
-            if (selectedColumn) {
-                document.querySelectorAll('th').forEach(th => {
-                    th.classList.toggle('selected', th.dataset.column === selectedColumn);
-                });
-                selectedColumnSpan.textContent = selectedColumn;
-                selectedInfo.classList.add('show');
-                analyzeBtn.disabled = false;
-            }
+            console.log('updateSelection called, selectedColumn:', selectedColumn);
+            document.querySelectorAll('th').forEach(th => {
+                th.classList.toggle('selected', th.dataset.column === selectedColumn);
+            });
+            selectedColumnSpan.textContent = selectedColumn;
+            selectedInfo.classList.add('show');
+            analyzeBtn.disabled = false;
+            console.log('Button enabled:', !analyzeBtn.disabled);
         }
         
         analyzeBtn.addEventListener('click', async () => {
+            console.log('Analyze clicked, using column:', selectedColumn);
             loading.style.display = 'block';
             analyzeBtn.disabled = true;
             
