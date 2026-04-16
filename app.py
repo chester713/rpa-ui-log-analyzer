@@ -100,7 +100,7 @@ def select_column():
                 columns = reader.fieldnames
                 rows = []
                 for i, row in enumerate(reader):
-                    if i < 10:  # Preview first 10 rows
+                    if i < 100:  # Preview first 100 rows
                         rows.append(row)
 
             from src.llm.client import get_llm_client
