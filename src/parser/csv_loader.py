@@ -6,29 +6,23 @@ from ..models.event import Event
 
 
 class CSVLoader:
-    """Loads CSV files and auto-detects event column."""
+    """Loads CSV files and uses LLM to detect event column."""
 
-    EVENT_COLUMN_CANDIDATES = [
-        "event",
-        "activity",
-        "action",
-        "events",
-        "description",
-        "name",
-        "text",
-    ]
+    def __init__(self, llm_client=None):
+        """
+        Initialize CSVLoader.
 
-    def _detect_event_column(self, fieldnames: List[str]) -> Optional[str]:
-        """Detect which column contains event data."""
-        for candidate in self.EVENT_COLUMN_CANDIDATES:
-            for field in fieldnames:
-                if field.lower() == candidate.lower():
-                    return field
-        return None
+        Args:
+            llm_client: Optional LLM client for event column detection
+        """
+        self.llm_client = llm_client
 
     def load(self, filepath: str) -> List[Event]:
         """
         Load CSV file and return list of Event objects.
+
+        Uses LLM to detect which column contains event data.
+        Events should be in verb + noun format (e.g., "ClickButton", "OpenBrowser").
 
         Args:
             filepath: Path to CSV file
@@ -37,20 +31,20 @@ class CSVLoader:
             List of Event objects
 
         Raises:
-            ValueError: If no event column can be detected
+            ValueError: If event column cannot be detected
             FileNotFoundError: If file doesn't exist
         """
         events = []
 
         with open(filepath, "r", encoding="utf-8") as f:
             reader = csv.DictReader(f)
+            fieldnames = reader.fieldnames
 
-            event_column = self._detect_event_column(reader.fieldnames)
+            event_column = self._detect_event_column_with_llm(fieldnames)
 
             if event_column is None:
                 raise ValueError(
-                    f"Could not detect event column. Found columns: {reader.fieldnames}. "
-                    f"Expected one of: {', '.join(self.EVENT_COLUMN_CANDIDATES)}"
+                    f"Could not detect event column. Found columns: {fieldnames}"
                 )
 
             for row_index, row in enumerate(reader):
@@ -66,6 +60,57 @@ class CSVLoader:
                 )
 
         return events
+
+    def _detect_event_column_with_llm(self, fieldnames: List[str]) -> Optional[str]:
+        """
+        Use LLM to detect which column contains event data.
+
+        Args:
+            fieldnames: List of column names from CSV
+
+        Returns:
+            Name of event column, or None if detection fails
+        """
+        if self.llm_client is None:
+            return self._detect_event_column_fallback(fieldnames)
+
+        columns_str = ", ".join(fieldnames)
+        prompt = f"""Given these column names from a UI interaction log CSV file:
+{columns_str}
+
+Which column contains the event/activity data? Events are actions in verb+noun format like "ClickButton", "OpenBrowser", "FillForm", "SelectOption".
+
+Respond with only the column name, nothing else."""
+
+        try:
+            response = self.llm_client.complete(prompt)
+            detected = response.strip()
+
+            for field in fieldnames:
+                if field.lower() == detected.lower():
+                    return field
+
+        except Exception:
+            pass
+
+        return self._detect_event_column_fallback(fieldnames)
+
+    def _detect_event_column_fallback(self, fieldnames: List[str]) -> Optional[str]:
+        """Fallback detection using common column names."""
+        candidates = [
+            "event",
+            "activity",
+            "action",
+            "events",
+            "description",
+            "name",
+            "text",
+        ]
+        for candidate in candidates:
+            for field in fieldnames:
+                if field.lower() == candidate.lower():
+                    return field
+        return None
 
 
 def load_csv(filepath: str) -> List[Event]:

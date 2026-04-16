@@ -59,8 +59,10 @@ def analyze_csv(filepath):
     from src.inference.activity_inferrer import ActivityInferrer
     from src.mapping.event_activity_mapper import EventActivityMapper
     from src.pipeline.data_pipeline import DataPipeline
+    from src.llm.client import get_llm_client
 
-    pipeline = DataPipeline(filepath)
+    llm_client = get_llm_client()
+    pipeline = DataPipeline(filepath, llm_client=llm_client)
     result = pipeline.run()
     return result
 

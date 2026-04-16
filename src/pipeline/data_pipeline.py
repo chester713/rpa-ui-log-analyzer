@@ -92,7 +92,7 @@ class DataPipeline:
         self.csv_path = csv_path
         self.llm_client = llm_client
 
-        self.loader = CSVLoader()
+        self.loader = CSVLoader(llm_client)
         self.grouper = EventGrouper(group_attributes)
         self.inferrer = ActivityInferrer(llm_client)
         self.mapper = EventActivityMapper(self.grouper, self.inferrer)
