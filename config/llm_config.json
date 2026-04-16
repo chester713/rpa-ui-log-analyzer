@@ -1,0 +1,6 @@
+{
+  "provider": "puter",
+  "endpoint": "",
+  "api_key": "",
+  "model": "gpt-4o-mini"
+}

@@ -1,0 +1,58 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Analysis Results - RPA UI Log Analyzer</title>
+    <style>
+        * { box-sizing: border-box; margin: 0; padding: 0; }
+        body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif; background: #f5f5f5; min-height: 100vh; }
+        .container { max-width: 900px; margin: 0 auto; padding: 40px 20px; }
+        h1 { color: #333; margin-bottom: 20px; }
+        .nav { display: flex; gap: 20px; margin-bottom: 30px; }
+        .nav a { color: #007bff; text-decoration: none; }
+        .nav a:hover { text-decoration: underline; }
+        .card { background: white; border-radius: 12px; padding: 24px; box-shadow: 0 2px 8px rgba(0,0,0,0.08); margin-bottom: 20px; }
+        .meta { color: #666; font-size: 14px; margin-bottom: 20px; }
+        .recommendation { border-left: 4px solid #007bff; padding: 16px; margin-bottom: 16px; background: #f8f9ff; border-radius: 0 8px 8px 0; }
+        .recommendation h3 { color: #333; margin-bottom: 8px; }
+        .recommendation .activity { font-size: 18px; font-weight: 600; color: #333; }
+        .recommendation .method { color: #28a745; font-weight: 500; }
+        .recommendation .context { color: #666; font-size: 14px; margin-top: 8px; }
+        .recommendation .events { color: #999; font-size: 13px; margin-top: 8px; }
+        .recommendation .context-switch { color: #dc3545; font-size: 14px; margin-top: 8px; font-weight: 500; }
+        .empty { text-align: center; color: #666; padding: 40px; }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <nav class="nav">
+            <a href="/">Upload</a>
+            <a href="/history">History</a>
+            <a href="/settings">Settings</a>
+        </nav>
+        
+        <h1>Analysis Results</h1>
+        
+        <div class="card">
+            <p class="meta">File: {{ entry.filename }} | Date: {{ entry.timestamp }}</p>
+        </div>
+        
+        {% if entry.recommendations %}
+            {% for rec in entry.recommendations %}
+            <div class="card recommendation">
+                <div class="activity">Activity {{ loop.index }}: {{ rec.inferred_activity }}</div>
+                <div class="method">Method: {{ rec.method or 'N/A' }} ({{ rec.method_category or 'N/A' }})</div>
+                <div class="context">Environment: {{ rec.execution_environment }}</div>
+                <div class="events">Events: {{ rec.events }}</div>
+                {% if rec.context_switch %}
+                <div class="context-switch">Context Switch: {{ rec.context_switch_from }} → {{ rec.context_switch_to }}</div>
+                {% endif %}
+            </div>
+            {% endfor %}
+        {% else %}
+            <div class="empty">No recommendations available</div>
+        {% endif %}
+    </div>
+</body>
+</html>

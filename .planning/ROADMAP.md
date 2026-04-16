@@ -2,7 +2,7 @@
 
 ## Project: RPA UI Log Analyzer
 
-**Phases:** 3 | **Requirements:** 6 | **All v1 requirements covered** ✓
+**Phases:** 4 | **Requirements:** 6 + v2 | **v1 complete** ✓
 
 ---
 
@@ -11,6 +11,20 @@
 | 1 | Core Data Pipeline | Build event log parsing and activity inference engine | REQ-01, REQ-02 | 3 criteria |
 | 2 | Pattern System | Implement pattern library and matching logic | REQ-03, REQ-04 | 3 criteria |
 | 3 | CLI & Integration | Build CLI interface and output generation | REQ-05, REQ-06 | 3 criteria |
+| 4 | Web Portal | Browser-based UI for file upload and recommendations | REQ-10, REQ-11 | 3 criteria |
+
+---
+
+### Phase 4: Web Portal
+
+**Goal:** Browser-based UI for file upload and recommendations display
+
+**Requirements:** REQ-10 (Web portal), REQ-11 (Replaceable LLM), REQ-12 (Skill-based patterns)
+
+**Success Criteria:**
+1. User can upload CSV files through web interface
+2. Recommendations displayed in web UI with activity-method mapping
+3. LLM configuration available in settings panel
 
 ---
 

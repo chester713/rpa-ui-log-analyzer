@@ -1,0 +1,88 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Settings - RPA UI Log Analyzer</title>
+    <style>
+        * { box-sizing: border-box; margin: 0; padding: 0; }
+        body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif; background: #f5f5f5; min-height: 100vh; }
+        .container { max-width: 600px; margin: 0 auto; padding: 40px 20px; }
+        h1 { color: #333; margin-bottom: 20px; }
+        .nav { display: flex; gap: 20px; margin-bottom: 30px; }
+        .nav a { color: #007bff; text-decoration: none; }
+        .nav a:hover { text-decoration: underline; }
+        .card { background: white; border-radius: 12px; padding: 24px; box-shadow: 0 2px 8px rgba(0,0,0,0.08); }
+        .form-group { margin-bottom: 20px; }
+        .form-group label { display: block; color: #333; font-weight: 500; margin-bottom: 8px; }
+        .form-group input, .form-group select { width: 100%; padding: 12px; border: 1px solid #ddd; border-radius: 6px; font-size: 14px; }
+        .form-group input:focus, .form-group select:focus { outline: none; border-color: #007bff; }
+        .form-group .help { color: #999; font-size: 13px; margin-top: 4px; }
+        .btn { background: #007bff; color: white; border: none; padding: 12px 24px; border-radius: 6px; cursor: pointer; font-size: 16px; }
+        .btn:hover { background: #0056b3; }
+        .section-title { font-size: 18px; font-weight: 600; color: #333; margin-bottom: 16px; padding-bottom: 8px; border-bottom: 1px solid #eee; }
+        .hidden { display: none; }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <nav class="nav">
+            <a href="/">Upload</a>
+            <a href="/history">History</a>
+            <a href="/settings">Settings</a>
+        </nav>
+        
+        <h1>Settings</h1>
+        
+        <div class="card">
+            <div class="section-title">LLM Configuration</div>
+            
+            <form method="POST">
+                <div class="form-group">
+                    <label>Provider</label>
+                    <select name="provider" id="providerSelect" onchange="toggleApiFields()">
+                        <option value="puter" {% if config.provider == 'puter' %}selected{% endif %}>
+                            Puter.js (Free, no API key needed)
+                        </option>
+                        <option value="custom" {% if config.provider == 'custom' %}selected{% endif %}>
+                            Custom API Key
+                        </option>
+                    </select>
+                    <p class="help">Select Puter.js for free access, or enter your own API key</p>
+                </div>
+                
+                <div class="form-group {% if config.provider != 'custom' %}hidden{% endif %}" id="apiKeyGroup">
+                    <label>API Key</label>
+                    <input type="password" name="api_key" value="{{ config.api_key }}" placeholder="Enter your API key">
+                    <p class="help">Supports OpenAI, Anthropic, MiniMax, OpenRouter, Gemini, and other OpenAI-compatible APIs</p>
+                </div>
+                
+                <div class="form-group {% if config.provider != 'custom' %}hidden{% endif %}" id="endpointGroup">
+                    <label>API Endpoint (Optional)</label>
+                    <input type="text" name="endpoint" value="{{ config.endpoint }}" placeholder="https://api.openai.com/v1">
+                    <p class="help">Leave empty for default OpenAI endpoint</p>
+                </div>
+                
+                <div class="form-group {% if config.provider != 'custom' %}hidden{% endif %}" id="modelGroup">
+                    <label>Model</label>
+                    <input type="text" name="model" value="{{ config.model }}" placeholder="gpt-4o-mini">
+                    <p class="help">Model name (e.g., gpt-4o-mini, claude-3-haiku, glm-4-flash)</p>
+                </div>
+                
+                <button type="submit" class="btn">Save Settings</button>
+            </form>
+        </div>
+    </div>
+    
+    <script>
+        function toggleApiFields() {
+            const provider = document.getElementById('providerSelect').value;
+            const groups = ['apiKeyGroup', 'endpointGroup', 'modelGroup'];
+            
+            groups.forEach(id => {
+                document.getElementById(id).classList.toggle('hidden', provider !== 'custom');
+            });
+        }
+    </script>
+</body>
+</html>
