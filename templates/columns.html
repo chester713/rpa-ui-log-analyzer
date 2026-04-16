@@ -25,18 +25,16 @@
         .info { background: #e7f0ff; border-radius: 8px; padding: 16px; margin-bottom: 20px; }
         .info p { color: #333; font-size: 14px; }
         .preview-table { overflow-y: auto; margin-top: 20px; border: 1px solid #ddd; border-radius: 8px; max-height: 400px; }
-        table { width: 100%; border-collapse: collapse; font-size: 13px; position: sticky; top: 0; }
+        table { width: 100%; border-collapse: collapse; font-size: 13px; }
         th, td { padding: 8px 12px; text-align: left; border-bottom: 1px solid #eee; white-space: nowrap; }
-        th { background: #f8f9fa; font-weight: 600; color: #333; cursor: pointer; transition: all 0.2s; position: sticky; top: 0; z-index: 1; }
+        th { background: #f8f9fa; font-weight: 600; color: #333; cursor: pointer; position: sticky; top: 0; z-index: 1; }
         th:hover { background: #e7f0ff; }
-        th.selected { background: #e7f0ff !important; border: 2px solid #007bff !important; }
-        th.recommended { background: #e8f5e9; border: 2px solid #28a745; }
+        th.selected { background: #007bff !important; color: white !important; }
+        th.recommended { background: #e8f5e9; }
         th.recommended::after { content: " (LLM)"; color: #28a745; font-size: 11px; font-weight: normal; }
-        th.recommended.selected { background: #e7f0ff !important; border: 2px solid #007bff !important; }
         tr:hover { background: #f8f9fa; }
         .filename { font-weight: 600; color: #333; margin-bottom: 10px; }
-        .selected-info { margin-top: 15px; padding: 12px; background: #e7f0ff; border-radius: 6px; display: none; }
-        .selected-info.show { display: block; }
+        .selected-info { margin-top: 15px; padding: 12px; background: #e7f0ff; border-radius: 6px; }
         .button-bar { position: sticky; bottom: 0; background: white; padding: 20px 0; margin-top: 20px; border-top: 1px solid #eee; }
     </style>
 </head>
@@ -52,7 +50,7 @@
         <p class="subtitle">Click on a column header to select it as the event column</p>
         
         <div class="info">
-            <p>Click on a column header to select it as the event column. Events should be in verb + noun format (e.g., <strong>ClickButton</strong>, <strong>FillForm</strong>).</p>
+            <p>Click on a column header to select it. Events are in verb+noun format.</p>
         </div>
         
         <div class="card">
@@ -60,11 +58,11 @@
             <p style="color: #666; font-size: 13px;">Click a column header to select it</p>
             
             <div class="preview-table">
-                <table>
+                <table id="dataTable">
                     <thead>
                         <tr>
                             {% for col in columns %}
-                            <th class="{% if col == detected_column %}recommended{% endif %}" data-column="{{ col }}" style="cursor:pointer" id="th_{{ loop.index0 }}">{{ col }}</th>
+                            <th id="col_{{ loop.index0 }}" onclick="doSelect({{ loop.index0 }})">{{ col }}</th>
                             {% endfor %}
                         </tr>
                     </thead>
@@ -80,13 +78,13 @@
                 </table>
             </div>
             
-            <div class="selected-info" id="selectedInfo">
-                <strong>Selected column:</strong> <span id="selectedColumn"></span>
+            <div class="selected-info">
+                <strong>Selected column:</strong> <span id="selectedColumn">{{ detected_column }}</span>
             </div>
         </div>
         
         <div class="button-bar">
-            <button class="btn" id="analyzeBtn">Analyze</button>
+            <button class="btn" id="analyzeBtn" onclick="doAnalyze()">Analyze</button>
             <a href="/" class="btn btn-secondary">Cancel</a>
         </div>
         
@@ -96,62 +94,64 @@
         </div>
     </div>
     
-    <script>
-        let selectedColumn = {{ detected_column | tojson }};
+    <script type="text/javascript">
+        var selectedIndex = -1;
+        var selectedColName = "{{ detected_column }}";
         
-        function selectColumn(col) {
-            console.log('Selected column:', col);
-            selectedColumn = col;
-            
-            document.querySelectorAll('th').forEach(th => {
-                th.classList.remove('selected');
-                if (th.dataset.column === col) {
-                    th.classList.add('selected');
-                }
-            });
-            
-            document.getElementById('selectedColumn').textContent = col;
-            document.getElementById('selectedInfo').classList.add('show');
+        // Map column names to indices
+        var columnNames = {{ columns | tojson }};
+        for (var i = 0; i < columnNames.length; i++) {
+            if (columnNames[i].toLowerCase() === "{{ detected_column }}".toLowerCase()) {
+                selectedIndex = i;
+                break;
+            }
         }
         
-        // Add click handlers after page loads
-        document.addEventListener('DOMContentLoaded', function() {
-            document.querySelectorAll('th').forEach(function(th) {
-                th.addEventListener('click', function() {
-                    var col = this.getAttribute('data-column');
-                    selectColumn(col);
-                });
-            });
-        });
+        function doSelect(idx) {
+            selectedIndex = idx;
+            selectedColName = columnNames[idx];
+            
+            var headers = document.getElementById('dataTable').tHead.rows[0].cells;
+            for (var i = 0; i < headers.length; i++) {
+                headers[i].classList.remove('selected');
+                if (i === idx) {
+                    headers[i].classList.add('selected');
+                }
+            }
+            
+            document.getElementById('selectedColumn').innerHTML = selectedColName;
+        }
         
-        document.getElementById('analyzeBtn').addEventListener('click', async function() {
-            console.log('Analyze clicked, using column:', selectedColumn);
+        function doAnalyze() {
+            if (selectedColName === "") {
+                alert("Please select a column first");
+                return;
+            }
             
             document.getElementById('loading').style.display = 'block';
             
-            try {
-                const response = await fetch('/analyze', {
-                    method: 'POST',
-                    headers: { 'Content-Type': 'application/json' },
-                    body: JSON.stringify({ event_column: selectedColumn })
-                });
-                
-                const data = await response.json();
-                
-                if (!response.ok) {
-                    throw new Error(data.error || 'Analysis failed');
+            var xhr = new XMLHttpRequest();
+            xhr.open('POST', '/analyze', true);
+            xhr.setRequestHeader('Content-Type', 'application/json');
+            xhr.onreadystatechange = function() {
+                if (xhr.readyState === 4) {
+                    document.getElementById('loading').style.display = 'none';
+                    if (xhr.status === 200) {
+                        var data = JSON.parse(xhr.responseText);
+                        window.location.href = '/results/' + data.history_id;
+                    } else {
+                        var data = JSON.parse(xhr.responseText);
+                        alert(data.error || 'Analysis failed');
+                    }
                 }
-                
-                window.location.href = '/results/' + data.history_id;
-                
-            } catch (err) {
-                alert(err.message);
-                document.getElementById('loading').style.display = 'none';
-            }
-        });
+            };
+            xhr.send(JSON.stringify({ event_column: selectedColName }));
+        }
         
-        // Initialize with detected column
-        selectColumn(selectedColumn);
+        // Initialize selection
+        if (selectedIndex >= 0) {
+            doSelect(selectedIndex);
+        }
     </script>
 </body>
 </html>
