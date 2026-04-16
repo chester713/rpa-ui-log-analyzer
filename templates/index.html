@@ -49,7 +49,7 @@
             
             <div class="loading" id="loading">
                 <div class="spinner"></div>
-                <p style="margin-top: 15px;">Analyzing log...</p>
+                <p style="margin-top: 15px;">Detecting event column...</p>
             </div>
             
             <div class="error" id="error"></div>
@@ -104,23 +104,22 @@
             formData.append('file', selectedFile);
             
             try {
-                const response = await fetch('/analyze', {
+                const response = await fetch('/select-column', {
                     method: 'POST',
                     body: formData
                 });
                 
-                const data = await response.json();
-                
                 if (!response.ok) {
-                    throw new Error(data.error || 'Analysis failed');
+                    const data = await response.json();
+                    throw new Error(data.error || 'Upload failed');
                 }
                 
-                window.location.href = `/results/${data.history_id}`;
+                const html = await response.text();
+                document.documentElement.innerHTML = html;
                 
             } catch (err) {
                 error.textContent = err.message;
                 error.style.display = 'block';
-            } finally {
                 loading.style.display = 'none';
                 analyzeBtn.disabled = false;
             }

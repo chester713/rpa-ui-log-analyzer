@@ -16,6 +16,7 @@ class CSVLoader:
             llm_client: Optional LLM client for event column detection
         """
         self.llm_client = llm_client
+        self._force_column = None
 
     def load(self, filepath: str) -> List[Event]:
         """
@@ -40,7 +41,10 @@ class CSVLoader:
             reader = csv.DictReader(f)
             fieldnames = reader.fieldnames
 
-            event_column = self._detect_event_column_with_llm(fieldnames)
+            if self._force_column:
+                event_column = self._force_column
+            else:
+                event_column = self._detect_event_column_with_llm(fieldnames)
 
             if event_column is None:
                 raise ValueError(
