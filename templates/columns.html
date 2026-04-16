@@ -23,18 +23,16 @@
         @keyframes spin { 0% { transform: rotate(0deg); } 100% { transform: rotate(360deg); } }
         .info { background: #e7f0ff; border-radius: 8px; padding: 16px; margin-bottom: 20px; }
         .info p { color: #333; font-size: 14px; }
-        .preview-table { overflow-y: auto; margin-top: 20px; border: 1px solid #ddd; border-radius: 8px; max-height: 400px; }
+        .preview-table { overflow-y: auto; margin-top: 20px; border: 1px solid #ddd; border-radius: 8px; max-height: 400px; position: relative; }
         table { width: 100%; border-collapse: collapse; font-size: 13px; }
         th, td { padding: 8px 12px; text-align: left; border-bottom: 1px solid #eee; white-space: nowrap; }
-        th { background: #f8f9fa; font-weight: 600; color: #333; position: sticky; top: 0; z-index: 1; }
+        th { background: #f8f9fa; font-weight: 600; color: #333; cursor: pointer; position: sticky; top: 0; z-index: 1; }
+        th:hover { background: #e7f0ff; }
+        th.sel { background: #007bff !important; color: white !important; }
+        th.rec { background: #e8f5e9; }
+        th.rec::after { content: " (LLM)"; color: #28a745; font-size: 11px; }
         tr:hover { background: #f8f9fa; }
         .filename { font-weight: 600; color: #333; margin-bottom: 10px; }
-        .column-options { display: flex; flex-wrap: wrap; gap: 10px; margin-bottom: 20px; }
-        .column-radio { display: none; }
-        .column-label { padding: 10px 16px; border: 2px solid #ddd; border-radius: 6px; cursor: pointer; transition: all 0.2s; }
-        .column-label:hover { border-color: #007bff; }
-        .column-radio:checked + .column-label { border-color: #007bff; background: #e7f0ff; }
-        .column-radio:checked + .column-label.selected { border-color: #007bff; background: #007bff; color: white; }
         .selected-info { margin-top: 15px; padding: 12px; background: #e7f0ff; border-radius: 6px; }
         .button-bar { position: sticky; bottom: 0; background: white; padding: 20px 0; margin-top: 20px; border-top: 1px solid #eee; }
     </style>
@@ -48,54 +46,34 @@
         </nav>
         
         <h1>Select Event Column</h1>
-        <p class="subtitle">Select the column containing event data</p>
+        <p class="subtitle">Click on a column header to select it</p>
         
         <div class="info">
-            <p>Select the column that contains event/activity data (e.g., activateWorkbook, getCell, clickTextField)</p>
+            <p>Click on a column header to select it. Events should be in verb+noun format.</p>
         </div>
         
         <div class="card">
             <p class="filename">File: {{ filename }}</p>
+            <p style="color: #666; font-size: 13px;">Click a column header</p>
             
-            <form id="columnForm">
-                <p style="margin-bottom: 10px;"><strong>Select column:</strong></p>
-                <div class="column-options">
-                    {% for col in columns %}
-                    <input type="radio" name="event_column" id="col_{{ loop.index0 }}" value="{{ col }}" class="column-radio">
-                    <label for="col_{{ loop.index0 }}" class="column-label{% if col == detected_column %} selected{% endif %}">{{ col }}{% if col == detected_column %} (LLM){% endif %}</label>
-                    {% endfor %}
-                </div>
-                
-                <p style="margin-top: 20px; margin-bottom: 10px;"><strong>Preview (first 100 rows):</strong></p>
-                <div class="preview-table">
-                    <table>
-                        <thead>
-                            <tr>
-                                {% for col in columns %}
-                                <th>{{ col }}</th>
-                                {% endfor %}
-                            </tr>
-                        </thead>
-                        <tbody>
-                            {% for row in rows %}
-                            <tr>
-                                {% for col in columns %}
-                                <td>{{ row[col] }}</td>
-                                {% endfor %}
-                            </tr>
-                            {% endfor %}
-                        </tbody>
-                    </table>
-                </div>
-            </form>
+            <div class="preview-table">
+                <table id="tbl">
+                    <thead>
+                        <tr id="hdr">
+                        </tr>
+                    </thead>
+                    <tbody id="bdy">
+                    </tbody>
+                </table>
+            </div>
             
             <div class="selected-info">
-                <strong>Selected column:</strong> <span id="selectedColumn">{{ detected_column }}</span>
+                <strong>Selected:</strong> <span id="selCol">{{ detected_column }}</span>
             </div>
         </div>
         
         <div class="button-bar">
-            <button class="btn" onclick="submitAnalysis()">Analyze</button>
+            <button class="btn" id="btnAnalyze">Analyze</button>
             <a href="/" class="btn btn-secondary">Cancel</a>
         </div>
         
@@ -104,43 +82,65 @@
             <p style="margin-top: 15px;">Analyzing...</p>
         </div>
     </div>
-    
+
+    <script src="https://code.jquery.com/jquery-3.6.0.min.js"></script>
     <script>
-        var radioButtons = document.querySelectorAll('input[name="event_column"]');
-        var selectedSpan = document.getElementById('selectedColumn');
+        var cols = {{ columns | tojson }};
+        var rows = {{ rows | tojson }};
+        var defCol = "{{ detected_column }}";
+        var selCol = defCol;
         
-        radioButtons.forEach(function(radio) {
-            radio.addEventListener('change', function() {
-                selectedSpan.textContent = this.value;
-            });
-        });
-        
-        function submitAnalysis() {
-            var selected = document.querySelector('input[name="event_column"]:checked');
-            if (!selected) {
-                alert("Please select a column");
-                return;
+        // Build header
+        var hdr = document.getElementById('hdr');
+        for (var i = 0; i < cols.length; i++) {
+            var th = document.createElement('th');
+            th.innerText = cols[i];
+            th.style.cursor = 'pointer';
+            if (cols[i] === defCol) {
+                th.className = 'rec sel';
             }
-            
-            document.getElementById('loading').style.display = 'block';
-            
-            var xhr = new XMLHttpRequest();
-            xhr.open('POST', '/analyze', true);
-            xhr.setRequestHeader('Content-Type', 'application/json');
-            xhr.onreadystatechange = function() {
-                if (xhr.readyState === 4) {
-                    document.getElementById('loading').style.display = 'none';
-                    if (xhr.status === 200) {
-                        var data = JSON.parse(xhr.responseText);
-                        window.location.href = '/results/' + data.history_id;
-                    } else {
-                        var data = JSON.parse(xhr.responseText);
-                        alert(data.error || 'Analysis failed');
+            (function(idx) {
+                th.onclick = function() {
+                    selCol = cols[idx];
+                    var h = document.getElementById('hdr');
+                    for (var j = 0; j < h.cells.length; j++) {
+                        h.cells[j].className = (j === idx) ? 'sel' : (h.cells[j].innerText === defCol ? 'rec' : '');
                     }
+                    document.getElementById('selCol').innerText = selCol;
+                };
+            })(i);
+            hdr.appendChild(th);
+        }
+        
+        // Build rows
+        var bdy = document.getElementById('bdy');
+        for (var r = 0; r < rows.length; r++) {
+            var tr = document.createElement('tr');
+            for (var c = 0; c < cols.length; c++) {
+                var td = document.createElement('td');
+                td.innerText = rows[r][cols[c]] || '';
+                tr.appendChild(td);
+            }
+            bdy.appendChild(tr);
+        }
+        
+        // Analyze button
+        document.getElementById('btnAnalyze').onclick = function() {
+            document.getElementById('loading').style.display = 'block';
+            var x = new XMLHttpRequest();
+            x.open('POST', '/analyze', true);
+            x.setRequestHeader('Content-Type', 'application/json');
+            x.onload = function() {
+                document.getElementById('loading').style.display = 'none';
+                if (x.status === 200) {
+                    var d = JSON.parse(x.responseText);
+                    window.location.href = '/results/' + d.history_id;
+                } else {
+                    alert(JSON.parse(x.responseText).error || 'Error');
                 }
             };
-            xhr.send(JSON.stringify({ event_column: selected.value }));
-        }
+            x.send(JSON.stringify({ event_column: selCol }));
+        };
     </script>
 </body>
 </html>
