@@ -64,7 +64,7 @@
                     <thead>
                         <tr>
                             {% for col in columns %}
-                            <th class="{% if col == detected_column %}recommended{% endif %}" data-column="{{ col }}" onclick="selectColumn('{{ col }}')">{{ col }}</th>
+                            <th class="{% if col == detected_column %}recommended{% endif %}" data-column="{{ col }}" style="cursor:pointer" id="th_{{ loop.index0 }}">{{ col }}</th>
                             {% endfor %}
                         </tr>
                     </thead>
@@ -114,7 +114,17 @@
             document.getElementById('selectedInfo').classList.add('show');
         }
         
-        document.getElementById('analyzeBtn').addEventListener('click', async () => {
+        // Add click handlers after page loads
+        document.addEventListener('DOMContentLoaded', function() {
+            document.querySelectorAll('th').forEach(function(th) {
+                th.addEventListener('click', function() {
+                    var col = this.getAttribute('data-column');
+                    selectColumn(col);
+                });
+            });
+        });
+        
+        document.getElementById('analyzeBtn').addEventListener('click', async function() {
             console.log('Analyze clicked, using column:', selectedColumn);
             
             document.getElementById('loading').style.display = 'block';
