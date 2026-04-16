@@ -82,7 +82,19 @@ class CSVLoader:
         prompt = f"""Given these column names from a UI interaction log CSV file:
 {columns_str}
 
-Which column contains the event/activity data? Events are actions in verb+noun format like "ClickButton", "OpenBrowser", "FillForm", "SelectOption".
+Which column contains event/activity data? Events are actions in verb+noun format like:
+- activateWorkbook
+- openWindow  
+- getCell
+- clickTextField
+- paste
+- changeField
+- newWorkbook
+- selectTab
+- typed
+- link
+
+The column should contain these kinds of action verbs followed by objects (not descriptions or timestamps).
 
 Respond with only the column name, nothing else."""
 
@@ -102,11 +114,11 @@ Respond with only the column name, nothing else."""
     def _detect_event_column_fallback(self, fieldnames: List[str]) -> Optional[str]:
         """Fallback detection using common column names."""
         candidates = [
+            "event_type",
             "event",
             "activity",
             "action",
             "events",
-            "description",
             "name",
             "text",
         ]
