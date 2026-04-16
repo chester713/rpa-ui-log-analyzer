@@ -29,9 +29,10 @@
         th, td { padding: 8px 12px; text-align: left; border-bottom: 1px solid #eee; white-space: nowrap; }
         th { background: #f8f9fa; font-weight: 600; color: #333; cursor: pointer; transition: all 0.2s; position: sticky; top: 0; z-index: 1; }
         th:hover { background: #e7f0ff; }
-        th.selected { background: #e7f0ff; border: 2px solid #007bff; }
+        th.selected { background: #e7f0ff !important; border: 2px solid #007bff !important; }
         th.recommended { background: #e8f5e9; border: 2px solid #28a745; }
         th.recommended::after { content: " (LLM)"; color: #28a745; font-size: 11px; font-weight: normal; }
+        th.recommended.selected { background: #e7f0ff !important; border: 2px solid #007bff !important; }
         tr:hover { background: #f8f9fa; }
         .filename { font-weight: 600; color: #333; margin-bottom: 10px; }
         .selected-info { margin-top: 15px; padding: 12px; background: #e7f0ff; border-radius: 6px; display: none; }
