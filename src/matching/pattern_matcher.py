@@ -33,6 +33,7 @@ class PatternMatcher:
             Matching Pattern or None
         """
         action, obj = self._parse_activity_name(activity.name)
+        action, obj = self._normalize_activity(action, obj, events)
 
         for pattern in self.patterns:
             if pattern.matches_activity(action, obj, context):
@@ -101,6 +102,86 @@ class PatternMatcher:
             obj = ""
 
         return action, obj
+
+    def _normalize_activity(
+        self, action: str, obj: str, events: List[Event]
+    ) -> Tuple[str, str]:
+        """Normalize inferred activity to pattern vocabulary (AOMC-aligned)."""
+        event_text = " ".join([e.event.lower() for e in events])
+        action_l = (action or "").strip().lower()
+        obj_l = (obj or "").strip().lower()
+
+        # Action normalization
+        action_map = {
+            "click": "Activate",
+            "press": "Activate",
+            "tap": "Activate",
+            "activate": "Activate",
+            "open": "Open",
+            "launch": "Open",
+            "new": "Open",
+            "type": "Write",
+            "input": "Write",
+            "paste": "Write",
+            "enter": "Write",
+            "fill": "Write",
+            "write": "Write",
+            "set": "Write",
+            "read": "Read",
+            "extract": "Read",
+            "get": "Read",
+            "find": "Find",
+            "locate": "Find",
+            "observe": "Observe",
+            "watch": "Observe",
+            "scroll": "Scroll",
+            "focus": "Focus",
+            "refresh": "Refresh",
+            "select": "Select",
+            "hover": "Hover",
+            "switch": "Switch",
+            "delete": "Delete",
+            "remove": "Delete",
+            "disable": "Disable",
+        }
+
+        normalized_action = action_map.get(action_l)
+
+        # Heuristic fallback from event names when LLM uses free-form phrasing
+        if not normalized_action:
+            if any(k in event_text for k in ["click", "activate", "press"]):
+                normalized_action = "Activate"
+            elif any(k in event_text for k in ["open", "newworkbook", "openwindow"]):
+                normalized_action = "Open"
+            elif any(
+                k in event_text for k in ["type", "paste", "changefield", "input"]
+            ):
+                normalized_action = "Write"
+            elif any(k in event_text for k in ["getcell", "read", "extract"]):
+                normalized_action = "Read"
+            elif "select" in event_text:
+                normalized_action = "Select"
+            elif "scroll" in event_text:
+                normalized_action = "Scroll"
+            elif "focus" in event_text:
+                normalized_action = "Focus"
+            elif "refresh" in event_text:
+                normalized_action = "Refresh"
+            else:
+                normalized_action = action.title() if action else "Activate"
+
+        # Object normalization
+        if any(k in obj_l for k in ["option", "dropdown", "combo", "list item"]):
+            normalized_obj = "Option"
+        elif any(
+            k in obj_l for k in ["context", "window", "application", "app switch"]
+        ):
+            normalized_obj = "Context"
+        else:
+            # Most patterns in this library use Element
+            normalized_obj = "Element"
+
+        return normalized_action, normalized_obj
 
 
 def get_context_from_events(events: List[Event]) -> str:
