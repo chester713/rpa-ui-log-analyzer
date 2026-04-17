@@ -196,6 +196,16 @@ def analyze():
         if event_column:
             loader._force_column = event_column
 
+        log_columns = []
+        log_preview = []
+        with open(filepath, "r", encoding="utf-8") as preview_file:
+            preview_reader = csv.DictReader(preview_file)
+            log_columns = preview_reader.fieldnames or []
+            for i, row in enumerate(preview_reader):
+                if i >= 100:
+                    break
+                log_preview.append({"row_index": i, "values": row})
+
         events = loader.load(filepath)
 
         from src.models.activity import Activity, EventActivityMapping
@@ -212,11 +222,13 @@ def analyze():
 
         recommendations = []
         matcher = PatternMatcher(PATTERNS)
+        context_sequence = []
 
         for mapping in mappings:
             activity = mapping.activity
             events_list = mapping.events
             context = get_context_from_events(events_list)
+            context_sequence.append(context)
 
             pattern = matcher.match(activity, events_list, context)
             method = pattern.get_method_for_context(context) if pattern else None
@@ -251,6 +263,30 @@ def analyze():
             )
             recommendations.append(recommendation)
 
+        # Add implicit recommendations per recommendation approach:
+        # - Switch Context on environment transitions
+        # - Find Element prerequisite for Read/Write/Focus/Activate
+        implicit_recommendations = matcher.create_implicit_recommendations(
+            mappings, context_sequence
+        )
+        recommendations.extend(implicit_recommendations)
+
+        # Priority order:
+        # 1) content-level > 2) accessibility-level > 3) visual/hardware
+        def _method_priority(method_name: str) -> int:
+            if not method_name:
+                return 999
+            m = method_name.lower()
+            if "dom" in m or "content" in m or "api" in m:
+                return 1
+            if "uia" in m or "automation" in m or "accessibility" in m:
+                return 2
+            if "visual" in m or "hardware" in m or "screen" in m:
+                return 3
+            return 10
+
+        recommendations.sort(key=lambda r: (_method_priority(r.method), -r.confidence))
+
         history_entry = {
             "id": str(uuid.uuid4()),
             "timestamp": datetime.now().isoformat(),
@@ -258,14 +294,8 @@ def analyze():
             "activities": [a.name for a in activities],
             "recommendations": [r.to_dict() for r in recommendations],
             "event_column": event_column or loader.detected_column,
-            "log_preview": [
-                {
-                    "row_index": e.row_index,
-                    "event": e.event,
-                    "attributes": e.attributes,
-                }
-                for e in events[:100]
-            ],
+            "log_columns": log_columns,
+            "log_preview": log_preview,
         }
 
         history = get_history()
@@ -305,6 +335,29 @@ def results(history_id):
     if entry is None:
         return "Analysis not found", 404
 
+    # Backward-compatible normalization for older history entries.
+    if "log_columns" not in entry or not entry.get("log_columns"):
+        preview = entry.get("log_preview", [])
+        if preview and isinstance(preview[0], dict):
+            first = preview[0]
+            if "values" in first and isinstance(first["values"], dict):
+                entry["log_columns"] = list(first["values"].keys())
+            else:
+                # Legacy shape used event/attributes only.
+                entry["log_columns"] = ["event", "attributes"]
+                normalized = []
+                for i, row in enumerate(preview):
+                    normalized.append(
+                        {
+                            "row_index": row.get("row_index", i),
+                            "values": {
+                                "event": row.get("event", ""),
+                                "attributes": row.get("attributes", {}),
+                            },
+                        }
+                    )
+                entry["log_preview"] = normalized
+
     return render_template("results.html", entry=entry)
 
 
@@ -321,6 +374,27 @@ def history_detail(history_id):
 
     if entry is None:
         return "Analysis not found", 404
+
+    if "log_columns" not in entry or not entry.get("log_columns"):
+        preview = entry.get("log_preview", [])
+        if preview and isinstance(preview[0], dict):
+            first = preview[0]
+            if "values" in first and isinstance(first["values"], dict):
+                entry["log_columns"] = list(first["values"].keys())
+            else:
+                entry["log_columns"] = ["event", "attributes"]
+                normalized = []
+                for i, row in enumerate(preview):
+                    normalized.append(
+                        {
+                            "row_index": row.get("row_index", i),
+                            "values": {
+                                "event": row.get("event", ""),
+                                "attributes": row.get("attributes", {}),
+                            },
+                        }
+                    )
+                entry["log_preview"] = normalized
 
     return render_template("results.html", entry=entry)
 

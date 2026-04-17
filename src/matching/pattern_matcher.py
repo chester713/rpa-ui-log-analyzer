@@ -41,6 +41,72 @@ class PatternMatcher:
 
         return None
 
+    def create_implicit_recommendations(
+        self, mappings, context_sequence: List[str]
+    ) -> List[MethodRecommendation]:
+        """Create implicit recommendations (Find + Switch Context)."""
+        implicit = []
+
+        # Add Switch Context recommendation on context transitions
+        for i in range(1, len(mappings)):
+            prev_ctx = context_sequence[i - 1]
+            cur_ctx = context_sequence[i]
+            if prev_ctx != cur_ctx:
+                switch_pattern = self._find_pattern_by_action_object(
+                    "Switch", "Context", "desktop"
+                )
+                if switch_pattern:
+                    implicit.append(
+                        MethodRecommendation(
+                            activity_name=f"Switch context from {prev_ctx} to {cur_ctx}",
+                            activity_action="Switch",
+                            activity_object="Context",
+                            events=mappings[i].activity.source_events,
+                            execution_environment="desktop",
+                            pattern=switch_pattern,
+                            method=switch_pattern.get_method_for_context("desktop"),
+                            method_category=switch_pattern.category,
+                            confidence=0.9,
+                            context_switch=True,
+                            context_switch_from=prev_ctx,
+                            context_switch_to=cur_ctx,
+                        )
+                    )
+
+        # Add Find recommendation before Read/Write/Focus/Activate when identifiable
+        for mapping, ctx in zip(mappings, context_sequence):
+            action, obj = self._parse_activity_name(mapping.activity.name)
+            action, obj = self._normalize_activity(action, obj, mapping.events)
+
+            if action in {"Read", "Write", "Focus", "Activate"}:
+                find_pattern = self._find_pattern_by_action_object(
+                    "Find", "Element", ctx
+                )
+                if find_pattern:
+                    implicit.append(
+                        MethodRecommendation(
+                            activity_name=f"Find target element for {action.lower()}",
+                            activity_action="Find",
+                            activity_object="Element",
+                            events=mapping.activity.source_events,
+                            execution_environment=ctx,
+                            pattern=find_pattern,
+                            method=find_pattern.get_method_for_context(ctx),
+                            method_category=find_pattern.category,
+                            confidence=0.85,
+                        )
+                    )
+
+        return implicit
+
+    def _find_pattern_by_action_object(
+        self, action: str, obj: str, context: str
+    ) -> Optional[Pattern]:
+        for pattern in self.patterns:
+            if pattern.matches_activity(action, obj, context):
+                return pattern
+        return None
+
     def match_all(
         self,
         activities: List[Activity],

@@ -2,6 +2,7 @@
 
 from dataclasses import dataclass, field
 from typing import List, Optional
+import re
 
 
 @dataclass
@@ -47,6 +48,20 @@ class Pattern:
         """
         if context not in self.contexts:
             return None
+
+        # Parse context-specific method from pattern text like:
+        # "HTML DOM manipulation (Web) / UI Automation manipulation (Desktop) / Hardware simulation (Visual)"
+        parts = [p.strip() for p in self.method.split("/")]
+        for part in parts:
+            lower = part.lower()
+            if context == "web" and "(web" in lower:
+                return re.sub(r"\s*\([^)]*\)\s*", "", part).strip()
+            if context == "desktop" and "(desktop" in lower:
+                return re.sub(r"\s*\([^)]*\)\s*", "", part).strip()
+            if context == "visual" and "(visual" in lower:
+                return re.sub(r"\s*\([^)]*\)\s*", "", part).strip()
+
+        # Fallback to full method text when no explicit context marker found
         return self.method
 
 
