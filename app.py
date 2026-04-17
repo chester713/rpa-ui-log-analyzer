@@ -35,6 +35,15 @@ def get_llm_config():
     return DEFAULT_LLM_CONFIG.copy()
 
 
+def get_inference_rules():
+    """Load customizable inference rules from config."""
+    path = "config/inference_rules.json"
+    if os.path.exists(path):
+        with open(path, "r", encoding="utf-8") as f:
+            return json.load(f)
+    return {"version": "1.0", "rules": []}
+
+
 def save_llm_config(config):
     config_path = "config/llm_config.json"
     with open(config_path, "w") as f:
@@ -202,8 +211,7 @@ def analyze():
             preview_reader = csv.DictReader(preview_file)
             log_columns = preview_reader.fieldnames or []
             for i, row in enumerate(preview_reader):
-                if i >= 100:
-                    break
+                # For analysis results, keep the full log.
                 log_preview.append({"row_index": i, "values": row})
 
         events = loader.load(filepath)
@@ -223,28 +231,57 @@ def analyze():
         recommendations = []
         matcher = PatternMatcher(PATTERNS)
         context_sequence = []
+        inference_rules = get_inference_rules().get("rules", [])
+
+        def _presence_ratio(events_group, keys):
+            total = len(events_group) if events_group else 1
+            hits = 0
+            present_keys = set()
+            for e in events_group:
+                attrs = e.attributes or {}
+                if any(
+                    str(attrs.get(k, "")).strip() not in ["", "None", "none"]
+                    for k in keys
+                ):
+                    hits += 1
+                for k in keys:
+                    if str(attrs.get(k, "")).strip() not in ["", "None", "none"]:
+                        present_keys.add(k)
+            return hits / total, sorted(present_keys)
 
         for mapping in mappings:
             activity = mapping.activity
             events_list = mapping.events
 
-            # Enforce grouped-event task interpretation:
-            # clickTextField + paste/changeField => Write objective (click is prerequisite focus)
+            # Apply configurable grouped-event inference rules.
             event_text = " ".join([e.event.lower() for e in events_list])
-            if any(
-                k in event_text for k in ["paste", "type", "input", "changefield"]
-            ) and any(k in event_text for k in ["clicktextfield", "click"]):
-                is_web_group = any(
-                    (e.attributes.get("browser_url") or e.attributes.get("url"))
-                    or str(e.attributes.get("application", "")).lower()
-                    in ["edge", "chrome", "firefox", "safari"]
-                    or str(e.attributes.get("category", "")).lower() == "browser"
-                    for e in events_list
-                )
-                activity.name = (
-                    "Write HTML element on webpage" if is_web_group else "Write element"
-                )
-                activity.confidence = max(activity.confidence, 0.8)
+            for rule in inference_rules:
+                if not rule.get("enabled", True):
+                    continue
+                match = rule.get("match", {})
+                all_keys = match.get("all_event_keywords", [])
+                any_keys = match.get("any_event_keywords", [])
+
+                all_ok = all(k in event_text for k in all_keys) if all_keys else True
+                any_ok = any(k in event_text for k in any_keys) if any_keys else True
+
+                if all_ok and any_ok:
+                    is_web_group = any(
+                        (e.attributes.get("browser_url") or e.attributes.get("url"))
+                        or str(e.attributes.get("application", "")).lower()
+                        in ["edge", "chrome", "firefox", "safari"]
+                        or str(e.attributes.get("category", "")).lower() == "browser"
+                        for e in events_list
+                    )
+                    output = rule.get("output", {})
+                    activity.name = (
+                        output.get("web_activity_name", activity.name)
+                        if is_web_group
+                        else output.get("non_web_activity_name", activity.name)
+                    )
+                    activity.confidence = max(
+                        activity.confidence, float(output.get("min_confidence", 0.0))
+                    )
 
             context = get_context_from_events(events_list)
             context_sequence.append(context)
@@ -266,6 +303,72 @@ def analyze():
                 else (activity.name, "")
             )
 
+            # Confidence model (explicit and explainable)
+            # final = 0.60*base + 0.20*context_evidence + 0.10*object_evidence + 0.10*group_consistency + pattern_bonus
+            base_conf = float(activity.confidence)
+            context_keys = {
+                "web": [
+                    "browser_url",
+                    "url",
+                    "tag_name",
+                    "tag_type",
+                    "xpath",
+                    "xpath_full",
+                    "category",
+                    "application",
+                ],
+                "desktop": [
+                    "application",
+                    "workbook",
+                    "worksheet",
+                    "current_worksheet",
+                    "cell_range",
+                    "cell_range_number",
+                    "event_src_path",
+                ],
+                "visual": ["screenshot", "mouse_coord", "tag_html"],
+            }
+            obj_keys = [
+                "id",
+                "tag_name",
+                "tag_type",
+                "xpath",
+                "xpath_full",
+                "cell_range",
+                "event_src_path",
+            ]
+
+            context_ratio, context_present = _presence_ratio(
+                events_list, context_keys.get(context, [])
+            )
+            object_ratio, object_present = _presence_ratio(events_list, obj_keys)
+
+            # consistency from shared attributes among grouped events
+            shared_attrs = (
+                mapping.attribute_breakdown.get("shared_attributes", []) or []
+            )
+            attr_counts = mapping.attribute_breakdown.get("attribute_counts", {}) or {}
+            group_consistency = min(1.0, len(shared_attrs) / max(1, len(attr_counts)))
+
+            pattern_bonus = 0.05 if pattern else 0.0
+            final_conf = (
+                0.60 * base_conf
+                + 0.20 * context_ratio
+                + 0.10 * object_ratio
+                + 0.10 * group_consistency
+                + pattern_bonus
+            )
+            final_conf = max(0.0, min(1.0, round(final_conf, 2)))
+
+            confidence_explanation = (
+                "Formula: final = 0.60*base + 0.20*context + 0.10*object + 0.10*consistency + pattern_bonus\n"
+                f"base={base_conf:.2f}; context={context_ratio:.2f}; object={object_ratio:.2f}; consistency={group_consistency:.2f}; pattern_bonus={pattern_bonus:.2f}; final={final_conf:.2f}\n"
+                f"Context attributes considered ({context}): {', '.join(context_keys.get(context, [])) or 'None'}\n"
+                f"Context attributes found in this group: {', '.join(context_present) or 'None'}\n"
+                f"Object attributes considered: {', '.join(obj_keys)}\n"
+                f"Object attributes found in this group: {', '.join(object_present) or 'None'}"
+            )
+
             recommendation = MethodRecommendation(
                 activity_name=activity.name,
                 activity_action=action,
@@ -275,7 +378,9 @@ def analyze():
                 pattern=pattern,
                 method=method,
                 method_category=pattern.category if pattern else None,
-                confidence=activity.confidence,
+                confidence=final_conf,
+                confidence_explanation=confidence_explanation,
+                context_attributes_used=context_present,
                 context_switch=context_switch,
                 context_switch_from=context_switch_from,
                 context_switch_to=context_switch_to,
@@ -344,6 +449,13 @@ def analyze():
             os.remove(filepath)
         session.pop("uploaded_file", None)
         session.pop("filename", None)
+
+
+@app.route("/analyzing")
+def analyzing():
+    """Intermediate loading page with progress bar."""
+    event_column = request.args.get("event_column", "")
+    return render_template("analyzing.html", event_column=event_column)
 
 
 @app.route("/results/<history_id>")

@@ -1,0 +1,19 @@
+{
+  "version": "1.0",
+  "rules": [
+    {
+      "id": "grouped-web-input-write",
+      "description": "clickTextField + paste/type/input/changeField implies Write objective; click acts as prerequisite focus",
+      "enabled": true,
+      "match": {
+        "all_event_keywords": ["clicktextfield"],
+        "any_event_keywords": ["paste", "type", "input", "changefield"]
+      },
+      "output": {
+        "web_activity_name": "Write HTML element on webpage",
+        "non_web_activity_name": "Write element",
+        "min_confidence": 0.8
+      }
+    }
+  ]
+}
