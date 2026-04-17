@@ -103,10 +103,18 @@ Respond with only the column name, nothing else."""
 
         try:
             response = self.llm_client.complete(prompt)
-            detected = response.strip()
+            detected = response.strip().strip('"').strip("'")
+
+            # Reject empty/invalid responses (e.g., unnamed index column).
+            invalid = {"", "index", "row", "row_id", "#"}
+            if detected.lower() in invalid:
+                return self._detect_event_column_fallback(fieldnames)
 
             for field in fieldnames:
-                if field.lower() == detected.lower():
+                field_name = (field or "").strip()
+                if not field_name:
+                    continue
+                if field_name.lower() == detected.lower():
                     return field
 
         except Exception:
@@ -116,6 +124,7 @@ Respond with only the column name, nothing else."""
 
     def _detect_event_column_fallback(self, fieldnames: List[str]) -> Optional[str]:
         """Fallback detection using common column names."""
+        normalized = [f for f in fieldnames if (f or "").strip()]
         candidates = [
             "event_type",
             "event",
@@ -126,7 +135,7 @@ Respond with only the column name, nothing else."""
             "text",
         ]
         for candidate in candidates:
-            for field in fieldnames:
+            for field in normalized:
                 if field.lower() == candidate.lower():
                     return field
         return None

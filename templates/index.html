@@ -38,14 +38,14 @@
         <h1>RPA UI Log Analyzer</h1>
         <p class="subtitle">Upload your UI interaction logs and get automation method recommendations</p>
         
-        <div class="card">
+        <form class="card" id="uploadForm" action="/select-column" method="POST" enctype="multipart/form-data">
             <div class="upload-area" id="uploadArea">
                 <p>Drag & drop CSV file here or click to browse</p>
                 <p style="color: #999; font-size: 14px; margin-top: 10px;">Supports CSV files with event logs</p>
-                <input type="file" id="fileInput" accept=".csv">
+                <input type="file" id="fileInput" name="file" accept=".csv" required>
             </div>
             
-            <button class="btn" id="analyzeBtn" disabled>Analyze Log</button>
+            <button class="btn" id="analyzeBtn" type="submit" disabled>Analyze Log</button>
             
             <div class="loading" id="loading">
                 <div class="spinner"></div>
@@ -53,7 +53,7 @@
             </div>
             
             <div class="error" id="error"></div>
-        </div>
+        </form>
     </div>
     
     <script>
@@ -93,36 +93,14 @@
             }
         });
         
-        analyzeBtn.addEventListener('click', async () => {
-            if (!selectedFile) return;
-            
+        document.getElementById('uploadForm').addEventListener('submit', (e) => {
+            if (!selectedFile) {
+                e.preventDefault();
+                return;
+            }
             loading.style.display = 'block';
             error.style.display = 'none';
             analyzeBtn.disabled = true;
-            
-            const formData = new FormData();
-            formData.append('file', selectedFile);
-            
-            try {
-                const response = await fetch('/select-column', {
-                    method: 'POST',
-                    body: formData
-                });
-                
-                if (!response.ok) {
-                    const data = await response.json();
-                    throw new Error(data.error || 'Upload failed');
-                }
-                
-                const html = await response.text();
-                document.documentElement.innerHTML = html;
-                
-            } catch (err) {
-                error.textContent = err.message;
-                error.style.display = 'block';
-                loading.style.display = 'none';
-                analyzeBtn.disabled = false;
-            }
         });
     </script>
 </body>

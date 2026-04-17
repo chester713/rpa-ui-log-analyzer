@@ -78,6 +78,10 @@ class PatternMatcher:
                             method=switch_pattern.get_method_for_context("desktop"),
                             method_category=switch_pattern.category,
                             confidence=0.9,
+                            confidence_explanation=(
+                                "High confidence (0.90): explicit context transition detected "
+                                f"from {prev_ctx} to {cur_ctx} between consecutive interaction groups."
+                            ),
                             context_switch=True,
                             context_switch_from=prev_ctx,
                             context_switch_to=cur_ctx,
@@ -110,6 +114,10 @@ class PatternMatcher:
                             method=find_pattern.get_method_for_context(ctx),
                             method_category=find_pattern.category,
                             confidence=0.85,
+                            confidence_explanation=(
+                                f"High confidence (0.85): '{action}' requires a target element to be identified first, "
+                                "so Find is inferred as a prerequisite step."
+                            ),
                         )
                     )
 

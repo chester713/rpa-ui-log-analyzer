@@ -11,6 +11,9 @@
         .nav { display: flex; gap: 20px; margin-bottom: 20px; }
         .nav a { color: #007bff; text-decoration: none; }
         .nav a:hover { text-decoration: underline; }
+        .topbar { display: flex; align-items: center; justify-content: space-between; gap: 12px; flex-wrap: wrap; }
+        .export-btn { background: #0f766e; color: white; border: none; padding: 10px 14px; border-radius: 8px; cursor: pointer; font-size: 13px; }
+        .export-btn:hover { background: #0b5e58; }
         h1 { color: #333; margin-bottom: 8px; }
         .meta { color: #666; font-size: 14px; margin-bottom: 16px; }
 
@@ -49,8 +52,13 @@
             <a href="/settings">Settings</a>
         </nav>
 
-        <h1>Analysis Results</h1>
-        <div class="meta">File: {{ entry.filename }} | Date: {{ entry.timestamp }} | Event column: {{ entry.event_column or 'N/A' }}</div>
+        <div class="topbar">
+            <div>
+                <h1>Analysis Results</h1>
+                <div class="meta">File: {{ entry.filename }} | Date: {{ entry.timestamp }} | Event column: {{ entry.event_column or 'N/A' }}</div>
+            </div>
+            <button class="export-btn" id="exportBtn">Export CSV</button>
+        </div>
 
         {% if entry.recommendations and entry.log_preview %}
         <div class="layout">
@@ -87,9 +95,15 @@
                 <div id="details" style="display:none;">
                     <div class="kv"><div class="k">Inferred Activity</div><div class="v" id="dActivity"></div></div>
                     <div class="kv"><div class="k">Execution Context</div><div class="v" id="dContext"></div></div>
+                    <div class="kv"><div class="k">Context Attributes Used</div><div id="dContextAttrs"></div></div>
                     <div class="kv"><div class="k">Matched Pattern</div><div class="v" id="dPattern"></div></div>
-                    <div class="kv"><div class="k">Recommended Method</div><div class="v" id="dMethod"></div></div>
+                    <div class="kv">
+                        <div class="k">Recommended Method (Override Allowed)</div>
+                        <select id="dMethodSelect" style="width:100%; padding:8px 10px; border:1px solid #d6dbe3; border-radius:8px; font-size:14px;"></select>
+                        <div class="muted" id="dMethodHint" style="margin-top:6px;"></div>
+                    </div>
                     <div class="kv"><div class="k">Confidence</div><div class="v" id="dConfidence"></div></div>
+                    <div class="kv"><div class="k">Confidence Calculation</div><div class="muted" id="dConfidenceExplain"></div></div>
                     <div class="kv"><div class="k">Related Events</div><div id="dEvents"></div></div>
                     <div class="kv"><div class="k">Prerequisite Steps</div><div id="dPrereq" class="muted">None</div></div>
                 </div>
@@ -102,6 +116,58 @@
 
     <script>
         const recommendations = {{ entry.recommendations | tojson }};
+        const logPreview = {{ entry.log_preview | tojson }};
+        const logColumns = {{ entry.log_columns | tojson }};
+        const rowMap = new Map((logPreview || []).map(r => [Number(r.row_index), r.values || {}]));
+        const methodOverrides = {};
+        let currentRecKey = null;
+
+        const methodAliases = {
+            'html dom parsing': 'DOM Parsing',
+            'dom parsing': 'DOM Parsing',
+            'html dom manipulation': 'DOM Manipulation',
+            'dom manipulation': 'DOM Manipulation',
+            'ui automation tree parsing': 'UI Automation Tree Parsing',
+            'uia tree parsing': 'UI Automation Tree Parsing',
+            'ui automation parsing': 'UI Automation Tree Parsing',
+            'ui automation tree manipulation': 'UI Automation Manipulation',
+            'ui automation manipulation': 'UI Automation Manipulation',
+            'uia manipulation': 'UI Automation Manipulation',
+            'visual recognition': 'Visual Recognition',
+            'hardware simulation': 'Hardware Simulation',
+            'application-specific api': 'UI Automation Manipulation'
+        };
+
+        function normalizeMethodName(name) {
+            if (!name) return '';
+            const key = String(name).trim().toLowerCase();
+            return methodAliases[key] || name;
+        }
+
+        function recommendationKey(rec) {
+            const ev = (rec.events || []).join(',');
+            return `${rec.inferred_activity || ''}|${ev}`;
+        }
+
+        function isPresent(v) {
+            return v !== undefined && v !== null && String(v).trim() !== '' && String(v).toLowerCase() !== 'none';
+        }
+
+        function deriveContextAttributes(rec) {
+            const ctx = (rec.execution_environment || '').toLowerCase();
+            const candidates = {
+                web: ['browser_url', 'url', 'tag_name', 'tag_type', 'xpath', 'xpath_full', 'tag_href', 'category', 'application'],
+                desktop: ['application', 'workbook', 'worksheet', 'current_worksheet', 'cell_range', 'cell_range_number', 'event_src_path'],
+                visual: ['screenshot', 'mouse_coord', 'tag_html']
+            };
+            const keys = candidates[ctx] || [];
+            const found = new Set();
+            (rec.events || []).forEach(idx => {
+                const values = rowMap.get(Number(idx)) || {};
+                keys.forEach(k => { if (isPresent(values[k])) found.add(k); });
+            });
+            return Array.from(found);
+        }
 
         function isImplicitRecommendation(rec) {
             const action = (rec.activity_action || '').toLowerCase();
@@ -126,23 +192,44 @@
         function getPrerequisitesForRecommendation(rec) {
             const implicit = getImplicitRecommendations();
             const recEvents = new Set(rec.events || []);
-            const prereqs = [];
+            const sharedCandidates = [];
 
             for (const imp of implicit) {
-                const action = (imp.activity_action || '').toLowerCase();
                 const shared = (imp.events || []).some(e => recEvents.has(e));
                 if (shared) {
-                    prereqs.push(imp);
-                    continue;
-                }
-
-                // show context switch if it moves into this recommendation context
-                if (action === 'switch' && imp.context_switch_to === rec.execution_environment) {
-                    prereqs.push(imp);
+                    sharedCandidates.push(imp);
                 }
             }
 
-            return prereqs;
+            // If there is no direct shared prerequisite, pick the nearest switch-to-context before this activity.
+            if (!sharedCandidates.length) {
+                const recMin = Math.min(...(rec.events || [Number.MAX_SAFE_INTEGER]));
+                let nearestSwitch = null;
+                let nearestRow = -1;
+                for (const imp of implicit) {
+                    const action = (imp.activity_action || '').toLowerCase();
+                    if (action !== 'switch') continue;
+                    if (imp.context_switch_to !== rec.execution_environment) continue;
+                    const impMax = Math.max(...(imp.events || [-1]));
+                    if (impMax < recMin && impMax > nearestRow) {
+                        nearestRow = impMax;
+                        nearestSwitch = imp;
+                    }
+                }
+                if (nearestSwitch) sharedCandidates.push(nearestSwitch);
+            }
+
+            if (!sharedCandidates.length) return [];
+
+            // Show only ONE prerequisite step: prefer Find over Switch.
+            const rank = (p) => {
+                const a = (p.activity_action || '').toLowerCase();
+                if (a === 'find') return 1;
+                if (a === 'switch') return 2;
+                return 3;
+            };
+            sharedCandidates.sort((a, b) => rank(a) - rank(b));
+            return [sharedCandidates[0]];
         }
 
         function renderDetails(rec) {
@@ -151,9 +238,104 @@
 
             document.getElementById('dActivity').textContent = rec.inferred_activity || 'N/A';
             document.getElementById('dContext').textContent = rec.execution_environment || 'N/A';
+            const ctxWrap = document.getElementById('dContextAttrs');
+            ctxWrap.innerHTML = '';
+            let ctxAttrs = rec.context_attributes_used || [];
+            if (!ctxAttrs.length) {
+                ctxAttrs = deriveContextAttributes(rec);
+            }
+            if (!ctxAttrs.length) {
+                ctxWrap.textContent = 'None';
+            } else {
+                ctxAttrs.forEach(a => {
+                    const span = document.createElement('span');
+                    span.className = 'pill';
+                    span.textContent = a;
+                    ctxWrap.appendChild(span);
+                });
+            }
             document.getElementById('dPattern').textContent = rec.pattern_matched || 'N/A';
-            document.getElementById('dMethod').textContent = rec.method || 'N/A';
+            const methodSelect = document.getElementById('dMethodSelect');
+            const methodHint = document.getElementById('dMethodHint');
+            methodSelect.innerHTML = '';
+
+            const extractionMethods = [
+                'DOM Parsing',
+                'UI Automation Tree Parsing',
+                'Visual Recognition',
+                'Hardware Simulation'
+            ];
+            const modificationMethods = [
+                'DOM Manipulation',
+                'UI Automation Manipulation',
+                'Hardware Simulation'
+            ];
+
+            const recommendedOriginal = rec.method || '';
+            const recommended = normalizeMethodName(recommendedOriginal);
+            currentRecKey = recommendationKey(rec);
+
+            if (!recommended) {
+                const placeholder = document.createElement('option');
+                placeholder.value = '';
+                placeholder.textContent = 'No method matched (choose one)';
+                methodSelect.appendChild(placeholder);
+            }
+
+            const extractionGroup = document.createElement('optgroup');
+            extractionGroup.label = 'Extraction';
+            extractionMethods.forEach(m => {
+                const opt = document.createElement('option');
+                opt.value = m;
+                opt.textContent = m;
+                extractionGroup.appendChild(opt);
+            });
+            methodSelect.appendChild(extractionGroup);
+
+            const modificationGroup = document.createElement('optgroup');
+            modificationGroup.label = 'Modification';
+            modificationMethods.forEach(m => {
+                const opt = document.createElement('option');
+                opt.value = m;
+                opt.textContent = m;
+                modificationGroup.appendChild(opt);
+            });
+            methodSelect.appendChild(modificationGroup);
+
+            if (recommended) {
+                methodSelect.value = recommended;
+                methodHint.textContent = recommendedOriginal && recommendedOriginal !== recommended
+                    ? `Default recommendation: ${recommended} (normalized from: ${recommendedOriginal})`
+                    : `Default recommendation: ${recommended}`;
+            } else {
+                methodHint.textContent = 'No default recommendation available for this activity.';
+            }
+
+            methodSelect.onchange = () => {
+                const sel = methodSelect.value || 'N/A';
+                if (currentRecKey) {
+                    methodOverrides[currentRecKey] = sel;
+                }
+                if (recommended && sel !== recommended) {
+                    methodHint.textContent = `Override applied: ${sel} (was ${recommended})`;
+                } else {
+                    methodHint.textContent = recommended
+                        ? `Default recommendation: ${recommended}`
+                        : `Selected: ${sel}`;
+                }
+            };
             document.getElementById('dConfidence').textContent = (rec.confidence ?? 'N/A');
+            let confidenceExplain = rec.confidence_explanation;
+            if (!confidenceExplain) {
+                const eventRows = (rec.events || []).length ? (rec.events || []).join(', ') : 'N/A';
+                const ctx = rec.execution_environment || 'unknown context';
+                const pattern = rec.pattern_matched || 'no matched pattern';
+                confidenceExplain =
+                    `Confidence starts from grouped-event inference score (${rec.confidence ?? 'N/A'}) ` +
+                    `for rows [${eventRows}], then validated against execution context (${ctx}) ` +
+                    `and pattern alignment (${pattern}).`;
+            }
+            document.getElementById('dConfidenceExplain').textContent = confidenceExplain;
 
             const eventsWrap = document.getElementById('dEvents');
             eventsWrap.innerHTML = '';
@@ -187,6 +369,65 @@
                 }
             });
         }
+
+        function escapeCsv(value) {
+            const s = value === undefined || value === null ? '' : String(value);
+            if (s.includes('"') || s.includes(',') || s.includes('\n')) {
+                return '"' + s.replaceAll('"', '""') + '"';
+            }
+            return s;
+        }
+
+        function getExplicitRecByRow(rowIndex) {
+            return findRecommendationByRow(Number(rowIndex));
+        }
+
+        document.getElementById('exportBtn').addEventListener('click', () => {
+            const appended = ['inferred_activity', 'execution_context', 'matched_pattern', 'recommended_method'];
+            const headers = [...logColumns, ...appended];
+            const lines = [headers.map(escapeCsv).join(',')];
+
+            (logPreview || []).forEach(r => {
+                const values = r.values || {};
+                const rec = getExplicitRecByRow(r.row_index);
+
+                let inferred = '';
+                let context = '';
+                let pattern = '';
+                let method = '';
+
+                if (rec) {
+                    inferred = rec.inferred_activity || '';
+                    context = rec.execution_environment || '';
+                    pattern = rec.pattern_matched || '';
+
+                    const key = recommendationKey(rec);
+                    const overrideMethod = methodOverrides[key];
+                    method = overrideMethod || normalizeMethodName(rec.method || '');
+                }
+
+                const rowOut = [
+                    ...logColumns.map(c => values[c] ?? ''),
+                    inferred,
+                    context,
+                    pattern,
+                    method
+                ];
+                lines.push(rowOut.map(escapeCsv).join(','));
+            });
+
+            const csvContent = lines.join('\n');
+            const blob = new Blob([csvContent], { type: 'text/csv;charset=utf-8;' });
+            const url = URL.createObjectURL(blob);
+            const a = document.createElement('a');
+            a.href = url;
+            const base = ({{ entry.filename | tojson }} || 'analysis').replace(/\.csv$/i, '');
+            a.download = `${base}_analysis_export.csv`;
+            document.body.appendChild(a);
+            a.click();
+            document.body.removeChild(a);
+            URL.revokeObjectURL(url);
+        });
 
         let currentRow = null;
         document.querySelectorAll('tr.row-clickable').forEach(tr => {

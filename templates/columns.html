@@ -18,13 +18,10 @@
         .btn:hover { background: #0056b3; }
         .btn-secondary { background: #6c757d; }
         .btn-secondary:hover { background: #545b62; }
-        .loading { text-align: center; padding: 40px; display: none; }
-        .spinner { width: 40px; height: 40px; border: 4px solid #f3f3f3; border-top: 4px solid #007bff; border-radius: 50%; animation: spin 1s linear infinite; margin: 0 auto; }
-        @keyframes spin { 0% { transform: rotate(0deg); } 100% { transform: rotate(360deg); } }
         .info { background: #e7f0ff; border-radius: 8px; padding: 16px; margin-bottom: 20px; }
         .info p { color: #333; font-size: 14px; }
-        .table-wrap { overflow-y: auto; margin-top: 20px; border: 1px solid #ddd; border-radius: 8px; max-height: 450px; }
-        table { width: 100%; border-collapse: collapse; font-size: 12px; }
+        .table-wrap { overflow: auto; margin-top: 20px; border: 1px solid #ddd; border-radius: 8px; max-height: 450px; max-width: 100%; }
+        table { width: max-content; min-width: 100%; border-collapse: collapse; font-size: 12px; }
         th, td { padding: 6px 10px; text-align: left; border-bottom: 1px solid #eee; white-space: nowrap; }
         th { background: #f0f0f0; font-weight: 600; color: #333; cursor: pointer; position: sticky; top: 0; z-index: 10; }
         th:hover { background: #e0e0e0; }
@@ -88,22 +85,18 @@
             <a href="/" class="btn btn-secondary">Cancel</a>
         </div>
         
-        <div class="loading" id="loading">
-            <div class="spinner"></div>
-            <p style="margin-top: 15px;">Analyzing...</p>
-        </div>
     </div>
     
     <script>
         var columns = {{ columns | tojson }};
-        var detectedColumn = "{{ detected_column }}";
-        var selectedColumn = detectedColumn;
+        var detectedColumn = {{ detected_column | tojson }};
+        var selectedColumn = detectedColumn || columns[0] || null;
         
         // Set initial selection
         for (var i = 0; i < columns.length; i++) {
             var th = document.getElementById('th' + i);
             if (columns[i] === detectedColumn) {
-                th.className = 'llm selected';
+                th.className = 'llm';
             }
         }
         
@@ -122,25 +115,24 @@
                 }
             }
         }
+
+        // Apply the default selection (LLM recommendation, or first column)
+        if (selectedColumn) {
+            for (var i = 0; i < columns.length; i++) {
+                if (columns[i] === selectedColumn) {
+                    selectCol(i);
+                    break;
+                }
+            }
+        }
         
         document.getElementById('analyzeBtn').onclick = function() {
-            document.getElementById('loading').style.display = 'block';
-            
-            var xhr = new XMLHttpRequest();
-            xhr.open('POST', '/analyze', true);
-            xhr.setRequestHeader('Content-Type', 'application/json');
-            xhr.onreadystatechange = function() {
-                if (xhr.readyState === 4) {
-                    document.getElementById('loading').style.display = 'none';
-                    if (xhr.status === 200) {
-                        var data = JSON.parse(xhr.responseText);
-                        window.location.href = '/results/' + data.history_id;
-                    } else {
-                        alert(JSON.parse(xhr.responseText).error || 'Error');
-                    }
-                }
-            };
-            xhr.send(JSON.stringify({ event_column: selectedColumn }));
+            if (!selectedColumn) {
+                alert('No columns found in CSV.');
+                return;
+            }
+
+            window.location.href = '/analyzing?event_column=' + encodeURIComponent(selectedColumn);
         };
     </script>
 </body>

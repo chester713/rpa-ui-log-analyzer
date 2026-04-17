@@ -78,6 +78,8 @@ class MethodRecommendation:
     method: Optional[str]
     method_category: Optional[str]
     confidence: float
+    confidence_explanation: Optional[str] = None
+    context_attributes_used: Optional[List[str]] = None
     context_switch: bool = False
     context_switch_from: Optional[str] = None
     context_switch_to: Optional[str] = None
@@ -94,6 +96,8 @@ class MethodRecommendation:
             "method": self.method,
             "method_category": self.method_category,
             "confidence": self.confidence,
+            "confidence_explanation": self.confidence_explanation,
+            "context_attributes_used": self.context_attributes_used,
             "context_switch": self.context_switch,
             "context_switch_from": self.context_switch_from,
             "context_switch_to": self.context_switch_to,
