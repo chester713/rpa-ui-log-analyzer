@@ -213,6 +213,21 @@ class PatternMatcher:
 
         normalized_action = action_map.get(action_l)
 
+        # Special case: click on text field/input is Focus, not Activate.
+        first_attrs = events[0].attributes if events else {}
+        is_text_input_target = any(
+            k in (obj_l or "") for k in ["textfield", "text field", "input", "field"]
+        ) or any(
+            str(first_attrs.get(k, "")).lower()
+            in ["input", "text", "textbox", "textfield"]
+            for k in ["tag_name", "tag_type", "element_type"]
+        )
+
+        if normalized_action == "Activate" and (
+            "clicktextfield" in event_text or is_text_input_target
+        ):
+            normalized_action = "Focus"
+
         # Heuristic fallback from event names when LLM uses free-form phrasing
         if not normalized_action:
             if any(k in event_text for k in ["click", "activate", "press"]):
@@ -262,14 +277,34 @@ def get_context_from_events(events: List[Event]) -> str:
     """
     context_scores = {"web": 0, "desktop": 0, "visual": 0}
 
+    browser_apps = {"edge", "chrome", "firefox", "safari", "browser"}
+
     for event in events:
         attrs = event.attributes
 
-        if "webpage" in attrs or "url" in attrs:
+        # Web indicators
+        if "webpage" in attrs or "url" in attrs or "browser_url" in attrs:
             context_scores["web"] += 2
 
+        if any(
+            k in attrs
+            for k in ["tag_name", "tag_html", "tag_href", "xpath", "xpath_full"]
+        ):
+            context_scores["web"] += 2
+
+        app_name = str(attrs.get("application") or attrs.get("app") or "").lower()
+        if app_name in browser_apps:
+            context_scores["web"] += 3
+
+        # Desktop indicators
         if "app" in attrs or "application" in attrs:
             context_scores["desktop"] += 2
+
+        if any(
+            k in attrs
+            for k in ["workbook", "worksheet", "cell_range", "cell_range_number"]
+        ):
+            context_scores["desktop"] += 3
 
         if "element_type" in attrs:
             elem_type = attrs["element_type"].lower()
