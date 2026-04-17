@@ -224,7 +224,9 @@ class PatternMatcher:
         )
 
         if normalized_action == "Activate" and (
-            "clicktextfield" in event_text or is_text_input_target
+            "clicktextfield" in event_text
+            or "changefield" in event_text
+            or is_text_input_target
         ):
             normalized_action = "Focus"
 
@@ -293,15 +295,14 @@ def get_context_from_events(events: List[Event]) -> str:
             context_scores["web"] += 2
 
         app_name = str(attrs.get("application") or attrs.get("app") or "").lower()
-        if app_name in browser_apps:
-            context_scores["web"] += 3
-
-        # Desktop indicators
-        if "app" in attrs or "application" in attrs:
+        category = str(attrs.get("category") or "").lower()
+        if app_name in browser_apps or category == "browser":
+            context_scores["web"] += 4
+        elif "app" in attrs or "application" in attrs:
             context_scores["desktop"] += 2
 
         if any(
-            k in attrs
+            k in attrs and str(attrs.get(k, "")).strip() not in ["", "None", "none"]
             for k in ["workbook", "worksheet", "cell_range", "cell_range_number"]
         ):
             context_scores["desktop"] += 3
