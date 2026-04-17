@@ -257,6 +257,15 @@ def analyze():
             "filename": filename,
             "activities": [a.name for a in activities],
             "recommendations": [r.to_dict() for r in recommendations],
+            "event_column": event_column or loader.detected_column,
+            "log_preview": [
+                {
+                    "row_index": e.row_index,
+                    "event": e.event,
+                    "attributes": e.attributes,
+                }
+                for e in events[:100]
+            ],
         }
 
         history = get_history()
@@ -265,7 +274,15 @@ def analyze():
 
         return jsonify(
             {
-                "activities": [a.to_dict() for a in activities],
+                "activities": [
+                    {
+                        "name": a.name,
+                        "confidence": a.confidence,
+                        "evidence": a.evidence,
+                        "source_events": a.source_events,
+                    }
+                    for a in activities
+                ],
                 "recommendations": [r.to_dict() for r in recommendations],
                 "history_id": history_entry["id"],
             }

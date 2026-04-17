@@ -17,6 +17,7 @@ class CSVLoader:
         """
         self.llm_client = llm_client
         self._force_column = None
+        self.detected_column = None
 
     def load(self, filepath: str) -> List[Event]:
         """
@@ -45,6 +46,8 @@ class CSVLoader:
                 event_column = self._force_column
             else:
                 event_column = self._detect_event_column_with_llm(fieldnames)
+
+            self.detected_column = event_column
 
             if event_column is None:
                 raise ValueError(
