@@ -1,5 +1,6 @@
 """LLM-powered activity inference."""
 
+import re
 from typing import List, Optional, Dict, Any
 from ..models.event import Event
 from ..models.activity import Activity
@@ -84,7 +85,8 @@ Event attributes:
 {attr_list or "No additional attributes"}
 
 Based on these events, what activity was the user performing?
-- Provide a concise activity name in verb + object format (e.g., "Fill login form", "Select menu item", "Click submit button")
+- Provide a concise activity name in verb + object + context format when possible
+  (examples: "Click button on webpage", "Open workbook at C:\\Users\\...\\Downloads", "Paste value into text field")
 - Rate your confidence from 0.0 to 1.0
 - List which attributes support this inference
 
@@ -96,21 +98,37 @@ Evidence: <attributes that support this inference>"""
 
     def _parse_response(self, response: str, event_group: List[Event]) -> Activity:
         """Parse LLM response into Activity object."""
-        lines = response.strip().split("\n")
-        name = "Unknown Activity"
+        lines = response.strip().split("\n") if response else []
+        name = ""
         confidence = 0.5
         evidence = []
 
         for line in lines:
-            if line.startswith("Activity:"):
-                name = line.replace("Activity:", "").strip()
-            elif line.startswith("Confidence:"):
+            lower = line.lower().strip()
+            if lower.startswith("activity:") or lower.startswith("activity name:"):
+                name = re.sub(
+                    r"^activity( name)?:", "", line, flags=re.IGNORECASE
+                ).strip()
+            elif lower.startswith("confidence:"):
                 try:
-                    confidence = float(line.replace("Confidence:", "").strip())
+                    confidence = float(
+                        re.sub(r"^confidence:", "", line, flags=re.IGNORECASE).strip()
+                    )
                 except ValueError:
                     confidence = 0.5
-            elif line.startswith("Evidence:"):
-                evidence = [e.strip() for e in line.replace("Evidence:", "").split(",")]
+            elif lower.startswith("evidence:"):
+                evidence = [
+                    e.strip()
+                    for e in re.sub(r"^evidence:", "", line, flags=re.IGNORECASE).split(
+                        ","
+                    )
+                    if e.strip()
+                ]
+
+        if not name or name.lower() == "unknown activity":
+            name = self._derive_fallback_activity_name(event_group)
+        else:
+            name = self._post_process_inferred_name(name, event_group)
 
         source_events = [e.row_index for e in event_group if e.row_index is not None]
 
@@ -121,16 +139,100 @@ Evidence: <attributes that support this inference>"""
             source_events=source_events,
         )
 
+    def _post_process_inferred_name(self, name: str, event_group: List[Event]) -> str:
+        """Correct common grouped-event mis-inferences."""
+        event_text = " ".join([e.event.lower() for e in event_group])
+        lower_name = (name or "").lower()
+
+        # clickTextField + paste/changeField should infer Write activity,
+        # where click is prerequisite focus.
+        if (
+            any(k in event_text for k in ["paste", "type", "input", "changefield"])
+            and any(k in event_text for k in ["clicktextfield", "click"])
+            and "click" in lower_name
+        ):
+            is_web = any(
+                (e.attributes.get("browser_url") or e.attributes.get("url"))
+                or str(e.attributes.get("application", "")).lower()
+                in ["edge", "chrome", "firefox", "safari"]
+                or str(e.attributes.get("category", "")).lower() == "browser"
+                for e in event_group
+            )
+            return "Write HTML element on webpage" if is_web else "Write element"
+
+        return name
+
+    def _derive_fallback_activity_name(self, event_group: List[Event]) -> str:
+        """Derive a meaningful fallback activity name from event content."""
+        if not event_group:
+            return "Unknown activity"
+
+        event_text = " ".join([e.event.lower() for e in event_group])
+        attrs = event_group[0].attributes if event_group else {}
+
+        obj = attrs.get("tag_name") or attrs.get("element_type") or "element"
+
+        if any(
+            w in event_text
+            for w in ["open", "newworkbook", "openworkbook", "openwindow"]
+        ):
+            path = (
+                attrs.get("event_src_path")
+                or attrs.get("workbook")
+                or "target resource"
+            )
+            return f"Open {path}"
+
+        if any(
+            w in event_text for w in ["paste", "type", "input", "changefield", "write"]
+        ):
+            is_web = any(
+                (e.attributes.get("browser_url") or e.attributes.get("url"))
+                or str(e.attributes.get("application", "")).lower()
+                in ["edge", "chrome", "firefox", "safari"]
+                or str(e.attributes.get("category", "")).lower() == "browser"
+                for e in event_group
+            )
+            return (
+                "Write HTML element on webpage" if is_web else f"Write value into {obj}"
+            )
+
+        if any(w in event_text for w in ["click", "activate", "press"]):
+            url = attrs.get("browser_url") or attrs.get("url")
+            if url:
+                return f"Click {obj} on webpage"
+            return f"Click {obj}"
+
+        if any(w in event_text for w in ["getcell", "read", "extract"]):
+            cell = attrs.get("cell_range") or attrs.get("tag_name") or "cell"
+            return f"Read value from {cell}"
+
+        if any(
+            w in event_text for w in ["select", "tab", "navigate", "startpage", "link"]
+        ):
+            return "Navigate in application"
+
+        return f"Perform {event_group[0].event}"
+
     def _mock_infer(self, event_group: List[Event]) -> Activity:
         """Mock inference for testing without LLM."""
         event_text = " ".join([e.event.lower() for e in event_group])
         source_events = [e.row_index for e in event_group if e.row_index is not None]
 
-        if any(w in event_text for w in ["click", "select", "press"]):
-            name = "Click element"
-            confidence = 0.7
-        elif any(w in event_text for w in ["type", "fill", "input", "paste"]):
-            name = "Enter text"
+        if any(
+            w in event_text for w in ["type", "fill", "input", "paste", "changefield"]
+        ):
+            is_web = any(
+                (e.attributes.get("browser_url") or e.attributes.get("url"))
+                or str(e.attributes.get("application", "")).lower()
+                in ["edge", "chrome", "firefox", "safari"]
+                or str(e.attributes.get("category", "")).lower() == "browser"
+                for e in event_group
+            )
+            name = "Write HTML element on webpage" if is_web else "Write element"
+            confidence = 0.8
+        elif any(w in event_text for w in ["click", "select", "press"]):
+            name = "Activate element"
             confidence = 0.7
         elif any(w in event_text for w in ["scroll", "navigate", "change"]):
             name = "Navigate"
