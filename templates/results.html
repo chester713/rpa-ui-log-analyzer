@@ -7,19 +7,19 @@
     <style>
         * { box-sizing: border-box; margin: 0; padding: 0; }
         body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif; background: #f5f5f5; min-height: 100vh; }
-        .container { max-width: 1400px; margin: 0 auto; padding: 24px 20px; }
+        .container { max-width: 100vw; margin: 0 auto; padding: 24px 20px; overflow-x: hidden; }
         .nav { display: flex; gap: 20px; margin-bottom: 20px; }
         .nav a { color: #007bff; text-decoration: none; }
         .nav a:hover { text-decoration: underline; }
         h1 { color: #333; margin-bottom: 8px; }
         .meta { color: #666; font-size: 14px; margin-bottom: 16px; }
 
-        .layout { display: grid; grid-template-columns: 1.2fr 0.8fr; gap: 20px; }
-        .panel { background: white; border-radius: 12px; padding: 16px; box-shadow: 0 2px 8px rgba(0,0,0,0.08); }
+        .layout { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); gap: 20px; width: 100%; }
+        .panel { background: white; border-radius: 12px; padding: 16px; box-shadow: 0 2px 8px rgba(0,0,0,0.08); height: 72vh; display: flex; flex-direction: column; min-width: 0; }
         .panel h2 { font-size: 16px; color: #333; margin-bottom: 10px; }
 
-        .table-wrap { border: 1px solid #ddd; border-radius: 8px; max-height: 70vh; overflow: auto; }
-        table { width: max-content; min-width: 100%; border-collapse: collapse; font-size: 12px; }
+        .table-wrap { border: 1px solid #ddd; border-radius: 8px; flex: 1; min-width: 0; overflow: auto; }
+        table { width: max-content; min-width: 100%; border-collapse: collapse; font-size: 12px; table-layout: auto; }
         th, td { padding: 6px 10px; text-align: left; border-bottom: 1px solid #eee; white-space: nowrap; }
         th { position: sticky; top: 0; background: #f0f0f0; z-index: 5; }
         tr.row-clickable { cursor: pointer; }
@@ -27,12 +27,18 @@
         tr.row-active { background: #e7f0ff !important; }
         tr.row-related { background: #eef6ff; }
 
+        @media (max-width: 1100px) {
+            .layout { grid-template-columns: 1fr; }
+            .panel { height: 60vh; }
+        }
+
         .kv { margin-bottom: 10px; }
         .k { color: #666; font-size: 12px; margin-bottom: 4px; }
         .v { color: #222; font-size: 14px; font-weight: 600; }
         .pill { display: inline-block; padding: 4px 8px; border-radius: 999px; background: #e7f0ff; color: #1d4ed8; font-size: 12px; margin-right: 6px; margin-bottom: 6px; }
         .muted { color: #777; font-size: 13px; }
         .empty { color: #666; padding: 16px; border: 1px dashed #ddd; border-radius: 8px; }
+        #detailsPanel { overflow: auto; }
     </style>
 </head>
 <body>
@@ -55,16 +61,18 @@
                         <thead>
                             <tr>
                                 <th>#</th>
-                                <th>Event</th>
-                                <th>Attributes</th>
+                                {% for col in entry.log_columns %}
+                                <th>{{ col }}</th>
+                                {% endfor %}
                             </tr>
                         </thead>
                         <tbody>
                         {% for row in entry.log_preview %}
                             <tr class="row-clickable" data-row-index="{{ row.row_index }}">
                                 <td>{{ row.row_index }}</td>
-                                <td>{{ row.event }}</td>
-                                <td>{{ row.attributes | tojson }}</td>
+                                {% for col in entry.log_columns %}
+                                <td>{{ row['values'][col] }}</td>
+                                {% endfor %}
                             </tr>
                         {% endfor %}
                         </tbody>
@@ -83,6 +91,7 @@
                     <div class="kv"><div class="k">Recommended Method</div><div class="v" id="dMethod"></div></div>
                     <div class="kv"><div class="k">Confidence</div><div class="v" id="dConfidence"></div></div>
                     <div class="kv"><div class="k">Related Events</div><div id="dEvents"></div></div>
+                    <div class="kv"><div class="k">Prerequisite Steps</div><div id="dPrereq" class="muted">None</div></div>
                 </div>
             </div>
         </div>
@@ -94,11 +103,46 @@
     <script>
         const recommendations = {{ entry.recommendations | tojson }};
 
+        function isImplicitRecommendation(rec) {
+            const action = (rec.activity_action || '').toLowerCase();
+            return action === 'find' || action === 'switch';
+        }
+
+        function getExplicitRecommendations() {
+            return recommendations.filter(rec => !isImplicitRecommendation(rec));
+        }
+
+        function getImplicitRecommendations() {
+            return recommendations.filter(rec => isImplicitRecommendation(rec));
+        }
+
         function findRecommendationByRow(rowIndex) {
-            for (const rec of recommendations) {
+            for (const rec of getExplicitRecommendations()) {
                 if (Array.isArray(rec.events) && rec.events.includes(rowIndex)) return rec;
             }
             return null;
+        }
+
+        function getPrerequisitesForRecommendation(rec) {
+            const implicit = getImplicitRecommendations();
+            const recEvents = new Set(rec.events || []);
+            const prereqs = [];
+
+            for (const imp of implicit) {
+                const action = (imp.activity_action || '').toLowerCase();
+                const shared = (imp.events || []).some(e => recEvents.has(e));
+                if (shared) {
+                    prereqs.push(imp);
+                    continue;
+                }
+
+                // show context switch if it moves into this recommendation context
+                if (action === 'switch' && imp.context_switch_to === rec.execution_environment) {
+                    prereqs.push(imp);
+                }
+            }
+
+            return prereqs;
         }
 
         function renderDetails(rec) {
@@ -119,6 +163,21 @@
                 span.textContent = 'Row ' + e;
                 eventsWrap.appendChild(span);
             });
+
+            const prereqWrap = document.getElementById('dPrereq');
+            const prereqs = getPrerequisitesForRecommendation(rec);
+            if (!prereqs.length) {
+                prereqWrap.textContent = 'None';
+            } else {
+                prereqWrap.innerHTML = '';
+                prereqs.forEach(p => {
+                    const span = document.createElement('span');
+                    span.className = 'pill';
+                    const pattern = p.pattern_matched ? ` (${p.pattern_matched})` : '';
+                    span.textContent = `${p.inferred_activity}${pattern}`;
+                    prereqWrap.appendChild(span);
+                });
+            }
 
             document.querySelectorAll('tr.row-clickable').forEach(tr => {
                 const idx = Number(tr.dataset.rowIndex);
