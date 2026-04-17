@@ -227,6 +227,25 @@ def analyze():
         for mapping in mappings:
             activity = mapping.activity
             events_list = mapping.events
+
+            # Enforce grouped-event task interpretation:
+            # clickTextField + paste/changeField => Write objective (click is prerequisite focus)
+            event_text = " ".join([e.event.lower() for e in events_list])
+            if any(
+                k in event_text for k in ["paste", "type", "input", "changefield"]
+            ) and any(k in event_text for k in ["clicktextfield", "click"]):
+                is_web_group = any(
+                    (e.attributes.get("browser_url") or e.attributes.get("url"))
+                    or str(e.attributes.get("application", "")).lower()
+                    in ["edge", "chrome", "firefox", "safari"]
+                    or str(e.attributes.get("category", "")).lower() == "browser"
+                    for e in events_list
+                )
+                activity.name = (
+                    "Write HTML element on webpage" if is_web_group else "Write element"
+                )
+                activity.confidence = max(activity.confidence, 0.8)
+
             context = get_context_from_events(events_list)
             context_sequence.append(context)
 

@@ -46,12 +46,23 @@ class PatternMatcher:
     ) -> List[MethodRecommendation]:
         """Create implicit recommendations (Find + Switch Context)."""
         implicit = []
+        seen_switches = set()
+        seen_finds = set()
 
         # Add Switch Context recommendation on context transitions
         for i in range(1, len(mappings)):
             prev_ctx = context_sequence[i - 1]
             cur_ctx = context_sequence[i]
             if prev_ctx != cur_ctx:
+                switch_key = (
+                    prev_ctx,
+                    cur_ctx,
+                    tuple(mappings[i].activity.source_events or []),
+                )
+                if switch_key in seen_switches:
+                    continue
+                seen_switches.add(switch_key)
+
                 switch_pattern = self._find_pattern_by_action_object(
                     "Switch", "Context", "desktop"
                 )
@@ -79,6 +90,11 @@ class PatternMatcher:
             action, obj = self._normalize_activity(action, obj, mapping.events)
 
             if action in {"Read", "Write", "Focus", "Activate"}:
+                find_key = (action, ctx, tuple(mapping.activity.source_events or []))
+                if find_key in seen_finds:
+                    continue
+                seen_finds.add(find_key)
+
                 find_pattern = self._find_pattern_by_action_object(
                     "Find", "Element", ctx
                 )
