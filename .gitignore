@@ -1,0 +1,4 @@
+data/uploads/*.csv
+data/history.json
+src/**/__pycache__/
+*.pyc
