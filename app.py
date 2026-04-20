@@ -271,6 +271,7 @@ def analyze():
         from src.matching.pattern_matcher import get_context_from_events, PatternMatcher
         from src.matching import PATTERNS
         from src.models.pattern import MethodRecommendation
+        from src.process_mining import build_dfg_payload
 
         recommendations = []
         matcher = PatternMatcher(PATTERNS)
@@ -455,12 +456,27 @@ def analyze():
 
         recommendations.sort(key=lambda r: (_method_priority(r.method), -r.confidence))
 
+        session_id = f"{filename}:{uuid.uuid4()}"
+        try:
+            dfg_payload = build_dfg_payload(mappings, session_id=session_id)
+        except Exception as dfg_error:
+            return (
+                jsonify(
+                    {
+                        "error": "DFG generation failed",
+                        "details": str(dfg_error),
+                    }
+                ),
+                500,
+            )
+
         history_entry = {
             "id": str(uuid.uuid4()),
             "timestamp": datetime.now().isoformat(),
             "filename": filename,
             "activities": [a.name for a in activities],
             "recommendations": [r.to_dict() for r in recommendations],
+            "dfg": dfg_payload,
             "event_column": event_column or loader.detected_column,
             "log_columns": log_columns,
             "log_preview": log_preview,
@@ -484,6 +500,7 @@ def analyze():
                 ],
                 "recommendations": [r.to_dict() for r in recommendations],
                 "history_id": history_entry["id"],
+                "dfg": dfg_payload,
             }
         )
 

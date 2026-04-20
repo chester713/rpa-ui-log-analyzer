@@ -122,7 +122,7 @@ def _patch_analysis_dependencies(monkeypatch, tmp_path: Path, fake_dfg: dict):
     monkeypatch.setattr("src.matching.pattern_matcher.get_context_from_events", lambda _events: "web")
     monkeypatch.setattr("src.matching.PATTERNS", [])
     monkeypatch.setattr("src.models.pattern.MethodRecommendation", _FakeRecommendation)
-    monkeypatch.setattr("src.process_mining.dfg_builder.build_dfg_payload", lambda mappings, session_id: fake_dfg)
+    monkeypatch.setattr("src.process_mining.build_dfg_payload", lambda mappings, session_id: fake_dfg)
 
     return saved
 
