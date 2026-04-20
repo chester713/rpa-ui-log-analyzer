@@ -21,6 +21,16 @@
         .panel { background: white; border-radius: 12px; padding: 16px; box-shadow: 0 2px 8px rgba(0,0,0,0.08); height: 72vh; display: flex; flex-direction: column; min-width: 0; }
         .panel h2 { font-size: 16px; color: #333; margin-bottom: 10px; }
 
+        .dfg-section { width: 100%; margin-top: 20px; }
+        .dfg-panel { background: white; border-radius: 12px; padding: 16px; box-shadow: 0 2px 8px rgba(0,0,0,0.08); }
+        .dfg-panel h2 { font-size: 16px; color: #333; margin-bottom: 10px; }
+        .dfg-wrap { width: 100%; overflow: auto; border: 1px solid #ddd; border-radius: 8px; }
+        #dfgSvg { width: 100%; min-height: 260px; display: block; background: #fafcff; }
+        .dfg-edge { stroke: #9ca3af; stroke-width: 2; }
+        .dfg-edge-label { fill: #374151; font-size: 11px; }
+        .dfg-node { fill: #dbeafe; stroke: #2563eb; stroke-width: 1.5; }
+        .dfg-node-label { fill: #1f2937; font-size: 12px; }
+
         .table-wrap { border: 1px solid #ddd; border-radius: 8px; flex: 1; min-width: 0; overflow: auto; }
         table { width: max-content; min-width: 100%; border-collapse: collapse; font-size: 12px; table-layout: auto; }
         th, td { padding: 6px 10px; text-align: left; border-bottom: 1px solid #eee; white-space: nowrap; }
@@ -109,6 +119,16 @@
                 </div>
             </div>
         </div>
+
+        <section id="dfgSection" class="dfg-section">
+            <div class="dfg-panel">
+                <h2>Direct-Follow Graph</h2>
+                <div class="dfg-wrap">
+                    <svg id="dfgSvg" role="img" aria-label="Direct-follow graph"></svg>
+                </div>
+                <div class="muted" style="margin-top:8px;">Node labels show inferred activities and edge labels show direct-follow frequencies.</div>
+            </div>
+        </section>
         {% else %}
         <div class="panel"><div class="empty">No recommendations available.</div></div>
         {% endif %}
@@ -118,9 +138,94 @@
         const recommendations = {{ entry.recommendations | tojson }};
         const logPreview = {{ entry.log_preview | tojson }};
         const logColumns = {{ entry.log_columns | tojson }};
+        const dfg = {{ entry.dfg | tojson }};
         const rowMap = new Map((logPreview || []).map(r => [Number(r.row_index), r.values || {}]));
         const methodOverrides = {};
         let currentRecKey = null;
+
+        function createSvgNode(tag) {
+            return document.createElementNS('http://www.w3.org/2000/svg', tag);
+        }
+
+        function renderDfgGraph() {
+            const svg = document.getElementById('dfgSvg');
+            if (!svg) return;
+            while (svg.firstChild) svg.removeChild(svg.firstChild);
+
+            const nodes = Array.isArray(dfg?.nodes) ? dfg.nodes : [];
+            const edges = Array.isArray(dfg?.edges) ? dfg.edges : [];
+
+            if (!nodes.length) {
+                const text = createSvgNode('text');
+                text.setAttribute('x', '16');
+                text.setAttribute('y', '26');
+                text.setAttribute('fill', '#6b7280');
+                text.textContent = 'No DFG data available for this analysis.';
+                svg.appendChild(text);
+                return;
+            }
+
+            const width = Math.max(svg.clientWidth || 800, nodes.length * 160);
+            const height = 260;
+            svg.setAttribute('viewBox', `0 0 ${width} ${height}`);
+
+            const nodeSpacing = width / (nodes.length + 1);
+            const nodeY = height / 2;
+            const nodeRadius = 24;
+            const nodePositions = new Map();
+
+            nodes.forEach((nodeName, index) => {
+                nodePositions.set(String(nodeName), {
+                    x: Math.round(nodeSpacing * (index + 1)),
+                    y: nodeY,
+                });
+            });
+
+            edges.forEach((edge) => {
+                const sourceName = String(edge.source || '');
+                const targetName = String(edge.target || '');
+                const source = nodePositions.get(sourceName);
+                const target = nodePositions.get(targetName);
+                if (!source || !target) return;
+
+                const line = createSvgNode('line');
+                line.setAttribute('class', 'dfg-edge');
+                line.setAttribute('x1', String(source.x));
+                line.setAttribute('y1', String(source.y));
+                line.setAttribute('x2', String(target.x));
+                line.setAttribute('y2', String(target.y));
+                svg.appendChild(line);
+
+                const label = createSvgNode('text');
+                label.setAttribute('class', 'dfg-edge-label');
+                label.setAttribute('x', String((source.x + target.x) / 2));
+                label.setAttribute('y', String((source.y + target.y) / 2 - 10));
+                label.setAttribute('text-anchor', 'middle');
+                label.textContent = String(edge.frequency ?? 0);
+                svg.appendChild(label);
+            });
+
+            nodes.forEach((nodeName) => {
+                const pos = nodePositions.get(String(nodeName));
+                if (!pos) return;
+
+                const circle = createSvgNode('circle');
+                circle.setAttribute('class', 'dfg-node');
+                circle.setAttribute('cx', String(pos.x));
+                circle.setAttribute('cy', String(pos.y));
+                circle.setAttribute('r', String(nodeRadius));
+                circle.setAttribute('aria-label', `Activity node ${String(nodeName)}`);
+                svg.appendChild(circle);
+
+                const label = createSvgNode('text');
+                label.setAttribute('class', 'dfg-node-label');
+                label.setAttribute('x', String(pos.x));
+                label.setAttribute('y', String(pos.y + 42));
+                label.setAttribute('text-anchor', 'middle');
+                label.textContent = String(nodeName);
+                svg.appendChild(label);
+            });
+        }
 
         const methodAliases = {
             'html dom parsing': 'DOM Parsing',
@@ -438,6 +543,8 @@
                 if (rec) renderDetails(rec);
             });
         });
+
+        renderDfgGraph();
     </script>
 </body>
 </html>
