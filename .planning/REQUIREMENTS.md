@@ -27,11 +27,11 @@
 
 ### CLI & Output
 
-- [ ] **REQ-05**: Build CLI interface
+- [x] **REQ-05**: Build CLI interface
   - Accept CSV file path as input
   - Provide usage instructions and help
 
-- [ ] **REQ-06**: Generate structured output
+- [x] **REQ-06**: Generate structured output
   - Output inferred activity per event group
   - Output recommended method
   - Include event-to-activity mapping for traceability

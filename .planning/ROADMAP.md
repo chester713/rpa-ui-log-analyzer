@@ -62,6 +62,11 @@
 
 **Requirements:** REQ-05, REQ-06
 
+**Plans:** 1 plan
+
+Plans:
+- [x] 03-01-PLAN.md — Harden CLI/output contracts and add Phase 3 regression tests
+
 **Success Criteria:**
 1. CLI accepts CSV file path as input
 2. Output includes inferred activity, recommended method, and event-to-activity mapping
