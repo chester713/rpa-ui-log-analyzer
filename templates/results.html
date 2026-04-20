@@ -29,6 +29,8 @@
         .dfg-edge { stroke: #9ca3af; stroke-width: 2; }
         .dfg-edge-label { fill: #374151; font-size: 11px; }
         .dfg-node { fill: #dbeafe; stroke: #2563eb; stroke-width: 1.5; }
+        .dfg-node.dfg-node-related { fill: #bfdbfe; }
+        .dfg-node.dfg-node-active { fill: #60a5fa; stroke: #1d4ed8; stroke-width: 2.5; }
         .dfg-node-label { fill: #1f2937; font-size: 12px; }
 
         .table-wrap { border: 1px solid #ddd; border-radius: 8px; flex: 1; min-width: 0; overflow: auto; }
@@ -142,6 +144,8 @@
         const rowMap = new Map((logPreview || []).map(r => [Number(r.row_index), r.values || {}]));
         const methodOverrides = {};
         let currentRecKey = null;
+        let activeDfgActivity = null;
+        const dfgNodeElements = new Map();
 
         function createSvgNode(tag) {
             return document.createElementNS('http://www.w3.org/2000/svg', tag);
@@ -215,6 +219,9 @@
                 circle.setAttribute('cy', String(pos.y));
                 circle.setAttribute('r', String(nodeRadius));
                 circle.setAttribute('aria-label', `Activity node ${String(nodeName)}`);
+                circle.dataset.activity = String(nodeName);
+                dfgNodeElements.set(String(nodeName), circle);
+                circle.addEventListener('click', () => activateDfgNode(String(nodeName), { force: true }));
                 svg.appendChild(circle);
 
                 const label = createSvgNode('text');
@@ -224,6 +231,57 @@
                 label.setAttribute('text-anchor', 'middle');
                 label.textContent = String(nodeName);
                 svg.appendChild(label);
+            });
+        }
+
+        function findRowsForActivity(activityName) {
+            const rows = new Set();
+            const activityKey = String(activityName || '');
+            getExplicitRecommendations().forEach((rec) => {
+                if (String(rec?.inferred_activity || '') === activityKey) {
+                    (rec.events || []).forEach((idx) => rows.add(Number(idx)));
+                }
+            });
+            return Array.from(rows).sort((a, b) => a - b);
+        }
+
+        function applyRowHighlights(activeRowIndex, relatedRows) {
+            const related = new Set((relatedRows || []).map((v) => Number(v)));
+            document.querySelectorAll('tr.row-clickable').forEach(tr => {
+                const idx = Number(tr.dataset.rowIndex);
+                tr.classList.remove('row-active', 'row-related');
+                if (idx === Number(activeRowIndex)) {
+                    tr.classList.add('row-active');
+                } else if (related.has(idx)) {
+                    tr.classList.add('row-related');
+                }
+            });
+        }
+
+        function activateDfgNode(activityName, opts = {}) {
+            const activityKey = String(activityName || '');
+            if (!activityKey) return;
+            if (activeDfgActivity === activityKey && !opts.force) {
+                return;
+            }
+            activeDfgActivity = activityKey;
+
+            const relatedRows = findRowsForActivity(activityKey);
+            applyRowHighlights(currentRow, relatedRows);
+
+            dfgNodeElements.forEach((node, nodeName) => {
+                const isActive = nodeName === activityKey;
+                const isRelated = !isActive && relatedRows.some((rowIndex) => {
+                    const rec = findRecommendationByRow(rowIndex);
+                    return String(rec?.inferred_activity || '') === nodeName;
+                });
+                node.classList.remove('dfg-node-active', 'dfg-node-related');
+                if (isActive || isRelated) {
+                    node.classList.add(isActive ? 'dfg-node-active' : 'dfg-node-related');
+                }
+                if (isActive) {
+                    node.classList.add('dfg-node-active');
+                }
             });
         }
 
@@ -466,13 +524,7 @@
                 });
             }
 
-            document.querySelectorAll('tr.row-clickable').forEach(tr => {
-                const idx = Number(tr.dataset.rowIndex);
-                tr.classList.remove('row-active', 'row-related');
-                if ((rec.events || []).includes(idx)) {
-                    tr.classList.add(idx === Number(currentRow) ? 'row-active' : 'row-related');
-                }
-            });
+            applyRowHighlights(currentRow, rec.events || []);
         }
 
         function escapeCsv(value) {
@@ -540,7 +592,11 @@
                 const idx = Number(tr.dataset.rowIndex);
                 currentRow = idx;
                 const rec = findRecommendationByRow(idx);
-                if (rec) renderDetails(rec);
+                if (rec) {
+                    renderDetails(rec);
+                    const activityName = rec?.inferred_activity || null;
+                    if (activityName) activateDfgNode(activityName);
+                }
             });
         });
 
