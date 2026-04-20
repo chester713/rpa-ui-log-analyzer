@@ -3,13 +3,13 @@ gsd_state_version: 1.0
 milestone: v1.0
 milestone_name: milestone
 status: unknown
-last_updated: "2026-04-20T00:53:22.217Z"
+last_updated: "2026-04-20T01:22:19.816Z"
 progress:
-  total_phases: 4
+  total_phases: 5
   completed_phases: 1
-  total_plans: 4
-  completed_plans: 1
-  percent: 25
+  total_plans: 5
+  completed_plans: 3
+  percent: 60
 ---
 
 # STATE.md
@@ -34,6 +34,13 @@ An AI-powered recommendation system that analyzes UI interaction logs (CSV forma
 - Phase 2: Pattern System (pattern library, matching logic)
 - Phase 3: CLI & Integration (CLI interface, output generation)
 
+**Planning update (2026-04-20):**
+
+- Added Phase 5 planning for Direct-Follow Graph (DFG) generation + interactive web visualization.
+- Phase 5 is split into two sequential plans:
+  - Plan 05-01: Backend activity-log→DFG transformation + additive API/history contract + regression tests
+  - Plan 05-02: Full-width results-page DFG rendering + bidirectional event/node highlighting tests
+
 ### Decisions Made
 
 | Decision | Rationale | Status |
@@ -46,11 +53,16 @@ An AI-powered recommendation system that analyzes UI interaction logs (CSV forma
 
 - [Phase 03-cli-integration]: Used subprocess-based black-box CLI tests to lock help/error/output contract behavior.
 - [Phase 03-cli-integration]: Kept canonical recommendation JSON key names and enforced deterministic key presence for REQ-06 traceability.
+- [Phase 05-direct-follow-graph]: [Phase 05-01]: Isolated PM4Py DFG transformation in src/process_mining/dfg_builder.py and integrated additively into /analyze and history contracts.
+- [Phase 05-direct-follow-graph]: [Phase 05-01]: Added explicit 500 error response when DFG generation fails to avoid silent partial persistence.
+- [Phase 05-direct-follow-graph]: [Phase 05-02]: Implemented DFG visualization with inline SVG in results.html to avoid introducing frontend framework dependencies.
+- [Phase 05-direct-follow-graph]: [Phase 05-02]: Reused recommendation mapping as the single source of truth for bidirectional DFG node↔event highlighting.
 
 ### Open Issues
 
 - Pattern library needs to be populated from user's PDF definitions
 - Event attributes need to be mapped to execution context (web/desktop/visual)
+- PM4Py AGPL-3.0 license implications should be reviewed before production/commercial distribution.
 
 ### Approach
 

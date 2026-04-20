@@ -58,6 +58,22 @@
   - Patterns stored as skill.md files
   - Recommendation approach as separate skill.md
 
+- [x] **REQ-13**: Build direct-follow activity event log and derive DFG
+  - Preserve sequence/order per analyzed file/session
+  - Use an existing process-mining direct-follows algorithm/library
+  - Output DFG nodes/edges with frequencies and start/end activities
+
+- [x] **REQ-14**: Render and synchronize DFG in web portal results
+  - Display DFG below current two-panel results layout
+  - DFG container spans full content width
+  - Node click highlights related events in left panel
+  - Event click highlights corresponding inferred activity node
+
+- [x] **REQ-15**: Preserve existing analysis/recommendation behavior while adding DFG
+  - Existing recommendations payload remains backward compatible
+  - Existing pipeline outputs remain intact for current consumers
+  - Add automated tests for DFG transformation and UI interaction wiring
+
 ## Out of Scope
 
 - **GUI interface** — CLI-only for v1
@@ -77,6 +93,9 @@
 | REQ-04 | Phase 2 | Pattern matching and method recommendation |
 | REQ-05 | Phase 3 | CLI interface |
 | REQ-06 | Phase 3 | Structured output generation |
+| REQ-13 | Phase 5 | Direct-follow graph generation from inferred activities |
+| REQ-14 | Phase 5 | Interactive DFG rendering and cross-highlighting in web UI |
+| REQ-15 | Phase 5 | Regression-safe DFG integration with automated verification |
 
 ---
 
