@@ -24,6 +24,12 @@
         .dfg-section { width: 100%; margin-top: 20px; }
         .dfg-panel { background: white; border-radius: 12px; padding: 16px; box-shadow: 0 2px 8px rgba(0,0,0,0.08); }
         .dfg-panel h2 { font-size: 16px; color: #333; margin-bottom: 10px; }
+        .dfg-toolbar { display: flex; align-items: center; gap: 8px; margin-bottom: 10px; flex-wrap: wrap; }
+        .dfg-zoom-btn { border: 1px solid #cbd5e1; background: #ffffff; color: #1f2937; border-radius: 8px; padding: 6px 10px; cursor: pointer; font-size: 12px; line-height: 1.1; }
+        .dfg-zoom-btn:hover { background: #f8fafc; }
+        .dfg-zoom-btn:disabled { cursor: not-allowed; opacity: 0.5; }
+        .dfg-zoom-slider { width: 220px; max-width: 100%; accent-color: #2563eb; }
+        .dfg-zoom-label { color: #6b7280; font-size: 12px; margin-left: 4px; }
         .dfg-wrap { width: 100%; overflow: auto; border: 1px solid #ddd; border-radius: 8px; }
         #dfgSvg { width: 100%; min-height: 260px; display: block; background: #fafcff; }
         .dfg-edge { stroke: #9ca3af; stroke-width: 2; }
@@ -125,6 +131,13 @@
         <section id="dfgSection" class="dfg-section">
             <div class="dfg-panel">
                 <h2>Direct-Follow Graph</h2>
+                <div class="dfg-toolbar" aria-label="Direct-follow graph zoom controls">
+                    <button type="button" id="dfgZoomInBtn" class="dfg-zoom-btn">Zoom In</button>
+                    <button type="button" id="dfgZoomOutBtn" class="dfg-zoom-btn">Zoom Out</button>
+                    <button type="button" id="dfgResetZoomBtn" class="dfg-zoom-btn">Reset</button>
+                    <input type="range" id="dfgZoomSlider" class="dfg-zoom-slider" min="100" max="500" step="1" value="100" aria-label="DFG zoom percentage slider">
+                    <span id="dfgZoomLevel" class="dfg-zoom-label">100%</span>
+                </div>
                 <div class="dfg-wrap">
                     <svg id="dfgSvg" role="img" aria-label="Direct-follow graph"></svg>
                 </div>
@@ -146,9 +159,86 @@
         let currentRecKey = null;
         let activeDfgActivity = null;
         const dfgNodeElements = new Map();
+        const DFG_MIN_ZOOM = 1;
+        const DFG_MAX_ZOOM = 5;
+        const DFG_ZOOM_STEP = 0.2;
+        let dfgZoomScale = 1;
+        let dfgViewportGroup = null;
+        let dfgGraphWidth = 800;
+        let dfgGraphHeight = 260;
 
         function createSvgNode(tag) {
             return document.createElementNS('http://www.w3.org/2000/svg', tag);
+        }
+
+        function clamp(value, min, max) {
+            return Math.min(max, Math.max(min, value));
+        }
+
+        function updateDfgZoomUi() {
+            const zoomInBtn = document.getElementById('dfgZoomInBtn');
+            const zoomOutBtn = document.getElementById('dfgZoomOutBtn');
+            const resetBtn = document.getElementById('dfgResetZoomBtn');
+            const zoomSlider = document.getElementById('dfgZoomSlider');
+            const zoomLevel = document.getElementById('dfgZoomLevel');
+
+            const hasGraph = Boolean(dfgViewportGroup);
+            const canZoomIn = hasGraph && dfgZoomScale < DFG_MAX_ZOOM;
+            const canZoomOut = hasGraph && dfgZoomScale > DFG_MIN_ZOOM;
+            if (zoomInBtn) zoomInBtn.disabled = !canZoomIn;
+            if (zoomOutBtn) zoomOutBtn.disabled = !canZoomOut;
+            if (resetBtn) resetBtn.disabled = !hasGraph;
+            if (zoomSlider) {
+                zoomSlider.disabled = !hasGraph;
+                zoomSlider.value = String(Math.round(dfgZoomScale * 100));
+            }
+            if (zoomLevel) zoomLevel.textContent = `${Math.round(dfgZoomScale * 100)}%`;
+        }
+
+        function applyDfgZoom() {
+            if (!dfgViewportGroup) {
+                updateDfgZoomUi();
+                return;
+            }
+            const centerX = dfgGraphWidth / 2;
+            const centerY = dfgGraphHeight / 2;
+            const translateX = centerX * (1 - dfgZoomScale);
+            const translateY = centerY * (1 - dfgZoomScale);
+            dfgViewportGroup.setAttribute('transform', `translate(${translateX} ${translateY}) scale(${dfgZoomScale})`);
+            updateDfgZoomUi();
+        }
+
+        function setDfgZoom(scale) {
+            dfgZoomScale = clamp(scale, DFG_MIN_ZOOM, DFG_MAX_ZOOM);
+            applyDfgZoom();
+        }
+
+        function bindDfgZoomControls() {
+            const zoomInBtn = document.getElementById('dfgZoomInBtn');
+            const zoomOutBtn = document.getElementById('dfgZoomOutBtn');
+            const resetBtn = document.getElementById('dfgResetZoomBtn');
+            const zoomSlider = document.getElementById('dfgZoomSlider');
+
+            if (zoomInBtn) {
+                zoomInBtn.addEventListener('click', () => setDfgZoom(dfgZoomScale + DFG_ZOOM_STEP));
+            }
+            if (zoomOutBtn) {
+                zoomOutBtn.addEventListener('click', () => setDfgZoom(dfgZoomScale - DFG_ZOOM_STEP));
+            }
+            if (resetBtn) {
+                resetBtn.addEventListener('click', () => setDfgZoom(1));
+            }
+            if (zoomSlider) {
+                zoomSlider.addEventListener('input', (event) => {
+                    const target = event.target;
+                    if (!target) return;
+                    const zoomPercent = Number(target.value);
+                    if (!Number.isFinite(zoomPercent)) return;
+                    setDfgZoom(zoomPercent / 100);
+                });
+            }
+
+            updateDfgZoomUi();
         }
 
         function renderDfgGraph() {
@@ -158,20 +248,29 @@
 
             const nodes = Array.isArray(dfg?.nodes) ? dfg.nodes : [];
             const edges = Array.isArray(dfg?.edges) ? dfg.edges : [];
+            dfgNodeElements.clear();
 
             if (!nodes.length) {
+                dfgViewportGroup = null;
                 const text = createSvgNode('text');
                 text.setAttribute('x', '16');
                 text.setAttribute('y', '26');
                 text.setAttribute('fill', '#6b7280');
                 text.textContent = 'No DFG data available for this analysis.';
                 svg.appendChild(text);
+                updateDfgZoomUi();
                 return;
             }
 
             const width = Math.max(svg.clientWidth || 800, nodes.length * 160);
             const height = 260;
+            dfgGraphWidth = width;
+            dfgGraphHeight = height;
             svg.setAttribute('viewBox', `0 0 ${width} ${height}`);
+
+            const graphLayer = createSvgNode('g');
+            dfgViewportGroup = graphLayer;
+            svg.appendChild(graphLayer);
 
             const nodeSpacing = width / (nodes.length + 1);
             const nodeY = height / 2;
@@ -198,7 +297,7 @@
                 line.setAttribute('y1', String(source.y));
                 line.setAttribute('x2', String(target.x));
                 line.setAttribute('y2', String(target.y));
-                svg.appendChild(line);
+                graphLayer.appendChild(line);
 
                 const label = createSvgNode('text');
                 label.setAttribute('class', 'dfg-edge-label');
@@ -206,7 +305,7 @@
                 label.setAttribute('y', String((source.y + target.y) / 2 - 10));
                 label.setAttribute('text-anchor', 'middle');
                 label.textContent = String(edge.frequency ?? 0);
-                svg.appendChild(label);
+                graphLayer.appendChild(label);
             });
 
             nodes.forEach((nodeName) => {
@@ -222,7 +321,7 @@
                 circle.dataset.activity = String(nodeName);
                 dfgNodeElements.set(String(nodeName), circle);
                 circle.addEventListener('click', () => activateDfgNode(String(nodeName), { force: true }));
-                svg.appendChild(circle);
+                graphLayer.appendChild(circle);
 
                 const label = createSvgNode('text');
                 label.setAttribute('class', 'dfg-node-label');
@@ -230,8 +329,10 @@
                 label.setAttribute('y', String(pos.y + 42));
                 label.setAttribute('text-anchor', 'middle');
                 label.textContent = String(nodeName);
-                svg.appendChild(label);
+                graphLayer.appendChild(label);
             });
+
+            applyDfgZoom();
         }
 
         function findRowsForActivity(activityName) {
@@ -267,7 +368,11 @@
             activeDfgActivity = activityKey;
 
             const relatedRows = findRowsForActivity(activityKey);
-            applyRowHighlights(currentRow, relatedRows);
+            const preserveActiveRow = Boolean(opts.preserveActiveRow);
+            if (!preserveActiveRow) {
+                currentRow = null;
+            }
+            applyRowHighlights(preserveActiveRow ? currentRow : null, relatedRows);
 
             dfgNodeElements.forEach((node, nodeName) => {
                 const isActive = nodeName === activityKey;
@@ -595,12 +700,13 @@
                 if (rec) {
                     renderDetails(rec);
                     const activityName = rec?.inferred_activity || null;
-                    if (activityName) activateDfgNode(activityName);
+                    if (activityName) activateDfgNode(activityName, { preserveActiveRow: true });
                 }
             });
         });
 
         renderDfgGraph();
+        bindDfgZoomControls();
     </script>
 </body>
 </html>
