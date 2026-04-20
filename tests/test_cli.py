@@ -35,7 +35,7 @@ def test_cli_missing_file() -> None:
     """CLI should fail fast when given a missing file path."""
     result = run_cli("missing.csv")
 
-    assert result.returncode != 0
+    assert result.returncode == 1
     assert "Error: File not found" in result.stderr
 
 
