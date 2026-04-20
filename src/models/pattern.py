@@ -86,7 +86,8 @@ class MethodRecommendation:
 
     def to_dict(self) -> dict:
         """Convert to dictionary for output."""
-        return {
+        # Canonical REQ-06 output shape; required keys must remain present.
+        recommendation_record = {
             "inferred_activity": self.activity_name,
             "activity_action": self.activity_action,
             "activity_object": self.activity_object,
@@ -102,3 +103,4 @@ class MethodRecommendation:
             "context_switch_from": self.context_switch_from,
             "context_switch_to": self.context_switch_to,
         }
+        return recommendation_record

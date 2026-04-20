@@ -53,5 +53,12 @@ def test_cli_output_json_contract(tmp_path: Path) -> None:
 
     assert payload["recommendations"]
     recommendation = payload["recommendations"][0]
-    for key in ["inferred_activity", "events", "method", "method_category"]:
+    for key in [
+        "inferred_activity",
+        "events",
+        "execution_environment",
+        "method",
+        "method_category",
+        "confidence",
+    ]:
         assert key in recommendation
