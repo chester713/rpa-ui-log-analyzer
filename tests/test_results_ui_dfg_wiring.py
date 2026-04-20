@@ -24,8 +24,11 @@ def test_results_template_wires_node_click_to_event_row_highlight() -> None:
     template = _template_text()
 
     assert "function findRowsForActivity(activityName)" in template
+    assert "function findRecommendationByActivity(activityName)" in template
     assert "currentRow = null;" in template
     assert "applyRowHighlights(preserveActiveRow ? currentRow : null, relatedRows);" in template
+    assert "if (opts.syncDetails !== false)" in template
+    assert "renderDetails(rec);" in template
     assert "tr.classList.add('row-related')" in template
     assert "tr.classList.remove('row-active', 'row-related')" in template
     assert "circle.addEventListener('click', () => activateDfgNode(" in template
@@ -37,7 +40,7 @@ def test_results_template_wires_event_row_click_to_node_highlight() -> None:
     assert "function activateDfgNode(activityName, opts = {})" in template
     assert "node.classList.add('dfg-node-active')" in template
     assert "const activityName = rec?.inferred_activity || null;" in template
-    assert "if (activityName) activateDfgNode(activityName, { preserveActiveRow: true });" in template
+    assert "if (activityName) activateDfgNode(activityName, { preserveActiveRow: true, syncDetails: false });" in template
 
 
 def test_results_template_keeps_single_active_focus_state() -> None:

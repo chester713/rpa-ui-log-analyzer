@@ -122,7 +122,7 @@ class TestActivityInferrer:
         inferrer = ActivityInferrer()
         activity = inferrer.infer_activity(events)
 
-        assert activity.name == "Click button 'login-button' on example.com"
+        assert activity.name == "Click button 'login-button' on example.com/login in Chrome"
 
     def test_mock_infer_desktop_name_uses_spreadsheet_context(self):
         """Desktop naming should include workbook/worksheet/cell_range context when present."""
@@ -164,4 +164,72 @@ class TestActivityInferrer:
         inferrer = ActivityInferrer(llm_client=object())
         activity = inferrer._parse_response("Activity: Unknown activity", events)
 
-        assert activity.name == "Click button element on portal.example.org"
+        assert activity.name == "Click button element (event row 10) on portal.example.org/home"
+
+    def test_parse_response_fallback_opaque_id_uses_xpath_locator_hint(self):
+        """Opaque IDs should include readable xpath-derived hint when available."""
+        events = [
+            Event(
+                "click",
+                {
+                    "tag_name": "input",
+                    "element_id": "b80f58dd-9559-4a90-aaf4-81c001ea6ce2",
+                    "xpath": "//table/tbody/tr[3]/td[2]/input[@type='text'][1]",
+                    "webpage": "https://portal.example.org/orders",
+                },
+                99,
+            )
+        ]
+
+        inferrer = ActivityInferrer(llm_client=object())
+        activity = inferrer._parse_response("Activity: Unknown activity", events)
+
+        assert (
+            activity.name
+            == "Click input 'input type=text #1' (input type=text #1, row 3) on portal.example.org/orders"
+        )
+
+    def test_mock_infer_web_name_prefers_url_and_application_context(self):
+        """Web names should include readable URL context and browser application."""
+        events = [
+            Event(
+                "write",
+                {
+                    "tag_type": "textarea",
+                    "element_id": "notes",
+                    "browser_url": "https://example.com/cases/42",
+                    "application": "Edge",
+                },
+                7,
+            )
+        ]
+
+        inferrer = ActivityInferrer()
+        activity = inferrer.infer_activity(events)
+
+        assert (
+            activity.name
+            == "Write textarea 'notes' on example.com/cases/42 in Edge"
+        )
+
+    def test_post_process_enriches_generic_write_web_label(self):
+        """Generic rule-style web label should be enriched to unique readable name."""
+        events = [
+            Event(
+                "paste",
+                {
+                    "application": "Chrome",
+                    "tag_name": "textfield",
+                    "element_id": "username",
+                    "webpage": "https://example.com/login",
+                },
+                1,
+            )
+        ]
+
+        inferrer = ActivityInferrer()
+        enriched = inferrer._post_process_inferred_name(
+            "Write HTML element on webpage", events
+        )
+
+        assert enriched == "Write textfield 'username' on example.com/login in Chrome"

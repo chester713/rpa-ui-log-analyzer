@@ -30,11 +30,11 @@
         .dfg-zoom-btn:disabled { cursor: not-allowed; opacity: 0.5; }
         .dfg-zoom-slider { width: 220px; max-width: 100%; accent-color: #2563eb; }
         .dfg-zoom-label { color: #6b7280; font-size: 12px; margin-left: 4px; }
-        .dfg-wrap { width: 100%; overflow: auto; border: 1px solid #ddd; border-radius: 8px; }
+        .dfg-wrap { width: 100%; overflow: auto; max-height: 520px; border: 1px solid #ddd; border-radius: 8px; scrollbar-gutter: stable both-edges; }
         #dfgSvg { width: 100%; min-height: 260px; display: block; background: #fafcff; }
         .dfg-edge { stroke: #9ca3af; stroke-width: 2; }
         .dfg-edge-label { fill: #374151; font-size: 11px; }
-        .dfg-node { fill: #dbeafe; stroke: #2563eb; stroke-width: 1.5; }
+        .dfg-node { fill: #dbeafe; stroke: #2563eb; stroke-width: 1.5; cursor: pointer; }
         .dfg-node.dfg-node-related { fill: #bfdbfe; }
         .dfg-node.dfg-node-active { fill: #60a5fa; stroke: #1d4ed8; stroke-width: 2.5; }
         .dfg-node-label { fill: #1f2937; font-size: 12px; }
@@ -196,15 +196,25 @@
         }
 
         function applyDfgZoom() {
-            if (!dfgViewportGroup) {
+            const svg = document.getElementById('dfgSvg');
+            if (!svg) {
                 updateDfgZoomUi();
                 return;
             }
-            const centerX = dfgGraphWidth / 2;
-            const centerY = dfgGraphHeight / 2;
-            const translateX = centerX * (1 - dfgZoomScale);
-            const translateY = centerY * (1 - dfgZoomScale);
-            dfgViewportGroup.setAttribute('transform', `translate(${translateX} ${translateY}) scale(${dfgZoomScale})`);
+            if (!dfgViewportGroup) {
+                svg.style.width = '100%';
+                svg.style.height = '260px';
+                updateDfgZoomUi();
+                return;
+            }
+
+            const scaledWidth = Math.max(Math.round(dfgGraphWidth * dfgZoomScale), dfgGraphWidth);
+            const scaledHeight = Math.max(Math.round(dfgGraphHeight * dfgZoomScale), dfgGraphHeight);
+
+            // Resize SVG so .dfg-wrap overflow produces scrollbars for panning.
+            svg.style.width = `${scaledWidth}px`;
+            svg.style.height = `${scaledHeight}px`;
+            dfgViewportGroup.removeAttribute('transform');
             updateDfgZoomUi();
         }
 
@@ -252,6 +262,8 @@
 
             if (!nodes.length) {
                 dfgViewportGroup = null;
+                svg.style.width = '100%';
+                svg.style.height = '260px';
                 const text = createSvgNode('text');
                 text.setAttribute('x', '16');
                 text.setAttribute('y', '26');
@@ -346,6 +358,18 @@
             return Array.from(rows).sort((a, b) => a - b);
         }
 
+        function findRecommendationByActivity(activityName) {
+            const activityKey = String(activityName || '');
+            if (!activityKey) return null;
+            const explicit = getExplicitRecommendations();
+            for (const rec of explicit) {
+                if (String(rec?.inferred_activity || '') === activityKey) {
+                    return rec;
+                }
+            }
+            return null;
+        }
+
         function applyRowHighlights(activeRowIndex, relatedRows) {
             const related = new Set((relatedRows || []).map((v) => Number(v)));
             document.querySelectorAll('tr.row-clickable').forEach(tr => {
@@ -373,6 +397,13 @@
                 currentRow = null;
             }
             applyRowHighlights(preserveActiveRow ? currentRow : null, relatedRows);
+
+            if (opts.syncDetails !== false) {
+                const rec = findRecommendationByActivity(activityKey);
+                if (rec) {
+                    renderDetails(rec);
+                }
+            }
 
             dfgNodeElements.forEach((node, nodeName) => {
                 const isActive = nodeName === activityKey;
@@ -700,7 +731,7 @@
                 if (rec) {
                     renderDetails(rec);
                     const activityName = rec?.inferred_activity || null;
-                    if (activityName) activateDfgNode(activityName, { preserveActiveRow: true });
+                    if (activityName) activateDfgNode(activityName, { preserveActiveRow: true, syncDetails: false });
                 }
             });
         });

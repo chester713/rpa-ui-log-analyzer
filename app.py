@@ -328,6 +328,14 @@ def analyze():
                         activity.confidence, float(output.get("min_confidence", 0.0))
                     )
 
+            # Ensure rule-based overrides still pass through naming enrichment,
+            # so generic labels like "Write HTML element on webpage" become
+            # specific Action + Target + Context names.
+            if hasattr(inferrer, "_post_process_inferred_name"):
+                activity.name = inferrer._post_process_inferred_name(
+                    activity.name, events_list
+                )
+
             context = get_context_from_events(events_list)
             context_sequence.append(context)
 

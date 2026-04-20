@@ -212,7 +212,7 @@ Evidence: <attributes that support this inference>"""
             action = "Perform"
 
         if self._is_web_group(event_group):
-            target, context = self._build_web_target_context(attrs)
+            target, context = self._build_web_target_context(attrs, event_group)
         else:
             target, context = self._build_desktop_target_context(attrs)
 
@@ -274,7 +274,9 @@ Evidence: <attributes that support this inference>"""
             for e in event_group
         )
 
-    def _build_web_target_context(self, attrs: Dict[str, Any]) -> tuple[str, Optional[str]]:
+    def _build_web_target_context(
+        self, attrs: Dict[str, Any], event_group: List[Event]
+    ) -> tuple[str, Optional[str]]:
         tag = self._humanize_token(
             attrs.get("tag_name")
             or attrs.get("tag_type")
@@ -283,18 +285,59 @@ Evidence: <attributes that support this inference>"""
         )
         element_id = attrs.get("element_id") or attrs.get("id")
         xpath = attrs.get("xpath") or attrs.get("xpath_full")
+        url = attrs.get("browser_url") or attrs.get("url") or attrs.get("webpage")
+        domain = self._extract_domain(url)
 
         if element_id and not self._is_opaque_identifier(element_id):
             target = f"{tag} '{element_id}'"
-        elif xpath and not self._is_opaque_identifier(xpath):
-            target = f"{tag} {self._humanize_xpath(xpath)}"
         else:
-            target = f"{tag} element"
+            locator_hint = self._build_web_locator_hint(xpath, event_group)
+            if xpath and not self._is_opaque_identifier(xpath):
+                xpath_hint = self._humanize_xpath(xpath)
+                target = (
+                    f"{tag} {xpath_hint}"
+                    if not locator_hint
+                    else f"{tag} {xpath_hint} ({locator_hint})"
+                )
+            elif locator_hint:
+                target = f"{tag} element ({locator_hint})"
+            else:
+                target = f"{tag} element"
 
-        url = attrs.get("browser_url") or attrs.get("url") or attrs.get("webpage")
-        domain = self._extract_domain(url)
-        context = f"on {domain}" if domain else "on webpage"
+        page_hint = self._build_webpage_hint(url)
+        context_parts = [f"on {page_hint}" if page_hint else "on webpage"]
+
+        app = attrs.get("application") or attrs.get("app")
+        if app:
+            context_parts.append(f"in {self._humanize_token(app)}")
+
+        context = " ".join(context_parts)
         return target, context
+
+    def _build_web_locator_hint(
+        self, xpath: Optional[str], event_group: List[Event]
+    ) -> Optional[str]:
+        """Build readable locator hints for repetitive web elements."""
+        parts: List[str] = []
+
+        if xpath and not self._is_opaque_identifier(xpath):
+            xpath_tip = self._humanize_xpath(xpath).strip("'")
+            if xpath_tip and xpath_tip != "element":
+                parts.append(xpath_tip)
+
+            xpath_row = self._extract_xpath_row_context(xpath)
+            if xpath_row:
+                parts.append(xpath_row)
+
+        if not parts:
+            row_hint = self._derive_row_index_hint(event_group)
+            if row_hint:
+                parts.append(row_hint)
+
+        if not parts:
+            return None
+
+        return ", ".join(parts[:2])
 
     def _build_desktop_target_context(
         self, attrs: Dict[str, Any]
@@ -343,15 +386,71 @@ Evidence: <attributes that support this inference>"""
             return None
         return host
 
+    def _build_webpage_hint(self, url: Optional[str]) -> Optional[str]:
+        """Return human-readable webpage hint (domain + useful path)."""
+        if not url:
+            return None
+
+        text = str(url).strip()
+        if not text:
+            return None
+        if "://" not in text:
+            text = f"https://{text}"
+
+        parsed = urlparse(text)
+        domain = (parsed.hostname or "").strip().lower()
+        if not domain:
+            return None
+
+        path = (parsed.path or "").strip()
+        if path in {"", "/"}:
+            return domain
+
+        path = path.rstrip("/")
+        return f"{domain}{path}"
+
     def _humanize_xpath(self, xpath: str) -> str:
         """Return a readable hint from xpath without exposing opaque full path."""
         parts = [p for p in str(xpath).split("/") if p and p not in {"html", "body"}]
         if not parts:
             return "element"
+
         tip = parts[-1]
-        tip = re.sub(r"\[\d+\]", "", tip)
-        tip = tip.replace("@", "")
-        return f"'{tip}'"
+        tag_match = re.match(r"^([a-zA-Z][a-zA-Z0-9_\-]*)", tip)
+        tag = (tag_match.group(1) if tag_match else "element").lower()
+
+        preferred_attr = None
+        for attr in ["aria-label", "name", "type", "title", "placeholder", "value"]:
+            attr_match = re.search(rf"@{re.escape(attr)}=['\"]([^'\"]+)['\"]", tip)
+            if attr_match:
+                preferred_attr = f"{attr}={attr_match.group(1)}"
+                break
+
+        idx_match = re.search(r"\[(\d+)\](?!.*\[\d+\])", tip)
+        index = idx_match.group(1) if idx_match else None
+
+        parts_out = [tag]
+        if preferred_attr:
+            parts_out.append(preferred_attr)
+        if index:
+            parts_out.append(f"#{index}")
+
+        return f"'{' '.join(parts_out)}'"
+
+    def _extract_xpath_row_context(self, xpath: str) -> Optional[str]:
+        """Extract row-like context from xpath when present (tr/li indices)."""
+        text = str(xpath)
+        row_match = re.search(r"/(?:tr|li)\[(\d+)\]", text, flags=re.IGNORECASE)
+        if row_match:
+            return f"row {row_match.group(1)}"
+        return None
+
+    def _derive_row_index_hint(self, event_group: List[Event]) -> Optional[str]:
+        """Fallback row hint from source log position for disambiguation."""
+        for event in event_group:
+            if event.row_index is not None:
+                return f"event row {event.row_index}"
+        return None
 
     def _basename(self, path_value: str) -> str:
         text = str(path_value).strip().rstrip("\\/")
@@ -369,6 +468,10 @@ Evidence: <attributes that support this inference>"""
         text = str(value).strip()
         if not text:
             return True
+
+        # Locator-like values (xpath/css-ish) are structured and can be humanized.
+        if any(token in text for token in ["/", "[", "]", "@", "="]):
+            return False
 
         # Avoid exposing long machine identifiers/GUID-like values in names.
         if len(text) >= 40 and " " not in text:
