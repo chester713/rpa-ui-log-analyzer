@@ -51,7 +51,7 @@ class CSVLoader:
 
             if event_column is None:
                 raise ValueError(
-                    f"Could not detect event column. Found columns: {fieldnames}"
+                    f"Missing required column: event (could not detect event column. Found columns: {fieldnames})"
                 )
 
             for row_index, row in enumerate(reader):

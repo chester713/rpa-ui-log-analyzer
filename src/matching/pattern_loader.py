@@ -19,14 +19,21 @@ class PatternLoader:
         Returns:
             List of Pattern objects
         """
-        patterns = []
-
-        if not os.path.exists(patterns_dir):
+        patterns = self._load_from_markdown_dir(patterns_dir)
+        if patterns:
             return patterns
 
-        for filename in sorted(os.listdir(patterns_dir)):
+        # Backward-compatible fallback if caller passes a non-existent dir.
+        return self._load_from_markdown_dir("patterns")
+
+    def _load_from_markdown_dir(self, path: str) -> List[Pattern]:
+        patterns = []
+        if not os.path.exists(path):
+            return patterns
+
+        for filename in sorted(os.listdir(path)):
             if filename.endswith(".md"):
-                filepath = os.path.join(patterns_dir, filename)
+                filepath = os.path.join(path, filename)
                 pattern = self._parse_pattern_file(filepath)
                 if pattern:
                     patterns.append(pattern)

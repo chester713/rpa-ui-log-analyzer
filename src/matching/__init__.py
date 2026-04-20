@@ -5,7 +5,7 @@ from .pattern_matcher import PatternMatcher, get_context_from_events
 from .output_formatter import RecommendationFormatter
 
 _pattern_loader = PatternLoader()
-PATTERNS = _pattern_loader.load_patterns()
+PATTERNS = _pattern_loader.load_patterns("patterns")
 matcher = PatternMatcher(PATTERNS)
 
 __all__ = [

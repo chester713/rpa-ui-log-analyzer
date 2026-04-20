@@ -5,7 +5,11 @@ An AI-powered recommendation system that analyzes UI interaction logs (CSV forma
 ## Quick Start
 
 ```bash
+# CLI mode
 python src_cli.py <your_ui_log.csv>
+
+# Web mode
+python app.py
 ```
 
 ## Features
@@ -30,7 +34,10 @@ python src_cli.py sample.csv --verbose
 
 ## Requirements
 
-- Python 3.x (no external dependencies for core functionality)
+- Python 3.x
+- Dependencies in `requirements.txt`:
+  - Flask (web portal)
+  - requests (LLM API client)
 
 ## Project Structure
 
@@ -41,6 +48,10 @@ src/
 ├── inference/      # Event grouping and activity inference
 ├── mapping/        # Event-to-activity mapping
 └── pipeline/       # Main orchestrator
+
+templates/          # Web UI pages
+app.py              # Flask web application
+patterns/           # Pattern definitions used by matcher
 ```
 
 ## License

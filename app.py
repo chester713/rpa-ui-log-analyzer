@@ -4,7 +4,6 @@ import os
 import json
 import uuid
 import csv
-import tempfile
 from datetime import datetime
 from flask import Flask, render_template, request, jsonify, redirect, url_for, session
 from werkzeug.utils import secure_filename
@@ -12,7 +11,7 @@ from werkzeug.utils import secure_filename
 app = Flask(__name__)
 app.config["UPLOAD_FOLDER"] = "data/uploads"
 app.config["MAX_CONTENT_LENGTH"] = 16 * 1024 * 1024
-app.config["SECRET_KEY"] = os.environ.get("SECRET_KEY", "dev-secret-key")
+app.config["SECRET_KEY"] = os.environ.get("SECRET_KEY") or os.urandom(32).hex()
 
 os.makedirs(app.config["UPLOAD_FOLDER"], exist_ok=True)
 os.makedirs("config", exist_ok=True)
@@ -25,6 +24,47 @@ DEFAULT_LLM_CONFIG = {
     "api_key": "",
     "model": "gpt-4o-mini",
 }
+
+MAX_PREVIEW_ROWS = 100
+MAX_HISTORY_ENTRIES = 200
+SENSITIVE_FIELD_TOKENS = (
+    "password",
+    "passwd",
+    "secret",
+    "token",
+    "api_key",
+    "apikey",
+    "authorization",
+)
+
+
+def _mask_api_key(api_key: str) -> str:
+    if not api_key:
+        return ""
+    if len(api_key) <= 8:
+        return "*" * len(api_key)
+    return f"{api_key[:4]}...{api_key[-4:]}"
+
+
+def _is_masked_api_key(value: str) -> bool:
+    return bool(value) and ("..." in value or set(value) == {"*"})
+
+
+def _redact_row(row: dict) -> dict:
+    redacted = {}
+    for key, value in (row or {}).items():
+        key_l = str(key or "").lower()
+        if any(token in key_l for token in SENSITIVE_FIELD_TOKENS):
+            redacted[key] = "[REDACTED]"
+        else:
+            redacted[key] = value
+    return redacted
+
+
+def _sanitize_config_for_view(config: dict) -> dict:
+    safe = dict(config or {})
+    safe["api_key"] = _mask_api_key(safe.get("api_key", ""))
+    return safe
 
 
 def get_llm_config():
@@ -46,21 +86,25 @@ def get_inference_rules():
 
 def save_llm_config(config):
     config_path = "config/llm_config.json"
-    with open(config_path, "w") as f:
+    with open(config_path, "w", encoding="utf-8") as f:
         json.dump(config, f, indent=2)
 
 
 def get_history():
     history_path = "data/history.json"
     if os.path.exists(history_path):
-        with open(history_path, "r") as f:
-            return json.load(f)
+        try:
+            with open(history_path, "r", encoding="utf-8") as f:
+                loaded = json.load(f)
+                return loaded if isinstance(loaded, list) else []
+        except (json.JSONDecodeError, OSError):
+            return []
     return []
 
 
 def save_history(history):
     history_path = "data/history.json"
-    with open(history_path, "w") as f:
+    with open(history_path, "w", encoding="utf-8") as f:
         json.dump(history, f, indent=2)
 
 
@@ -109,7 +153,7 @@ def select_column():
                 columns = reader.fieldnames
                 rows = []
                 for i, row in enumerate(reader):
-                    if i < 100:  # Preview first 100 rows
+                    if i < MAX_PREVIEW_ROWS:
                         rows.append(row)
 
             from src.llm.client import get_llm_client
@@ -211,8 +255,8 @@ def analyze():
             preview_reader = csv.DictReader(preview_file)
             log_columns = preview_reader.fieldnames or []
             for i, row in enumerate(preview_reader):
-                # For analysis results, keep the full log.
-                log_preview.append({"row_index": i, "values": row})
+                if i < MAX_PREVIEW_ROWS:
+                    log_preview.append({"row_index": i, "values": _redact_row(row)})
 
         events = loader.load(filepath)
 
@@ -424,6 +468,7 @@ def analyze():
 
         history = get_history()
         history.insert(0, history_entry)
+        history = history[:MAX_HISTORY_ENTRIES]
         save_history(history)
 
         return jsonify(
@@ -533,16 +578,23 @@ def history_detail(history_id):
 @app.route("/settings", methods=["GET", "POST"])
 def settings():
     if request.method == "POST":
+        existing = get_llm_config()
+        submitted_api_key = (request.form.get("api_key", "") or "").strip()
+        if not submitted_api_key or _is_masked_api_key(submitted_api_key):
+            api_key = existing.get("api_key", "")
+        else:
+            api_key = submitted_api_key
+
         config = {
             "provider": request.form.get("provider", "puter"),
             "endpoint": request.form.get("endpoint", ""),
-            "api_key": request.form.get("api_key", ""),
+            "api_key": api_key,
             "model": request.form.get("model", "gpt-4o-mini"),
         }
         save_llm_config(config)
         return redirect(url_for("settings"))
 
-    config = get_llm_config()
+    config = _sanitize_config_for_view(get_llm_config())
     return render_template("settings.html", config=config)
 
 
