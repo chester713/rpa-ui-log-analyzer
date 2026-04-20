@@ -1,0 +1,4 @@
+event,app,webpage,element_id
+click,Chrome,https://example.com/login,username
+type,Chrome,https://example.com/login,username
+submit,Chrome,https://example.com/login,login_button
