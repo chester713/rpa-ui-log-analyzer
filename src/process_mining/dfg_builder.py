@@ -50,17 +50,78 @@ def _sanitize_activity_name(name: object) -> str:
     return str(name)
 
 
+def _try_parse_timestamp(value: object) -> datetime | None:
+    if value is None:
+        return None
+
+    text = str(value).strip()
+    if not text:
+        return None
+
+    normalized = text.replace("Z", "+00:00")
+
+    try:
+        return datetime.fromisoformat(normalized)
+    except ValueError:
+        pass
+
+    for fmt in (
+        "%Y-%m-%d %H:%M:%S",
+        "%Y/%m/%d %H:%M:%S",
+        "%d/%m/%Y %H:%M:%S",
+        "%m/%d/%Y %H:%M:%S",
+    ):
+        try:
+            return datetime.strptime(text, fmt)
+        except ValueError:
+            continue
+
+    return None
+
+
+def _first_event_timestamp(mapping: EventActivityMapping) -> datetime | None:
+    if not mapping.events:
+        return None
+
+    first_event = mapping.events[0]
+    attrs = first_event.attributes or {}
+    for key in (
+        "timestamp",
+        "time:timestamp",
+        "time",
+        "event_time",
+        "datetime",
+        "date_time",
+    ):
+        parsed = _try_parse_timestamp(attrs.get(key))
+        if parsed is not None:
+            return parsed
+
+    return None
+
+
 def _to_activity_log(
     mappings: Iterable[EventActivityMapping], session_id: str
 ) -> object:
     rows = []
     base_time = datetime(2000, 1, 1)
     for idx, mapping in enumerate(mappings):
+        first_row_index = (
+            mapping.events[0].row_index if mapping.events and mapping.events[0] else idx
+        )
+        if first_row_index is None:
+            first_row_index = idx
+
+        event_ts = _first_event_timestamp(mapping)
+        if event_ts is None:
+            event_ts = base_time + timedelta(seconds=idx)
+
         rows.append(
             {
                 "case:concept:name": session_id,
                 "concept:name": _sanitize_activity_name(mapping.activity.name),
-                "time:timestamp": base_time + timedelta(seconds=idx),
+                "time:timestamp": event_ts,
+                "row_index": int(first_row_index),
             }
         )
 
@@ -70,6 +131,37 @@ def _to_activity_log(
         return pd.DataFrame(rows)
     except ModuleNotFoundError:
         return _MiniFrame(rows)
+
+
+def _build_dfg_fallback(mapping_list: list[EventActivityMapping]) -> tuple[dict, dict, dict]:
+    ordered = []
+    for idx, mapping in enumerate(mapping_list):
+        first_row_index = (
+            mapping.events[0].row_index if mapping.events and mapping.events[0] else idx
+        )
+        if first_row_index is None:
+            first_row_index = idx
+        ordered.append(
+            {
+                "name": _sanitize_activity_name(mapping.activity.name),
+                "timestamp": _first_event_timestamp(mapping) or datetime(2000, 1, 1),
+                "row_index": int(first_row_index),
+            }
+        )
+
+    ordered.sort(key=lambda item: (item["timestamp"], item["row_index"]))
+    names = [item["name"] for item in ordered]
+    if not names:
+        return {}, {}, {}
+
+    dfg = {}
+    for i in range(len(names) - 1):
+        edge = (names[i], names[i + 1])
+        dfg[edge] = dfg.get(edge, 0) + 1
+
+    start_activities = {names[0]: 1}
+    end_activities = {names[-1]: 1}
+    return dfg, start_activities, end_activities
 
 
 def build_dfg_payload(
@@ -90,16 +182,25 @@ def build_dfg_payload(
     log_df = _to_activity_log(mapping_list, safe_session_id)
     global discover_dfg
     if discover_dfg is None:
-        from pm4py import discover_dfg as pm4py_discover_dfg
+        try:
+            from pm4py import discover_dfg as pm4py_discover_dfg
 
-        discover_dfg = pm4py_discover_dfg
+            discover_dfg = pm4py_discover_dfg
+        except ModuleNotFoundError:
+            discover_dfg = False
 
-    dfg, start_activities, end_activities = discover_dfg(
-        log_df,
-        activity_key="concept:name",
-        timestamp_key="time:timestamp",
-        case_id_key="case:concept:name",
-    )
+    if discover_dfg:
+        try:
+            dfg, start_activities, end_activities = discover_dfg(
+                log_df,
+                activity_key="concept:name",
+                timestamp_key="time:timestamp",
+                case_id_key="case:concept:name",
+            )
+        except Exception:
+            dfg, start_activities, end_activities = _build_dfg_fallback(mapping_list)
+    else:
+        dfg, start_activities, end_activities = _build_dfg_fallback(mapping_list)
 
     nodes = []
     seen_nodes = set()
