@@ -1,0 +1,169 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Guided Workspace - RPA UI Log Analyzer</title>
+    <style>
+        * { box-sizing: border-box; margin: 0; padding: 0; }
+        body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif; background: #f5f7fb; min-height: 100vh; }
+        .container { max-width: 1160px; margin: 0 auto; padding: 24px 20px 42px; }
+        .nav { display: flex; gap: 20px; margin-bottom: 18px; }
+        .nav a { color: #007bff; text-decoration: none; }
+        .nav a:hover { text-decoration: underline; }
+        .topbar { display: flex; justify-content: space-between; align-items: center; gap: 10px; margin-bottom: 16px; flex-wrap: wrap; }
+        h1 { color: #1f2937; }
+        .meta { color: #6b7280; font-size: 14px; }
+        .actions { display: flex; gap: 10px; }
+        .btn { display: inline-block; padding: 10px 14px; border-radius: 8px; border: 1px solid transparent; text-decoration: none; font-size: 14px; }
+        .btn-primary { background: #2563eb; color: #fff; }
+        .btn-primary:hover { background: #1d4ed8; }
+        .btn-muted { background: #fff; color: #1f2937; border-color: #d1d5db; }
+        .btn-muted:hover { background: #f9fafb; }
+
+        .stepper { display: grid; grid-template-columns: repeat(6, minmax(0, 1fr)); gap: 10px; margin-bottom: 18px; }
+        .step { background: #ffffff; border: 1px solid #dbe1ea; border-radius: 10px; padding: 10px; color: #374151; font-size: 13px; cursor: pointer; }
+        .step.active { border-color: #2563eb; background: #eff6ff; color: #1d4ed8; font-weight: 600; }
+
+        .stage-card { background: #ffffff; border-radius: 12px; box-shadow: 0 2px 8px rgba(0,0,0,0.08); padding: 16px; margin-bottom: 14px; }
+        .stage-card[hidden] { display: none; }
+        .stage-header { display: flex; justify-content: space-between; align-items: center; gap: 10px; margin-bottom: 10px; }
+        .stage-title { font-size: 17px; color: #1f2937; }
+        .badge { background: #eef2ff; color: #3730a3; border-radius: 999px; padding: 4px 10px; font-size: 12px; }
+        .two-col { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); gap: 12px; }
+        .pane { border: 1px solid #e5e7eb; border-radius: 10px; padding: 12px; }
+        .pane h3 { color: #4b5563; font-size: 13px; margin-bottom: 8px; }
+        .artifact-json { white-space: pre-wrap; word-break: break-word; font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 12px; color: #111827; }
+        .logic-text { color: #111827; font-size: 14px; line-height: 1.45; }
+
+        @media (max-width: 1100px) {
+            .stepper { grid-template-columns: repeat(3, minmax(0, 1fr)); }
+            .two-col { grid-template-columns: 1fr; }
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <nav class="nav">
+            <a href="/">Welcome</a>
+            <a href="/upload">Upload</a>
+            <a href="/history">History</a>
+            <a href="/settings">Settings</a>
+        </nav>
+
+        <div class="topbar">
+            <div>
+                <h1>Guided Analysis Workspace</h1>
+                <p class="meta">File: {{ entry.filename }} · Date: {{ entry.timestamp }}</p>
+            </div>
+            <div class="actions">
+                <a class="btn btn-muted" href="/history/{{ entry.id }}">Open Results View</a>
+                <a class="btn btn-primary" href="/results/{{ entry.id }}">Open Final Outputs</a>
+            </div>
+        </div>
+
+        <div class="stepper" id="stepper"></div>
+
+        <section class="stage-card" data-stage-key="event_grouping">
+            <div class="stage-header"><h2 class="stage-title">1) Event Grouping</h2><span class="badge">event_grouping</span></div>
+            <div class="two-col">
+                <div class="pane"><h3>Artifact</h3><div class="artifact-json" data-artifact-target="event_grouping"></div></div>
+                <div class="pane"><h3>Logic Explanation</h3><div class="logic-text" data-logic-target="event_grouping"></div></div>
+            </div>
+        </section>
+
+        <section class="stage-card" data-stage-key="activity_naming" hidden>
+            <div class="stage-header"><h2 class="stage-title">2) Activity Naming</h2><span class="badge">activity_naming</span></div>
+            <div class="two-col">
+                <div class="pane"><h3>Artifact</h3><div class="artifact-json" data-artifact-target="activity_naming"></div></div>
+                <div class="pane"><h3>Logic Explanation</h3><div class="logic-text" data-logic-target="activity_naming"></div></div>
+            </div>
+        </section>
+
+        <section class="stage-card" data-stage-key="action_object_extraction" hidden>
+            <div class="stage-header"><h2 class="stage-title">3) Action/Object Extraction</h2><span class="badge">action_object_extraction</span></div>
+            <div class="two-col">
+                <div class="pane"><h3>Artifact</h3><div class="artifact-json" data-artifact-target="action_object_extraction"></div></div>
+                <div class="pane"><h3>Logic Explanation</h3><div class="logic-text" data-logic-target="action_object_extraction"></div></div>
+            </div>
+        </section>
+
+        <section class="stage-card" data-stage-key="pattern_matching" hidden>
+            <div class="stage-header"><h2 class="stage-title">4) Pattern Matching</h2><span class="badge">pattern_matching</span></div>
+            <div class="two-col">
+                <div class="pane"><h3>Artifact</h3><div class="artifact-json" data-artifact-target="pattern_matching"></div></div>
+                <div class="pane"><h3>Logic Explanation</h3><div class="logic-text" data-logic-target="pattern_matching"></div></div>
+            </div>
+        </section>
+
+        <section class="stage-card" data-stage-key="context_determination" hidden>
+            <div class="stage-header"><h2 class="stage-title">5) Context Determination</h2><span class="badge">context_determination</span></div>
+            <div class="two-col">
+                <div class="pane"><h3>Artifact</h3><div class="artifact-json" data-artifact-target="context_determination"></div></div>
+                <div class="pane"><h3>Logic Explanation</h3><div class="logic-text" data-logic-target="context_determination"></div></div>
+            </div>
+        </section>
+
+        <section class="stage-card" data-stage-key="method_recommendation" hidden>
+            <div class="stage-header"><h2 class="stage-title">6) Method Recommendation</h2><span class="badge">method_recommendation</span></div>
+            <div class="two-col">
+                <div class="pane"><h3>Artifact</h3><div class="artifact-json" data-artifact-target="method_recommendation"></div></div>
+                <div class="pane"><h3>Logic Explanation</h3><div class="logic-text" data-logic-target="method_recommendation"></div></div>
+            </div>
+        </section>
+    </div>
+
+    <script>
+        const progressiveArtifacts = {{ entry.progressive_artifacts | tojson }};
+        const progressiveLogic = {{ entry.progressive_logic | tojson }};
+        const stageKeys = [
+            'event_grouping',
+            'activity_naming',
+            'action_object_extraction',
+            'pattern_matching',
+            'context_determination',
+            'method_recommendation'
+        ];
+
+        function showStage(stageKey) {
+            document.querySelectorAll('[data-stage-key]').forEach(section => {
+                section.hidden = section.getAttribute('data-stage-key') !== stageKey;
+            });
+            document.querySelectorAll('.step').forEach(btn => {
+                btn.classList.toggle('active', btn.getAttribute('data-stage-key') === stageKey);
+            });
+        }
+
+        function renderStageData() {
+            stageKeys.forEach((stageKey) => {
+                const artifactNode = document.querySelector(`[data-artifact-target="${stageKey}"]`);
+                const logicNode = document.querySelector(`[data-logic-target="${stageKey}"]`);
+                if (artifactNode) {
+                    artifactNode.textContent = JSON.stringify(progressiveArtifacts?.[stageKey] || {}, null, 2);
+                }
+                if (logicNode) {
+                    logicNode.textContent = String(progressiveLogic?.[stageKey] || '');
+                }
+            });
+        }
+
+        function buildStepper() {
+            const stepper = document.getElementById('stepper');
+            if (!stepper) return;
+            stageKeys.forEach((stageKey, index) => {
+                const btn = document.createElement('button');
+                btn.type = 'button';
+                btn.className = 'step';
+                btn.setAttribute('data-stage-key', stageKey);
+                btn.textContent = `${index + 1}. ${stageKey.replaceAll('_', ' ')}`;
+                btn.addEventListener('click', () => showStage(stageKey));
+                stepper.appendChild(btn);
+            });
+        }
+
+        buildStepper();
+        renderStageData();
+        showStage(stageKeys[0]);
+    </script>
+</body>
+</html>

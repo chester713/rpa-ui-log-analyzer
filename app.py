@@ -684,6 +684,38 @@ def results(history_id):
     return render_template("results.html", entry=entry)
 
 
+@app.route("/workspace/<history_id>")
+def workspace(history_id):
+    history = get_history()
+    entry = next((h for h in history if h["id"] == history_id), None)
+
+    if entry is None:
+        return "Analysis not found", 404
+
+    if "progressive_artifacts" not in entry:
+        entry["progressive_artifacts"] = {
+            stage: {}
+            for stage in PROGRESSIVE_STAGE_KEYS
+        }
+    if "progressive_logic" not in entry:
+        entry["progressive_logic"] = {
+            stage: ""
+            for stage in PROGRESSIVE_STAGE_KEYS
+        }
+
+    # Enforce deterministic stage ordering for workspace replay.
+    entry["progressive_artifacts"] = {
+        stage: entry["progressive_artifacts"].get(stage, {})
+        for stage in PROGRESSIVE_STAGE_KEYS
+    }
+    entry["progressive_logic"] = {
+        stage: entry["progressive_logic"].get(stage, "")
+        for stage in PROGRESSIVE_STAGE_KEYS
+    }
+
+    return render_template("workspace.html", entry=entry)
+
+
 @app.route("/history")
 def history():
     history_list = get_history()
