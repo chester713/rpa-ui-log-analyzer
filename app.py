@@ -12,6 +12,8 @@ app = Flask(__name__)
 app.config["UPLOAD_FOLDER"] = "data/uploads"
 app.config["MAX_CONTENT_LENGTH"] = 16 * 1024 * 1024
 app.config["SECRET_KEY"] = os.environ.get("SECRET_KEY") or os.urandom(32).hex()
+app.config["JSON_SORT_KEYS"] = False
+app.json.sort_keys = False
 
 os.makedirs(app.config["UPLOAD_FOLDER"], exist_ok=True)
 os.makedirs("config", exist_ok=True)
@@ -27,6 +29,14 @@ DEFAULT_LLM_CONFIG = {
 
 MAX_PREVIEW_ROWS = 100
 MAX_HISTORY_ENTRIES = 200
+PROGRESSIVE_STAGE_KEYS = (
+    "event_grouping",
+    "activity_naming",
+    "action_object_extraction",
+    "pattern_matching",
+    "context_determination",
+    "method_recommendation",
+)
 SENSITIVE_FIELD_TOKENS = (
     "password",
     "passwd",
@@ -65,6 +75,108 @@ def _sanitize_config_for_view(config: dict) -> dict:
     safe = dict(config or {})
     safe["api_key"] = _mask_api_key(safe.get("api_key", ""))
     return safe
+
+
+def _split_action_object(activity_name: str) -> tuple[str, str]:
+    if " " in activity_name:
+        return activity_name.split(None, 1)
+    return activity_name, ""
+
+
+def _build_progressive_contract(mappings, activities, recommendation_payload):
+    grouped_rows = []
+    activity_naming = []
+    action_object = []
+
+    for idx, mapping in enumerate(mappings):
+        row_indices = [e.row_index for e in mapping.events if e.row_index is not None]
+        grouped_rows.append(
+            {
+                "group_index": idx,
+                "event_rows": row_indices,
+                "event_labels": [str(e.event) for e in mapping.events],
+                "group_size": len(mapping.events),
+            }
+        )
+
+    for idx, activity in enumerate(activities):
+        action, obj = _split_action_object(activity.name)
+        activity_naming.append(
+            {
+                "group_index": idx,
+                "activity_name": activity.name,
+                "confidence": activity.confidence,
+                "source_events": activity.source_events,
+                "evidence": list(activity.evidence or []),
+            }
+        )
+        action_object.append(
+            {
+                "group_index": idx,
+                "activity_name": activity.name,
+                "activity_action": action,
+                "activity_object": obj,
+            }
+        )
+
+    pattern_matching = []
+    context_determination = []
+    method_recommendation = []
+    for rec in recommendation_payload:
+        pattern_matching.append(
+            {
+                "inferred_activity": rec.get("inferred_activity"),
+                "execution_environment": rec.get("execution_environment"),
+                "pattern_matched": rec.get("pattern_matched"),
+                "method_category": rec.get("method_category"),
+                "events": rec.get("events", []),
+            }
+        )
+        context_determination.append(
+            {
+                "inferred_activity": rec.get("inferred_activity"),
+                "execution_environment": rec.get("execution_environment"),
+                "context_attributes_used": rec.get("context_attributes_used", []),
+                "context_switch": rec.get("context_switch", False),
+                "context_switch_from": rec.get("context_switch_from"),
+                "context_switch_to": rec.get("context_switch_to"),
+            }
+        )
+        method_recommendation.append(
+            {
+                "inferred_activity": rec.get("inferred_activity"),
+                "recommended_method": rec.get("method"),
+                "method_category": rec.get("method_category"),
+                "confidence": rec.get("confidence"),
+                "events": rec.get("events", []),
+            }
+        )
+
+    progressive_artifacts = {
+        "event_grouping": {"groups": grouped_rows},
+        "activity_naming": {"activities": activity_naming},
+        "action_object_extraction": {"pairs": action_object},
+        "pattern_matching": {"matches": pattern_matching},
+        "context_determination": {"contexts": context_determination},
+        "method_recommendation": {"recommendations": method_recommendation},
+    }
+
+    progressive_logic = {
+        "event_grouping": "Events are grouped by shared context and sequential evidence before downstream inference.",
+        "activity_naming": "Each grouped event set is assigned an inferred activity label and confidence with evidence traceability.",
+        "action_object_extraction": "Inferred activity names are split into explicit action/object pairs used by matching and explanation views.",
+        "pattern_matching": "Activities are compared against known pattern definitions to identify category-level automation strategies.",
+        "context_determination": "Execution environment and context attributes are derived from grouped-event metadata to constrain method selection.",
+        "method_recommendation": "Final methods are selected from matched patterns, sorted by method priority, and emitted with confidence details.",
+    }
+
+    # Preserve deterministic key order for replay contracts.
+    progressive_artifacts = {
+        stage: progressive_artifacts[stage] for stage in PROGRESSIVE_STAGE_KEYS
+    }
+    progressive_logic = {stage: progressive_logic[stage] for stage in PROGRESSIVE_STAGE_KEYS}
+
+    return progressive_artifacts, progressive_logic
 
 
 def get_llm_config():
@@ -350,11 +462,7 @@ def analyze():
             context_switch_from = mapping.attribute_breakdown.get("previous_app")
             context_switch_to = mapping.attribute_breakdown.get("current_app")
 
-            action, obj = (
-                activity.name.split(None, 1)
-                if " " in activity.name
-                else (activity.name, "")
-            )
+            action, obj = _split_action_object(activity.name)
 
             # Confidence model (explicit and explainable)
             # final = 0.60*base + 0.20*context_evidence + 0.10*object_evidence + 0.10*group_consistency + pattern_bonus
@@ -478,13 +586,20 @@ def analyze():
                 500,
             )
 
+        recommendation_payload = [r.to_dict() for r in recommendations]
+        progressive_artifacts, progressive_logic = _build_progressive_contract(
+            mappings, activities, recommendation_payload
+        )
+
         history_entry = {
             "id": str(uuid.uuid4()),
             "timestamp": datetime.now().isoformat(),
             "filename": filename,
             "activities": [a.name for a in activities],
-            "recommendations": [r.to_dict() for r in recommendations],
+            "recommendations": recommendation_payload,
             "dfg": dfg_payload,
+            "progressive_artifacts": progressive_artifacts,
+            "progressive_logic": progressive_logic,
             "event_column": event_column or loader.detected_column,
             "log_columns": log_columns,
             "log_preview": log_preview,
@@ -509,6 +624,8 @@ def analyze():
                 "recommendations": [r.to_dict() for r in recommendations],
                 "history_id": history_entry["id"],
                 "dfg": dfg_payload,
+                "progressive_artifacts": progressive_artifacts,
+                "progressive_logic": progressive_logic,
             }
         )
 
