@@ -74,6 +74,21 @@
   - Existing pipeline outputs remain intact for current consumers
   - Add automated tests for DFG transformation and UI interaction wiring
 
+- [x] **REQ-16**: Introduce hybrid progressive-disclosure analysis workflow
+  - Add Welcome page before upload flow
+  - Keep upload and event-column selection behavior mostly unchanged
+  - Provide guided analysis workspace with progressive section navigation
+
+- [x] **REQ-17**: Artifactize intermediate pipeline states for transparency
+  - Emit explicit stage artifacts for grouping, activity naming, action/object extraction, pattern matching, context determination, and method recommendation
+  - Persist stage artifacts in analysis history for deterministic replay
+  - Expose stage logic explanations alongside artifacts
+
+- [x] **REQ-18**: Preserve existing final-output contracts while adding transparency
+  - Keep existing `activities`, `recommendations`, `history_id`, `dfg` response keys
+  - Preserve results-page DFG rendering and export behavior
+  - Add regression tests proving additive-only contract evolution
+
 ## Out of Scope
 
 - **GUI interface** — CLI-only for v1
@@ -96,6 +111,9 @@
 | REQ-13 | Phase 5 | Direct-follow graph generation from inferred activities |
 | REQ-14 | Phase 5 | Interactive DFG rendering and cross-highlighting in web UI |
 | REQ-15 | Phase 5 | Regression-safe DFG integration with automated verification |
+| REQ-16 | Phase 6 | Hybrid progressive-disclosure workflow with welcome-first entry |
+| REQ-17 | Phase 6 | Intermediate pipeline artifact/state contracts for transparency |
+| REQ-18 | Phase 6 | Backward-compatible outputs while adding guided transparency |
 
 ---
 

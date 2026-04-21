@@ -2,7 +2,7 @@
 
 ## Project: RPA UI Log Analyzer
 
-**Phases:** 5 | **Requirements:** 6 + v2 | **v1 complete** ✓
+**Phases:** 6 | **Requirements:** 6 + v2 | **v1 complete** ✓
 
 ---
 
@@ -13,6 +13,7 @@
 | 3 | CLI & Integration | Build CLI interface and output generation | REQ-05, REQ-06 | 3 criteria |
 | 4 | Web Portal | Browser-based UI for file upload and recommendations | REQ-10, REQ-11 | 3 criteria |
 | 5 | Direct-Follow Graph | Generate and visualize DFG from inferred activities in web portal | REQ-13, REQ-14, REQ-15 | 4 criteria |
+| 6 | Transparent Analysis Workflow | Build hybrid progressive-disclosure architecture and pipeline artifact contracts for transparent analysis workspace | REQ-16, REQ-17, REQ-18 | 4 criteria |
 
 ---
 
@@ -46,6 +47,25 @@ Plans:
 2. DFG edges/start/end are produced using existing process-mining direct-follows library
 3. Results page renders DFG below current two panels at full content width
 4. Node↔event click highlighting works bidirectionally without breaking existing recommendations flow
+
+---
+
+### Phase 6: Transparent Analysis Workflow
+
+**Goal:** Establish hybrid progressive-disclosure workflow foundations and backend/state artifact contracts that expose intermediate analysis stages without breaking existing outputs.
+
+**Requirements:** REQ-16, REQ-17, REQ-18
+
+**Plans:** 1 plans
+
+Plans:
+- [x] 06-01-PLAN.md — Define progressive stage contracts, artifactize pipeline states, and add welcome/workspace flow foundations with backward-compatibility tests
+
+**Success Criteria:**
+1. Welcome-first entry flow exists before upload, while upload and event-column selection behavior remains unchanged
+2. Analyze/history contracts include explicit artifacts + logic explanations for all six progressive stages
+3. Hybrid progressive-disclosure workspace state contract supports section-by-section reveal without requiring full page wizard navigation
+4. Existing final outputs (recommendations, DFG, export behavior) remain regression-safe and backward compatible
 
 ---
 
@@ -114,6 +134,9 @@ Plans:
 | REQ-13 | (v2) Build direct-follow graph from inferred activities | Phase 5 |
 | REQ-14 | (v2) Interactive DFG visualization linked with event panel | Phase 5 |
 | REQ-15 | (v2) Regression-safe DFG integration with tests | Phase 5 |
+| REQ-16 | (v2) Hybrid progressive-disclosure workflow | Phase 6 |
+| REQ-17 | (v2) Pipeline artifactization and transparency contracts | Phase 6 |
+| REQ-18 | (v2) Preserve final outputs while adding transparency | Phase 6 |
 
 ---
 
