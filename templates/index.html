@@ -30,7 +30,8 @@
 <body>
     <div class="container">
         <nav class="nav">
-            <a href="/">Upload</a>
+            <a href="/">Welcome</a>
+            <a href="/upload">Upload</a>
             <a href="/history">History</a>
             <a href="/settings">Settings</a>
         </nav>
@@ -38,7 +39,7 @@
         <h1>RPA UI Log Analyzer</h1>
         <p class="subtitle">Upload your UI interaction logs and get automation method recommendations</p>
         
-        <form class="card" id="uploadForm" action="/select-column" method="POST" enctype="multipart/form-data">
+        <form class="card" id="uploadForm" action="/select-column" method="POST" enctype="multipart/form-data" data-detect-column-url="/detect-column">
             <div class="upload-area" id="uploadArea">
                 <p>Drag & drop CSV file here or click to browse</p>
                 <p style="color: #999; font-size: 14px; margin-top: 10px;">Supports CSV files with event logs</p>

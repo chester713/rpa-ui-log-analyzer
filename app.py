@@ -236,6 +236,11 @@ def analyze_csv(filepath):
 
 @app.route("/")
 def index():
+    return render_template("welcome.html")
+
+
+@app.route("/upload")
+def upload():
     return render_template("index.html")
 
 
@@ -289,7 +294,7 @@ def select_column():
         except Exception as e:
             return jsonify({"error": str(e)}), 500
 
-    return redirect("/")
+    return redirect("/upload")
 
 
 @app.route("/detect-column", methods=["POST"])

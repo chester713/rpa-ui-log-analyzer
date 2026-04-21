@@ -1,0 +1,51 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Welcome - RPA UI Log Analyzer</title>
+    <style>
+        * { box-sizing: border-box; margin: 0; padding: 0; }
+        body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif; background: #f5f7fb; min-height: 100vh; }
+        .container { max-width: 920px; margin: 0 auto; padding: 44px 20px; }
+        .nav { display: flex; gap: 20px; margin-bottom: 30px; }
+        .nav a { color: #007bff; text-decoration: none; }
+        .nav a:hover { text-decoration: underline; }
+        .hero { background: white; border-radius: 14px; padding: 34px; box-shadow: 0 2px 10px rgba(0,0,0,0.08); }
+        h1 { color: #1f2937; margin-bottom: 10px; }
+        .subtitle { color: #4b5563; margin-bottom: 24px; line-height: 1.5; }
+        .points { margin-bottom: 24px; padding-left: 18px; color: #374151; }
+        .points li { margin-bottom: 10px; }
+        .actions { display: flex; gap: 12px; flex-wrap: wrap; }
+        .btn { display: inline-block; border-radius: 8px; padding: 12px 18px; text-decoration: none; font-weight: 600; }
+        .btn-primary { background: #2563eb; color: white; }
+        .btn-primary:hover { background: #1d4ed8; }
+        .btn-secondary { background: #e5e7eb; color: #111827; }
+        .btn-secondary:hover { background: #d1d5db; }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <nav class="nav">
+            <a href="/">Welcome</a>
+            <a href="/upload">Upload</a>
+            <a href="/history">History</a>
+            <a href="/settings">Settings</a>
+        </nav>
+
+        <section class="hero">
+            <h1>Welcome to RPA UI Log Analyzer</h1>
+            <p class="subtitle">Start with your upload flow, then review transparent stage-by-stage analysis outputs in the workspace and final results.</p>
+            <ul class="points">
+                <li>Upload a CSV and select your event column as before.</li>
+                <li>Run analysis with additive progressive artifacts for six pipeline stages.</li>
+                <li>Keep using existing results, DFG interaction, and export behavior.</li>
+            </ul>
+            <div class="actions">
+                <a class="btn btn-primary" href="/upload">Continue to Upload</a>
+                <a class="btn btn-secondary" href="/history">View Analysis History</a>
+            </div>
+        </section>
+    </div>
+</body>
+</html>
