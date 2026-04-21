@@ -713,6 +713,16 @@ def workspace(history_id):
         for stage in PROGRESSIVE_STAGE_KEYS
     }
 
+    # Preserve log columns and preview for workspace table rendering.
+    if "log_columns" not in entry or not entry.get("log_columns"):
+        preview = entry.get("log_preview", [])
+        if preview and isinstance(preview[0], dict):
+            first = preview[0]
+            if "values" in first and isinstance(first["values"], dict):
+                entry["log_columns"] = list(first["values"].keys())
+            else:
+                entry["log_columns"] = ["event", "attributes"]
+
     return render_template("workspace.html", entry=entry)
 
 

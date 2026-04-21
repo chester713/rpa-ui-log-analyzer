@@ -22,7 +22,7 @@
         <div class="sub">Please wait while we infer activities and recommend methods.</div>
         <div class="bar"><div class="fill" id="fill"></div></div>
         <div class="meta" id="meta">Starting...</div>
-        <div class="hint">This page will automatically redirect to results.</div>
+        <div class="hint">This page will automatically redirect to the guided workspace.</div>
     </div>
 
     <script>
@@ -53,9 +53,9 @@
             if (!res.ok) throw new Error(data.error || 'Analysis failed');
             clearInterval(ticker);
             fill.style.width = '100%';
-            meta.textContent = 'Done. Redirecting to results...';
+            meta.textContent = 'Done. Redirecting to guided workspace...';
             setTimeout(() => {
-                window.location.href = '/results/' + data.history_id;
+                window.location.href = '/workspace/' + data.history_id;
             }, 300);
         })
         .catch((err) => {

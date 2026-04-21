@@ -35,6 +35,16 @@
         .pane h3 { color: #4b5563; font-size: 13px; margin-bottom: 8px; }
         .artifact-json { white-space: pre-wrap; word-break: break-word; font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 12px; color: #111827; }
         .logic-text { color: #111827; font-size: 14px; line-height: 1.45; }
+        .tbl-wrap { overflow: auto; max-height: 400px; border: 1px solid #e5e7eb; border-radius: 8px; }
+        .data-tbl { width: 100%; border-collapse: collapse; font-size: 12px; }
+        .data-tbl th, .data-tbl td { padding: 6px 10px; text-align: left; border-bottom: 1px solid #eee; white-space: nowrap; }
+        .data-tbl th { background: #f8f9fa; font-weight: 600; color: #374151; position: sticky; top: 0; }
+        .data-tbl tr { cursor: pointer; }
+        .data-tbl tr:hover { background: #f0f7ff; }
+        .data-tbl tr.row-highlight { background: #dbeafe; }
+        .data-tbl tr.row-related { background: #eff6ff; }
+        .group-cell { display: flex; flex-wrap: wrap; gap: 4px; }
+        .group-tag { background: #e5e7eb; border-radius: 4px; padding: 2px 6px; font-size: 11px; }
 
         @media (max-width: 1100px) {
             .stepper { grid-template-columns: repeat(3, minmax(0, 1fr)); }
@@ -67,9 +77,26 @@
         <section class="stage-card" data-stage-key="event_grouping">
             <div class="stage-header"><h2 class="stage-title">1) Event Grouping</h2><span class="badge">event_grouping</span></div>
             <div class="two-col">
-                <div class="pane"><h3>Artifact</h3><div class="artifact-json" data-artifact-target="event_grouping"></div></div>
-                <div class="pane"><h3>Logic Explanation</h3><div class="logic-text" data-logic-target="event_grouping"></div></div>
+                <div class="pane">
+                    <h3>Original Log (click row)</h3>
+                    <div class="tbl-wrap">
+                        <table class="data-tbl" id="logTable">
+                            <thead><tr>{% for col in entry.log_columns | default(['Event']) %}<th>{{ col }}</th>{% endfor %}</tr></thead>
+                            <tbody>{% for row in entry.log_preview | default([]) %}<tr data-row-index="{{ row.get('row_index', loop.index0) }}">{% for col in entry.log_columns | default(['Event']) %}<td>{{ row.get('values', {}).get(col, '') if row.get('values') is mapping else '' }}</td>{% endfor %}</tr>{% endfor %}</tbody>
+                        </table>
+                    </div>
+                </div>
+                <div class="pane">
+                    <h3>Event Groups (click group)</h3>
+                    <div class="tbl-wrap">
+                        <table class="data-tbl" id="groupTable">
+                            <thead><tr><th>Group</th><th>Rows</th><th>Events</th><th>Size</th></tr></thead>
+                            <tbody>{% for g in entry.progressive_artifacts.get('event_grouping', {}).get('groups', []) %}<tr data-group-index="{{ g.get('group_index', loop.index0) }}" data-event-rows="{{ g.get('event_rows', []) | join(',') }}"><td>{{ g.get('group_index', loop.index0) }}</td><td>{{ g.get('event_rows', []) | join(', ') }}</td><td>{{ g.get('event_labels', [])[:3] | join(', ') }}{% if g.get('group_size', 0) > 3 %}...{% endif %}</td><td>{{ g.get('group_size', 0) }}</td></tr>{% endfor %}</tbody>
+                        </table>
+                    </div>
+                </div>
             </div>
+            <div class="logic-text" data-logic-target="event_grouping"></div>
         </section>
 
         <section class="stage-card" data-stage-key="activity_naming" hidden>
@@ -143,6 +170,39 @@
                 }
                 if (logicNode) {
                     logicNode.textContent = String(progressiveLogic?.[stageKey] || '');
+                }
+            });
+            initGroupingInteraction();
+        }
+
+        function initGroupingInteraction() {
+            const logTable = document.getElementById('logTable');
+            const groupTable = document.getElementById('groupTable');
+            if (!logTable || !groupTable) return;
+
+            logTable.querySelectorAll('tr[data-row-index]').forEach(tr => {
+                tr.addEventListener('click', () => {
+                    const rowIdx = parseInt(tr.dataset.rowIndex, 10);
+                    document.querySelectorAll('#groupTable tr').forEach(gtr => {
+                        const rows = (gtr.dataset.eventRows || '').split(',').map(r => parseInt(r, 10)).filter(n => !isNaN(n));
+                        gtr.classList.toggle('row-highlight', rows.includes(rowIdx));
+                    });
+                });
+            });
+
+            groupTable.querySelectorAll('tr[data-group-index]').forEach(tr => {
+                tr.addEventListener('click', () => {
+                    const rows = (tr.dataset.eventRows || '').split(',').map(r => parseInt(r, 10)).filter(n => !isNaN(n));
+                    document.querySelectorAll('#logTable tr').forEach(ltr => {
+                        const lidx = parseInt(ltr.dataset.rowIndex, 10);
+                        ltr.classList.toggle('row-highlight', rows.includes(lidx));
+                    });
+                });
+            });
+
+            document.addEventListener('click', (e) => {
+                if (!e.target.closest('#logTable') && !e.target.closest('#groupTable')) {
+                    document.querySelectorAll('.row-highlight').forEach(el => el.classList.remove('row-highlight'));
                 }
             });
         }
