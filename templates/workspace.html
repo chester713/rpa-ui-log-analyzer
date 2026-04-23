@@ -261,26 +261,61 @@
                 activityOutputTbody.innerHTML = activities.map((a, i) => {
                     const type = a.activity_type || 'main';
                     const label = typeLabel[type] || type;
-                    const groupDisplay = (a.group_index ?? 0) + 1;
-                    return `<tr>
+                    const gIdx = a.group_index ?? 0;
+                    return `<tr data-group-index="${gIdx}">
                         <td>${i + 1}</td>
                         <td><span class="act-badge act-type-${type}">${label}</span></td>
                         <td>${a.activity_name || '—'}</td>
-                        <td><a href="#" class="group-link" data-group-index="${a.group_index ?? 0}">${groupDisplay}</a></td>
+                        <td><a href="#" class="group-link" data-group-index="${gIdx}">${gIdx + 1}</a></td>
                     </tr>`;
                 }).join('');
 
+                function clearActivityHighlights() {
+                    activityTbody?.querySelectorAll('tr[data-group-row]').forEach(r => r.classList.remove('row-highlight', 'row-related'));
+                    activityOutputTbody.querySelectorAll('tr[data-group-index]').forEach(r => r.classList.remove('row-highlight', 'row-related'));
+                }
+
+                // Left → Right: click group row → highlight all matching activity rows
+                activityTbody?.querySelectorAll('tr[data-group-row]').forEach(tr => {
+                    tr.addEventListener('click', () => {
+                        clearActivityHighlights();
+                        tr.classList.add('row-highlight');
+                        const gIdx = parseInt(tr.dataset.groupRow, 10);
+                        activityOutputTbody.querySelectorAll(`tr[data-group-index="${gIdx}"]`).forEach(r => {
+                            r.classList.add('row-highlight');
+                            r.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
+                        });
+                    });
+                });
+
+                // Right → Left: click activity row → highlight that row + its source group row
+                activityOutputTbody.querySelectorAll('tr[data-group-index]').forEach(tr => {
+                    tr.addEventListener('click', e => {
+                        if (e.target.classList.contains('group-link')) return;
+                        clearActivityHighlights();
+                        tr.classList.add('row-highlight');
+                        const gIdx = parseInt(tr.dataset.groupIndex, 10);
+                        const groupRow = activityTbody?.querySelector(`tr[data-group-row="${gIdx}"]`);
+                        if (groupRow) {
+                            groupRow.classList.add('row-highlight');
+                            groupRow.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
+                        }
+                    });
+                });
+
+                // Group link click → same as row click but initiated from the link
                 activityOutputTbody.querySelectorAll('.group-link').forEach(link => {
                     link.addEventListener('click', e => {
                         e.preventDefault();
+                        e.stopPropagation();
+                        clearActivityHighlights();
+                        const parentRow = link.closest('tr');
+                        if (parentRow) parentRow.classList.add('row-highlight');
                         const gIdx = parseInt(link.dataset.groupIndex, 10);
-                        document.querySelectorAll('#activityInputTable tr[data-group-row]').forEach(tr => {
-                            tr.classList.remove('row-highlight');
-                        });
-                        const target = document.querySelector(`#activityInputTable tr[data-group-row="${gIdx}"]`);
-                        if (target) {
-                            target.classList.add('row-highlight');
-                            target.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
+                        const groupRow = activityTbody?.querySelector(`tr[data-group-row="${gIdx}"]`);
+                        if (groupRow) {
+                            groupRow.classList.add('row-highlight');
+                            groupRow.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
                         }
                     });
                 });
@@ -353,7 +388,8 @@
             });
 
             document.addEventListener('click', (e) => {
-                if (!e.target.closest('#logTable') && !e.target.closest('#groupTable')) {
+                if (!e.target.closest('#logTable') && !e.target.closest('#groupTable')
+                    && !e.target.closest('#activityInputTable') && !e.target.closest('#activityOutputTable')) {
                     document.querySelectorAll('.row-highlight').forEach(el => el.classList.remove('row-highlight'));
                 }
             });
