@@ -113,40 +113,60 @@
         <section class="stage-card" data-stage-key="activity_naming" hidden>
             <div class="stage-header"><h2 class="stage-title">2) Activity Naming</h2><span class="badge">activity_naming</span></div>
             <div class="two-col">
-                <div class="pane"><h3>Artifact</h3><div class="artifact-json" data-artifact-target="activity_naming"></div></div>
-                <div class="pane"><h3>Logic Explanation</h3><div class="logic-text" data-logic-target="activity_naming"></div></div>
+                <div class="pane"><h3>Input</h3><div class="artifact-json" data-input-target="activity_naming"></div></div>
+                <div class="pane"><h3>Output</h3><div class="artifact-json" data-artifact-target="activity_naming"></div></div>
+            </div>
+            <div class="pane" style="margin-top: 12px;">
+                <h3>Logic Explanation</h3>
+                <div class="logic-text" data-logic-target="activity_naming"></div>
             </div>
         </section>
 
         <section class="stage-card" data-stage-key="action_object_extraction" hidden>
             <div class="stage-header"><h2 class="stage-title">3) Action/Object Extraction</h2><span class="badge">action_object_extraction</span></div>
             <div class="two-col">
-                <div class="pane"><h3>Artifact</h3><div class="artifact-json" data-artifact-target="action_object_extraction"></div></div>
-                <div class="pane"><h3>Logic Explanation</h3><div class="logic-text" data-logic-target="action_object_extraction"></div></div>
+                <div class="pane"><h3>Input</h3><div class="artifact-json" data-input-target="action_object_extraction"></div></div>
+                <div class="pane"><h3>Output</h3><div class="artifact-json" data-artifact-target="action_object_extraction"></div></div>
+            </div>
+            <div class="pane" style="margin-top: 12px;">
+                <h3>Logic Explanation</h3>
+                <div class="logic-text" data-logic-target="action_object_extraction"></div>
             </div>
         </section>
 
         <section class="stage-card" data-stage-key="pattern_matching" hidden>
             <div class="stage-header"><h2 class="stage-title">4) Pattern Matching</h2><span class="badge">pattern_matching</span></div>
             <div class="two-col">
-                <div class="pane"><h3>Artifact</h3><div class="artifact-json" data-artifact-target="pattern_matching"></div></div>
-                <div class="pane"><h3>Logic Explanation</h3><div class="logic-text" data-logic-target="pattern_matching"></div></div>
+                <div class="pane"><h3>Input</h3><div class="artifact-json" data-input-target="pattern_matching"></div></div>
+                <div class="pane"><h3>Output</h3><div class="artifact-json" data-artifact-target="pattern_matching"></div></div>
+            </div>
+            <div class="pane" style="margin-top: 12px;">
+                <h3>Logic Explanation</h3>
+                <div class="logic-text" data-logic-target="pattern_matching"></div>
             </div>
         </section>
 
         <section class="stage-card" data-stage-key="context_determination" hidden>
             <div class="stage-header"><h2 class="stage-title">5) Context Determination</h2><span class="badge">context_determination</span></div>
             <div class="two-col">
-                <div class="pane"><h3>Artifact</h3><div class="artifact-json" data-artifact-target="context_determination"></div></div>
-                <div class="pane"><h3>Logic Explanation</h3><div class="logic-text" data-logic-target="context_determination"></div></div>
+                <div class="pane"><h3>Input</h3><div class="artifact-json" data-input-target="context_determination"></div></div>
+                <div class="pane"><h3>Output</h3><div class="artifact-json" data-artifact-target="context_determination"></div></div>
+            </div>
+            <div class="pane" style="margin-top: 12px;">
+                <h3>Logic Explanation</h3>
+                <div class="logic-text" data-logic-target="context_determination"></div>
             </div>
         </section>
 
         <section class="stage-card" data-stage-key="method_recommendation" hidden>
             <div class="stage-header"><h2 class="stage-title">6) Method Recommendation</h2><span class="badge">method_recommendation</span></div>
             <div class="two-col">
-                <div class="pane"><h3>Artifact</h3><div class="artifact-json" data-artifact-target="method_recommendation"></div></div>
-                <div class="pane"><h3>Logic Explanation</h3><div class="logic-text" data-logic-target="method_recommendation"></div></div>
+                <div class="pane"><h3>Input</h3><div class="artifact-json" data-input-target="method_recommendation"></div></div>
+                <div class="pane"><h3>Output</h3><div class="artifact-json" data-artifact-target="method_recommendation"></div></div>
+            </div>
+            <div class="pane" style="margin-top: 12px;">
+                <h3>Logic Explanation</h3>
+                <div class="logic-text" data-logic-target="method_recommendation"></div>
             </div>
         </section>
     </div>
@@ -178,12 +198,25 @@
             }
         }
 
+        const stageInputKeys = {
+            'activity_naming': 'event_grouping',
+            'action_object_extraction': 'activity_naming',
+            'pattern_matching': 'action_object_extraction',
+            'context_determination': 'pattern_matching',
+            'method_recommendation': 'context_determination'
+        };
+
         function renderStageData() {
             stageKeys.forEach((stageKey) => {
                 const artifactNode = document.querySelector(`[data-artifact-target="${stageKey}"]`);
+                const inputNode = document.querySelector(`[data-input-target="${stageKey}"]`);
                 const logicNode = document.querySelector(`[data-logic-target="${stageKey}"]`);
                 if (artifactNode) {
                     artifactNode.textContent = JSON.stringify(progressiveArtifacts?.[stageKey] || {}, null, 2);
+                }
+                if (inputNode) {
+                    const inputKey = stageInputKeys[stageKey];
+                    inputNode.textContent = JSON.stringify(progressiveArtifacts?.[inputKey] || {}, null, 2);
                 }
                 if (logicNode) {
                     logicNode.textContent = String(progressiveLogic?.[stageKey] || '');
