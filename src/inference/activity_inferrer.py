@@ -1,5 +1,6 @@
 """LLM-powered activity inference."""
 
+import json
 import os
 import re
 from urllib.parse import urlparse
@@ -12,201 +13,237 @@ class ActivityInferrer:
     """Uses LLM to infer activities from event groups."""
 
     def __init__(self, llm_client=None):
-        """
-        Initialize ActivityInferrer.
-
-        Args:
-            llm_client: Client for LLM API. If None, uses a mock for testing.
-        """
         self.llm_client = llm_client
 
-    def infer_activity(self, event_group: List[Event]) -> Activity:
+    def infer_activities(self, event_groups) -> List[Activity]:
         """
-        Infer activity from a group of events using LLM.
+        Infer enriched activity list from event groups.
+
+        For each event group produces (in order):
+        - An implicit context-switch activity if the application changed
+        - An implicit prerequisite "Find <element>" activity if the main
+          activity targets a specific UI element
+        - The main LLM-inferred activity
 
         Args:
-            event_group: List of Events to analyze
+            event_groups: List[EventGroup] or List[List[Event]] (legacy)
 
         Returns:
-            Activity with inferred name, confidence, and evidence
+            Enriched List[Activity] — may be longer than the input groups.
         """
+        from ..inference.event_grouper import EventGroup as EG
+
+        normalised = []
+        for g in event_groups:
+            if isinstance(g, EG):
+                normalised.append(g)
+            else:
+                normalised.append(EG(events=g))
+
+        activities: List[Activity] = []
+
+        for group_idx, group in enumerate(normalised):
+            source_events = [e.row_index for e in group.events if e.row_index is not None]
+
+            # 1. Implicit context-switch activity (no LLM needed)
+            if group.is_context_switch and group.previous_app and group.current_app:
+                activities.append(Activity(
+                    name=f"Switch context from {group.previous_app} to {group.current_app}",
+                    confidence=1.0,
+                    evidence=[],
+                    source_events=source_events,
+                    activity_type="context_switch",
+                    is_implicit=True,
+                    group_index=group_idx,
+                ))
+
+            # 2. LLM call for main activity interpretation
+            if self.llm_client is None:
+                llm_result = self._mock_infer_result(group.events)
+            else:
+                prompt = self._build_prompt(group)
+                try:
+                    raw = self.llm_client.complete(prompt)
+                    llm_result = self._parse_response(raw)
+                except Exception:
+                    llm_result = {}
+
+            if not llm_result.get("activity_name"):
+                llm_result["activity_name"] = self._derive_fallback_activity_name(group.events)
+
+            # 3. Implicit prerequisite "Find <element>" activity
+            if llm_result.get("requires_find") and llm_result.get("find_target"):
+                activities.append(Activity(
+                    name=f"Find {llm_result['find_target']}",
+                    confidence=1.0,
+                    evidence=[],
+                    source_events=source_events,
+                    activity_type="prerequisite",
+                    is_implicit=True,
+                    group_index=group_idx,
+                ))
+
+            # 4. Main activity
+            activities.append(Activity(
+                name=llm_result["activity_name"],
+                confidence=llm_result.get("confidence", 0.5),
+                evidence=llm_result.get("evidence", []),
+                source_events=source_events,
+                activity_type="main",
+                is_implicit=False,
+                group_index=group_idx,
+            ))
+
+        return activities
+
+    def infer_activity(self, event_group: List[Event]) -> Activity:
+        """Infer a single main activity (no implicit activities). Used for legacy callers."""
         if not event_group:
             return Activity(name="Empty", confidence=0.0, evidence=[], source_events=[])
 
         if self.llm_client is None:
             return self._mock_infer(event_group)
 
-        prompt = self._build_prompt(event_group)
-        response = self.llm_client.complete(prompt)
+        from ..inference.event_grouper import EventGroup
+        group = EventGroup(events=event_group)
+        prompt = self._build_prompt(group)
+        try:
+            raw = self.llm_client.complete(prompt)
+            result = self._parse_response(raw)
+        except Exception:
+            result = {}
 
-        return self._parse_response(response, event_group)
-
-    def infer_activities(self, event_groups: List[List[Event]]) -> List[Activity]:
-        """
-        Infer activities for multiple event groups.
-
-        Args:
-            event_groups: List of event groups
-
-        Returns:
-            List of Activities
-        """
-        return [self.infer_activity(group) for group in event_groups]
-
-    def _build_prompt(self, event_group: List[Event]) -> str:
-        """Build prompt for LLM to infer activity."""
-        event_list = "\n".join(
-            [
-                f"- {e.event}"
-                + (
-                    f" ({e.attributes.get('element', '')})"
-                    if e.attributes.get("element")
-                    else ""
-                )
-                for e in event_group
-            ]
-        )
-
-        attributes_summary = {}
-        for e in event_group:
-            for key, value in e.attributes.items():
-                if value:
-                    if key not in attributes_summary:
-                        attributes_summary[key] = []
-                    if value not in attributes_summary[key]:
-                        attributes_summary[key].append(value)
-
-        attr_list = "\n".join([f"- {k}: {v}" for k, v in attributes_summary.items()])
-
-        prompt = f"""Given these UI events from a user interaction log, infer the underlying user activity.
-
-Events (in temporal order):
-{event_list}
-
-Event attributes:
-{attr_list or "No additional attributes"}
-
-Based on these events, what activity was the user performing?
-- Provide a concise activity name in verb + object + context format when possible
-  (examples: "Click button on webpage", "Open workbook at C:\\Users\\...\\Downloads", "Paste value into text field")
-- Rate your confidence from 0.0 to 1.0
-- List which attributes support this inference
-
-Respond in this format:
-Activity: <name>
-Confidence: <0.0-1.0>
-Evidence: <attributes that support this inference>"""
-        return prompt
-
-    def _parse_response(self, response: str, event_group: List[Event]) -> Activity:
-        """Parse LLM response into Activity object."""
-        lines = response.strip().split("\n") if response else []
-        name = ""
-        confidence = 0.5
-        evidence = []
-
-        for line in lines:
-            lower = line.lower().strip()
-            if lower.startswith("activity:") or lower.startswith("activity name:"):
-                name = re.sub(
-                    r"^activity( name)?:", "", line, flags=re.IGNORECASE
-                ).strip()
-            elif lower.startswith("confidence:"):
-                try:
-                    confidence = float(
-                        re.sub(r"^confidence:", "", line, flags=re.IGNORECASE).strip()
-                    )
-                except ValueError:
-                    confidence = 0.5
-            elif lower.startswith("evidence:"):
-                evidence = [
-                    e.strip()
-                    for e in re.sub(r"^evidence:", "", line, flags=re.IGNORECASE).split(
-                        ","
-                    )
-                    if e.strip()
-                ]
-
-        if not name or name.lower() == "unknown activity":
-            name = self._derive_fallback_activity_name(event_group)
-        else:
-            name = self._post_process_inferred_name(name, event_group)
-
+        name = result.get("activity_name") or self._derive_fallback_activity_name(event_group)
         source_events = [e.row_index for e in event_group if e.row_index is not None]
 
         return Activity(
             name=name,
-            confidence=confidence,
-            evidence=evidence,
+            confidence=result.get("confidence", 0.5),
+            evidence=result.get("evidence", []),
             source_events=source_events,
         )
 
-    def _post_process_inferred_name(self, name: str, event_group: List[Event]) -> str:
-        """Correct common grouped-event mis-inferences."""
-        event_text = " ".join([e.event.lower() for e in event_group])
-        lower_name = (name or "").lower()
+    def _build_prompt(self, group) -> str:
+        """Build LLM prompt requesting a JSON response."""
+        events = group.events
 
-        # clickTextField + paste/changeField should infer Write activity,
-        # where click is prerequisite focus.
-        if (
-            any(k in event_text for k in ["paste", "type", "input", "changefield"])
-            and any(k in event_text for k in ["clicktextfield", "click"])
-            and "click" in lower_name
-        ):
-            action, target, context = self._derive_activity_components(event_group)
-            return self._compose_activity_name("Write", target, context)
+        event_lines = []
+        for e in events:
+            parts = [e.event]
+            tag = (
+                e.attributes.get("tag_name")
+                or e.attributes.get("tag_type")
+                or e.attributes.get("element_id")
+            )
+            if tag:
+                parts.append(f"(element: {tag})")
+            event_lines.append("- " + " ".join(parts))
 
-        # Generic names create repetitive DFG roots; enrich from available attributes.
-        if lower_name in {
-            "activate element",
-            "write element",
-            "write html element on webpage",
-            "navigate",
-            "navigate in application",
-            "interact with ui",
-            "click element",
-            "click element on webpage",
-        }:
-            action, target, context = self._derive_activity_components(event_group)
-            return self._compose_activity_name(action, target, context)
+        priority_keys = [
+            "application", "app", "webpage", "url", "browser_url",
+            "tag_name", "tag_type", "element_id", "id",
+            "workbook", "worksheet", "window",
+        ]
+        attr_summary: Dict[str, set] = {}
+        for e in events:
+            for k, v in e.attributes.items():
+                if v and str(v).strip() and str(v).lower() not in {"none", "null"}:
+                    attr_summary.setdefault(k, set()).add(str(v))
 
-        return name
+        attr_lines = []
+        for k in priority_keys:
+            if k in attr_summary:
+                vals = sorted(attr_summary[k])[:3]
+                attr_lines.append(f"- {k}: {', '.join(vals)}")
+
+        events_text = "\n".join(event_lines) or "- (none)"
+        attrs_text = "\n".join(attr_lines) or "- (none available)"
+
+        return f"""You are an RPA (Robotic Process Automation) designer analyzing UI event logs.
+
+Analyze the following UI events and return structured JSON for RPA design.
+
+Events (temporal order):
+{events_text}
+
+Context attributes:
+{attrs_text}
+
+Instructions:
+1. "activity_name": Natural language name capturing the INTERACTION INTENT, not the low-level events. Use verb + object format (e.g., "Write data into search field", "Click submit button", "Select option from dropdown", "Read cell value from spreadsheet").
+2. "requires_find": In RPA the bot must LOCATE a UI element before interacting with it. Set true when this activity targets a specific element (input fields, buttons, dropdowns, checkboxes, links, table cells). Set false for page-level actions (opening a URL, scrolling, switching windows, launching an application).
+3. "find_target": If requires_find is true, concisely describe the element to locate (e.g., "username textfield", "login button", "country dropdown"). Omit if requires_find is false.
+4. "confidence": Your confidence from 0.0 to 1.0.
+5. "reasoning": One sentence explaining your interpretation.
+
+Respond with valid JSON only — no other text:
+{{
+  "activity_name": "...",
+  "requires_find": true,
+  "find_target": "...",
+  "confidence": 0.9,
+  "reasoning": "..."
+}}"""
+
+    def _parse_response(self, response: str) -> dict:
+        """Parse JSON response from LLM with line-based text fallback."""
+        if not response:
+            return {}
+
+        text = response.strip()
+
+        # Extract JSON object — handle markdown code fences too
+        json_match = re.search(r'\{.*\}', text, re.DOTALL)
+        if json_match:
+            try:
+                return json.loads(json_match.group())
+            except json.JSONDecodeError:
+                pass
+
+        # Fallback: line-based parsing for non-JSON responses
+        result: dict = {}
+        for line in text.splitlines():
+            lower = line.lower().strip()
+            if lower.startswith("activity:") or lower.startswith("activity name:"):
+                result["activity_name"] = re.sub(
+                    r"^activity( name)?:", "", line, flags=re.IGNORECASE
+                ).strip()
+            elif lower.startswith("confidence:"):
+                try:
+                    result["confidence"] = float(
+                        re.sub(r"^confidence:", "", line, flags=re.IGNORECASE).strip()
+                    )
+                except ValueError:
+                    pass
+
+        return result
 
     def _derive_fallback_activity_name(self, event_group: List[Event]) -> str:
-        """Derive a meaningful fallback activity name from event content."""
+        """Derive a meaningful fallback name when the LLM returns nothing."""
         if not event_group:
-            return "Unknown activity"
-
+            return "Perform UI interaction"
         action, target, context = self._derive_activity_components(event_group)
         return self._compose_activity_name(action, target, context)
 
     def _derive_activity_components(
         self, event_group: List[Event]
-    ) -> tuple[str, str, Optional[str]]:
-        """Infer action/target/context from grouped events and attributes."""
+    ) -> tuple:
+        """Infer action/target/context from grouped events and attributes (fallback only)."""
         if not event_group:
             return "Perform", "interaction", None
 
         event_text = " ".join([e.event.lower() for e in event_group])
         attrs = self._collect_attributes(event_group)
 
-        if any(
-            w in event_text
-            for w in ["open", "newworkbook", "openworkbook", "openwindow", "launch"]
-        ):
+        if any(w in event_text for w in ["open", "newworkbook", "openworkbook", "openwindow", "launch"]):
             action = "Open"
-        elif any(
-            w in event_text
-            for w in ["paste", "type", "input", "changefield", "write", "fill", "enter"]
-        ):
+        elif any(w in event_text for w in ["paste", "type", "input", "changefield", "write", "fill", "enter"]):
             action = "Write"
         elif any(w in event_text for w in ["click", "activate", "press", "tap"]):
             action = "Click"
         elif any(w in event_text for w in ["getcell", "read", "extract"]):
             action = "Read"
-        elif any(
-            w in event_text for w in ["select", "tab", "navigate", "startpage", "link"]
-        ):
+        elif any(w in event_text for w in ["select", "tab", "navigate", "startpage", "link"]):
             action = "Navigate"
         else:
             action = "Perform"
@@ -218,35 +255,18 @@ Evidence: <attributes that support this inference>"""
 
         return action, target, context
 
-    def _compose_activity_name(
-        self, action: str, target: str, context: Optional[str]
-    ) -> str:
-        """Compose readable Action + Target + Context activity name."""
+    def _compose_activity_name(self, action: str, target: str, context: Optional[str]) -> str:
         core = f"{(action or 'Perform').strip()} {(target or 'interaction').strip()}".strip()
         if context:
             return f"{core} {context}".strip()
         return core
 
     def _collect_attributes(self, event_group: List[Event]) -> Dict[str, Any]:
-        """Collect first non-empty values for commonly used attributes."""
         key_order = [
-            "element_id",
-            "id",
-            "tag_name",
-            "tag_type",
-            "xpath",
-            "xpath_full",
-            "browser_url",
-            "url",
-            "webpage",
-            "application",
-            "app",
-            "workbook",
-            "worksheet",
-            "current_worksheet",
-            "cell_range",
-            "cell_range_number",
-            "event_src_path",
+            "element_id", "id", "tag_name", "tag_type", "xpath", "xpath_full",
+            "browser_url", "url", "webpage", "application", "app",
+            "workbook", "worksheet", "current_worksheet",
+            "cell_range", "cell_range_number", "event_src_path",
         ]
         out: Dict[str, Any] = {}
         for key in key_order:
@@ -268,25 +288,20 @@ Evidence: <attributes that support this inference>"""
     def _is_web_group(self, event_group: List[Event]) -> bool:
         return any(
             (e.attributes.get("browser_url") or e.attributes.get("url") or e.attributes.get("webpage"))
-            or str(e.attributes.get("application", "")).lower()
-            in ["edge", "chrome", "firefox", "safari"]
+            or str(e.attributes.get("application", "")).lower() in ["edge", "chrome", "firefox", "safari"]
             or str(e.attributes.get("category", "")).lower() == "browser"
             for e in event_group
         )
 
     def _build_web_target_context(
         self, attrs: Dict[str, Any], event_group: List[Event]
-    ) -> tuple[str, Optional[str]]:
+    ) -> tuple:
         tag = self._humanize_token(
-            attrs.get("tag_name")
-            or attrs.get("tag_type")
-            or attrs.get("element_type")
-            or "element"
+            attrs.get("tag_name") or attrs.get("tag_type") or attrs.get("element_type") or "element"
         )
         element_id = attrs.get("element_id") or attrs.get("id")
         xpath = attrs.get("xpath") or attrs.get("xpath_full")
         url = attrs.get("browser_url") or attrs.get("url") or attrs.get("webpage")
-        domain = self._extract_domain(url)
 
         if element_id and not self._is_opaque_identifier(element_id):
             target = f"{tag} '{element_id}'"
@@ -306,42 +321,28 @@ Evidence: <attributes that support this inference>"""
 
         page_hint = self._build_webpage_hint(url)
         context_parts = [f"on {page_hint}" if page_hint else "on webpage"]
-
         app = attrs.get("application") or attrs.get("app")
         if app:
             context_parts.append(f"in {self._humanize_token(app)}")
 
-        context = " ".join(context_parts)
-        return target, context
+        return target, " ".join(context_parts)
 
-    def _build_web_locator_hint(
-        self, xpath: Optional[str], event_group: List[Event]
-    ) -> Optional[str]:
-        """Build readable locator hints for repetitive web elements."""
+    def _build_web_locator_hint(self, xpath: Optional[str], event_group: List[Event]) -> Optional[str]:
         parts: List[str] = []
-
         if xpath and not self._is_opaque_identifier(xpath):
             xpath_tip = self._humanize_xpath(xpath).strip("'")
             if xpath_tip and xpath_tip != "element":
                 parts.append(xpath_tip)
-
             xpath_row = self._extract_xpath_row_context(xpath)
             if xpath_row:
                 parts.append(xpath_row)
-
         if not parts:
             row_hint = self._derive_row_index_hint(event_group)
             if row_hint:
                 parts.append(row_hint)
+        return ", ".join(parts[:2]) if parts else None
 
-        if not parts:
-            return None
-
-        return ", ".join(parts[:2])
-
-    def _build_desktop_target_context(
-        self, attrs: Dict[str, Any]
-    ) -> tuple[str, Optional[str]]:
+    def _build_desktop_target_context(self, attrs: Dict[str, Any]) -> tuple:
         app = attrs.get("application") or attrs.get("app")
         workbook = attrs.get("workbook")
         worksheet = attrs.get("worksheet") or attrs.get("current_worksheet")
@@ -382,71 +383,50 @@ Evidence: <attributes that support this inference>"""
             text = f"https://{text}"
         parsed = urlparse(text)
         host = (parsed.hostname or "").strip().lower()
-        if not host:
-            return None
-        return host
+        return host or None
 
     def _build_webpage_hint(self, url: Optional[str]) -> Optional[str]:
-        """Return human-readable webpage hint (domain + useful path)."""
         if not url:
             return None
-
         text = str(url).strip()
         if not text:
             return None
         if "://" not in text:
             text = f"https://{text}"
-
         parsed = urlparse(text)
         domain = (parsed.hostname or "").strip().lower()
         if not domain:
             return None
-
-        path = (parsed.path or "").strip()
-        if path in {"", "/"}:
-            return domain
-
-        path = path.rstrip("/")
-        return f"{domain}{path}"
+        path = (parsed.path or "").strip().rstrip("/")
+        return f"{domain}{path}" if path and path != "/" else domain
 
     def _humanize_xpath(self, xpath: str) -> str:
-        """Return a readable hint from xpath without exposing opaque full path."""
         parts = [p for p in str(xpath).split("/") if p and p not in {"html", "body"}]
         if not parts:
             return "element"
-
         tip = parts[-1]
         tag_match = re.match(r"^([a-zA-Z][a-zA-Z0-9_\-]*)", tip)
         tag = (tag_match.group(1) if tag_match else "element").lower()
-
         preferred_attr = None
         for attr in ["aria-label", "name", "type", "title", "placeholder", "value"]:
             attr_match = re.search(rf"@{re.escape(attr)}=['\"]([^'\"]+)['\"]", tip)
             if attr_match:
                 preferred_attr = f"{attr}={attr_match.group(1)}"
                 break
-
         idx_match = re.search(r"\[(\d+)\](?!.*\[\d+\])", tip)
         index = idx_match.group(1) if idx_match else None
-
         parts_out = [tag]
         if preferred_attr:
             parts_out.append(preferred_attr)
         if index:
             parts_out.append(f"#{index}")
-
         return f"'{' '.join(parts_out)}'"
 
     def _extract_xpath_row_context(self, xpath: str) -> Optional[str]:
-        """Extract row-like context from xpath when present (tr/li indices)."""
-        text = str(xpath)
-        row_match = re.search(r"/(?:tr|li)\[(\d+)\]", text, flags=re.IGNORECASE)
-        if row_match:
-            return f"row {row_match.group(1)}"
-        return None
+        row_match = re.search(r"/(?:tr|li)\[(\d+)\]", str(xpath), flags=re.IGNORECASE)
+        return f"row {row_match.group(1)}" if row_match else None
 
     def _derive_row_index_hint(self, event_group: List[Event]) -> Optional[str]:
-        """Fallback row hint from source log position for disambiguation."""
         for event in event_group:
             if event.row_index is not None:
                 return f"event row {event.row_index}"
@@ -460,50 +440,56 @@ Evidence: <attributes that support this inference>"""
         text = str(value).strip()
         if not text:
             return "element"
-        text = text.replace("_", " ").replace("-", " ")
-        text = re.sub(r"\s+", " ", text)
-        return text
+        return re.sub(r"\s+", " ", text.replace("_", " ").replace("-", " "))
 
     def _is_opaque_identifier(self, value: str) -> bool:
         text = str(value).strip()
         if not text:
             return True
-
-        # Locator-like values (xpath/css-ish) are structured and can be humanized.
         if any(token in text for token in ["/", "[", "]", "@", "="]):
             return False
-
-        # Avoid exposing long machine identifiers/GUID-like values in names.
         if len(text) >= 40 and " " not in text:
             return True
         if re.fullmatch(r"[0-9a-fA-F\-]{24,}", text):
             return True
         return False
 
-    def _mock_infer(self, event_group: List[Event]) -> Activity:
-        """Mock inference for testing without LLM."""
+    def _mock_infer_result(self, event_group: List[Event]) -> dict:
+        """Mock LLM result for testing without a real LLM client."""
         event_text = " ".join([e.event.lower() for e in event_group])
-        source_events = [e.row_index for e in event_group if e.row_index is not None]
-
         action, target, context = self._derive_activity_components(event_group)
         name = self._compose_activity_name(action, target, context)
 
-        if any(
-            w in event_text for w in ["type", "fill", "input", "paste", "changefield"]
-        ):
+        requires_find = any(
+            w in event_text
+            for w in ["click", "type", "fill", "input", "paste", "changefield", "select", "read", "getcell"]
+        )
+        find_target = target if requires_find else None
+
+        if any(w in event_text for w in ["type", "fill", "input", "paste", "changefield"]):
             confidence = 0.8
         elif any(w in event_text for w in ["click", "select", "press"]):
             confidence = 0.7
-        elif any(w in event_text for w in ["scroll", "navigate", "change"]):
-            confidence = 0.6
         else:
             confidence = 0.5
 
-        evidence = list(set(attr for e in event_group for attr in e.attributes.keys()))
+        result = {
+            "activity_name": name,
+            "requires_find": requires_find,
+            "confidence": confidence,
+        }
+        if find_target:
+            result["find_target"] = find_target
+        return result
 
+    def _mock_infer(self, event_group: List[Event]) -> Activity:
+        """Mock inference returning an Activity (used by legacy infer_activity callers)."""
+        result = self._mock_infer_result(event_group)
+        source_events = [e.row_index for e in event_group if e.row_index is not None]
+        evidence = list(set(attr for e in event_group for attr in e.attributes.keys()))
         return Activity(
-            name=name,
-            confidence=confidence,
+            name=result["activity_name"],
+            confidence=result["confidence"],
             evidence=evidence,
             source_events=source_events,
         )

@@ -83,7 +83,7 @@ def _split_action_object(activity_name: str) -> tuple[str, str]:
     return activity_name, ""
 
 
-def _build_progressive_contract(mappings, activities, recommendation_payload):
+def _build_progressive_contract(mappings, activities, recommendation_payload, enriched_activities=None):
     grouped_rows = []
     activity_naming = []
     action_object = []
@@ -99,12 +99,19 @@ def _build_progressive_contract(mappings, activities, recommendation_payload):
             }
         )
 
-    for idx, activity in enumerate(activities):
+    # Use enriched activities (includes implicit prerequisites and context switches)
+    # when available; fall back to the main-only list for backward compatibility.
+    naming_source = enriched_activities if enriched_activities is not None else activities
+
+    for idx, activity in enumerate(naming_source):
         action, obj = _split_action_object(activity.name)
         activity_naming.append(
             {
-                "group_index": idx,
+                "activity_index": idx,
+                "group_index": getattr(activity, "group_index", idx),
                 "activity_name": activity.name,
+                "activity_type": getattr(activity, "activity_type", "main"),
+                "is_implicit": getattr(activity, "is_implicit", False),
                 "confidence": activity.confidence,
                 "source_events": activity.source_events,
                 "evidence": list(activity.evidence or []),
@@ -112,8 +119,11 @@ def _build_progressive_contract(mappings, activities, recommendation_payload):
         )
         action_object.append(
             {
-                "group_index": idx,
+                "activity_index": idx,
+                "group_index": getattr(activity, "group_index", idx),
                 "activity_name": activity.name,
+                "activity_type": getattr(activity, "activity_type", "main"),
+                "is_implicit": getattr(activity, "is_implicit", False),
                 "activity_action": action,
                 "activity_object": obj,
             }
@@ -163,7 +173,14 @@ def _build_progressive_contract(mappings, activities, recommendation_payload):
 
     progressive_logic = {
         "event_grouping": "Events are grouped by shared context and sequential evidence before downstream inference.",
-        "activity_naming": "Each grouped event set is assigned an inferred activity label and confidence with evidence traceability.",
+        "activity_naming": (
+            "• Activity Labeling: Each event group is sent to an LLM which interprets the interaction intent and assigns a natural language activity name "
+            "(e.g., 'Write data into a textfield') rather than describing low-level events.\n"
+            "• Prerequisite Activities: When an activity targets a specific UI element, an implicit 'Find <element>' activity is inserted before it, "
+            "reflecting the RPA requirement to locate an element before interacting with it.\n"
+            "• Context Switches: When the application context changes between groups (e.g., from Excel to a browser), an implicit "
+            "'Switch context from X to Y' activity is inserted to explicitly represent the environment transition."
+        ),
         "action_object_extraction": "Inferred activity names are split into explicit action/object pairs used by matching and explanation views.",
         "pattern_matching": "Activities are compared against known pattern definitions to identify category-level automation strategies.",
         "context_determination": "Execution environment and context attributes are derived from grouped-event metadata to constrain method selection.",
@@ -404,7 +421,6 @@ def analyze():
         recommendations = []
         matcher = PatternMatcher(PATTERNS)
         context_sequence = []
-        inference_rules = get_inference_rules().get("rules", [])
 
         def _presence_ratio(events_group, keys):
             total = len(events_group) if events_group else 1
@@ -425,44 +441,6 @@ def analyze():
         for mapping in mappings:
             activity = mapping.activity
             events_list = mapping.events
-
-            # Apply configurable grouped-event inference rules.
-            event_text = " ".join([e.event.lower() for e in events_list])
-            for rule in inference_rules:
-                if not rule.get("enabled", True):
-                    continue
-                match = rule.get("match", {})
-                all_keys = match.get("all_event_keywords", [])
-                any_keys = match.get("any_event_keywords", [])
-
-                all_ok = all(k in event_text for k in all_keys) if all_keys else True
-                any_ok = any(k in event_text for k in any_keys) if any_keys else True
-
-                if all_ok and any_ok:
-                    is_web_group = any(
-                        (e.attributes.get("browser_url") or e.attributes.get("url"))
-                        or str(e.attributes.get("application", "")).lower()
-                        in ["edge", "chrome", "firefox", "safari"]
-                        or str(e.attributes.get("category", "")).lower() == "browser"
-                        for e in events_list
-                    )
-                    output = rule.get("output", {})
-                    activity.name = (
-                        output.get("web_activity_name", activity.name)
-                        if is_web_group
-                        else output.get("non_web_activity_name", activity.name)
-                    )
-                    activity.confidence = max(
-                        activity.confidence, float(output.get("min_confidence", 0.0))
-                    )
-
-            # Ensure rule-based overrides still pass through naming enrichment,
-            # so generic labels like "Write HTML element on webpage" become
-            # specific Action + Target + Context names.
-            if hasattr(inferrer, "_post_process_inferred_name"):
-                activity.name = inferrer._post_process_inferred_name(
-                    activity.name, events_list
-                )
 
             context = get_context_from_events(events_list)
             context_sequence.append(context)
@@ -603,8 +581,9 @@ def analyze():
             )
 
         recommendation_payload = [r.to_dict() for r in recommendations]
+        enriched_activities = getattr(mapper, "enriched_activities", None)
         progressive_artifacts, progressive_logic = _build_progressive_contract(
-            mappings, activities, recommendation_payload
+            mappings, activities, recommendation_payload, enriched_activities=enriched_activities
         )
 
         history_entry = {

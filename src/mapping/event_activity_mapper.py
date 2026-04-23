@@ -29,16 +29,25 @@ class EventActivityMapper:
             events: List of Event objects
 
         Returns:
-            List of EventActivityMapping objects
+            List of EventActivityMapping objects (main activities only, one per group).
+            The full enriched list (including implicit prerequisite and context-switch
+            activities) is stored on self.enriched_activities after this call.
         """
         if not events:
+            self.enriched_activities = []
             return []
 
         groups = self.grouper.group_events_with_context_switches(events)
-        activities = self.inferrer.infer_activities([g.events for g in groups])
+
+        # Pass EventGroup objects so the inferrer can read context-switch metadata
+        all_activities = self.inferrer.infer_activities(groups)
+        self.enriched_activities = all_activities
+
+        # One main activity per group — preserves 1:1 mapping for downstream pipeline
+        main_activities = [a for a in all_activities if a.activity_type == "main"]
 
         mappings = []
-        for group, activity in zip(groups, activities):
+        for group, activity in zip(groups, main_activities):
             attribute_breakdown = self._build_attribute_breakdown(group.events)
 
             mapping = EventActivityMapping(
@@ -50,12 +59,8 @@ class EventActivityMapper:
 
             if hasattr(group, "is_context_switch") and group.is_context_switch:
                 mapping.attribute_breakdown["context_switch"] = True
-                mapping.attribute_breakdown["previous_app"] = getattr(
-                    group, "previous_app", None
-                )
-                mapping.attribute_breakdown["current_app"] = getattr(
-                    group, "current_app", None
-                )
+                mapping.attribute_breakdown["previous_app"] = getattr(group, "previous_app", None)
+                mapping.attribute_breakdown["current_app"] = getattr(group, "current_app", None)
 
             mappings.append(mapping)
 
