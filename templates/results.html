@@ -60,6 +60,15 @@
         .muted { color: #777; font-size: 13px; }
         .empty { color: #666; padding: 16px; border: 1px dashed #ddd; border-radius: 8px; }
         #detailsPanel { overflow: auto; }
+
+        .workflow-roadmap-wrap { position: sticky; top: 0; z-index: 30; background: #f5f5f5; padding: 10px 0 12px; margin-bottom: 18px; border-bottom: 1px solid #e5e7eb; }
+        .workflow-roadmap-scroll { overflow-x: auto; }
+        .workflow-roadmap { display: grid; grid-template-columns: repeat(6, minmax(160px, 1fr)); gap: 8px; min-width: 980px; }
+        .workflow-step { background: #ffffff; border: 1px solid #dbe1ea; border-radius: 10px; padding: 10px 8px; color: #374151; font-size: 12px; text-align: left; text-decoration: none; white-space: nowrap; }
+        .workflow-step.active { border-color: #2563eb; background: #eff6ff; color: #1d4ed8; font-weight: 600; }
+        .workflow-roadmap-controls { display: flex; gap: 10px; justify-content: flex-end; margin-top: 10px; }
+        .workflow-roadmap-btn { background: #ffffff; color: #1f2937; border: 1px solid #d1d5db; border-radius: 8px; padding: 8px 12px; font-size: 13px; text-decoration: none; }
+        .workflow-roadmap-btn.disabled { opacity: 0.5; pointer-events: none; }
     </style>
 </head>
 <body>
@@ -70,6 +79,12 @@
             <a href="/history">History</a>
             <a href="/settings">Settings</a>
         </nav>
+
+        {% set workflow_active_step = 6 %}
+        {% set workflow_workspace_url = '/workspace/' ~ entry.id %}
+        {% set workflow_prev_url = '/workspace/' ~ entry.id ~ '#method_recommendation' %}
+        {% set workflow_next_url = None %}
+        {% include '_workflow_roadmap.html' %}
 
         <div class="topbar">
             <div>

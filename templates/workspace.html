@@ -21,14 +21,14 @@
         .btn-muted { background: #fff; color: #1f2937; border-color: #d1d5db; }
         .btn-muted:hover { background: #f9fafb; }
 
-        .roadmap-wrap { margin-bottom: 18px; }
-        .stepper { display: grid; grid-template-columns: repeat(6, minmax(0, 1fr)); gap: 8px; margin-bottom: 10px; }
-        .step { background: #ffffff; border: 1px solid #dbe1ea; border-radius: 10px; padding: 10px 8px; color: #374151; font-size: 12px; cursor: pointer; text-align: left; }
-        .step.active { border-color: #2563eb; background: #eff6ff; color: #1d4ed8; font-weight: 600; }
-        .roadmap-controls { display: flex; gap: 10px; justify-content: flex-end; }
-        .roadmap-btn { background: #ffffff; color: #1f2937; border: 1px solid #d1d5db; border-radius: 8px; padding: 8px 12px; cursor: pointer; font-size: 13px; }
-        .roadmap-btn:hover { background: #f9fafb; }
-        .roadmap-btn:disabled { cursor: not-allowed; opacity: 0.5; }
+        .workflow-roadmap-wrap { position: sticky; top: 0; z-index: 30; background: #f5f7fb; padding: 10px 0 12px; margin-bottom: 18px; border-bottom: 1px solid #e5e7eb; }
+        .workflow-roadmap-scroll { overflow-x: auto; }
+        .workflow-roadmap { display: grid; grid-template-columns: repeat(6, minmax(160px, 1fr)); gap: 8px; min-width: 980px; }
+        .workflow-step { background: #ffffff; border: 1px solid #dbe1ea; border-radius: 10px; padding: 10px 8px; color: #374151; font-size: 12px; text-align: left; text-decoration: none; white-space: nowrap; }
+        .workflow-step.active { border-color: #2563eb; background: #eff6ff; color: #1d4ed8; font-weight: 600; }
+        .workflow-roadmap-controls { display: flex; gap: 10px; justify-content: flex-end; margin-top: 10px; }
+        .workflow-roadmap-btn { background: #ffffff; color: #1f2937; border: 1px solid #d1d5db; border-radius: 8px; padding: 8px 12px; font-size: 13px; text-decoration: none; }
+        .workflow-roadmap-btn.disabled { opacity: 0.5; pointer-events: none; }
 
         .stage-card { background: #ffffff; border-radius: 12px; box-shadow: 0 2px 8px rgba(0,0,0,0.08); padding: 16px; margin-bottom: 14px; }
         .stage-card[hidden] { display: none; }
@@ -52,7 +52,6 @@
         .group-tag { background: #e5e7eb; border-radius: 4px; padding: 2px 6px; font-size: 11px; }
 
         @media (max-width: 1100px) {
-            .stepper { grid-template-columns: repeat(3, minmax(0, 1fr)); }
             .two-col { grid-template-columns: 1fr; }
         }
     </style>
@@ -77,13 +76,11 @@
             </div>
         </div>
 
-        <div class="roadmap-wrap">
-            <div class="stepper" id="stepper"></div>
-            <div class="roadmap-controls">
-                <button class="roadmap-btn" id="prevStepBtn" type="button">Last step</button>
-                <button class="roadmap-btn" id="nextStepBtn" type="button">Next step</button>
-            </div>
-        </div>
+        {% set workflow_active_step = 1 %}
+        {% set workflow_workspace_url = '/workspace/' ~ entry.id %}
+        {% set workflow_prev_url = '/select-column' %}
+        {% set workflow_next_url = '/results/' ~ entry.id %}
+        {% include '_workflow_roadmap.html' %}
 
         <section class="stage-card" data-stage-key="event_grouping">
             <div class="stage-header"><h2 class="stage-title">1) Event Grouping</h2><span class="badge">event_grouping</span></div>
@@ -154,33 +151,28 @@
     <script>
         const progressiveArtifacts = {{ entry.progressive_artifacts | tojson }};
         const progressiveLogic = {{ entry.progressive_logic | tojson }};
-        const stageMeta = [
-            { key: 'event_grouping', label: 'Event grouping' },
-            { key: 'activity_naming', label: 'Activity Inference' },
-            { key: 'action_object_extraction', label: 'Action/Object Identification' },
-            { key: 'pattern_matching', label: 'Pattern Matching' },
-            { key: 'context_determination', label: 'Context identification' },
-            { key: 'method_recommendation', label: 'Method recommendation' }
+        const stageKeys = [
+            'event_grouping',
+            'activity_naming',
+            'action_object_extraction',
+            'pattern_matching',
+            'context_determination',
+            'method_recommendation'
         ];
-        const stageKeys = stageMeta.map(stage => stage.key);
-        let currentStageIndex = 0;
 
         function showStage(stageKey) {
-            const idx = stageKeys.indexOf(stageKey);
-            if (idx === -1) return;
-            currentStageIndex = idx;
+            if (!stageKeys.includes(stageKey)) return;
 
             document.querySelectorAll('[data-stage-key]').forEach(section => {
                 section.hidden = section.getAttribute('data-stage-key') !== stageKey;
             });
-            document.querySelectorAll('.step').forEach(btn => {
-                btn.classList.toggle('active', btn.getAttribute('data-stage-key') === stageKey);
+            document.querySelectorAll('.workflow-step').forEach(btn => {
+                btn.classList.toggle('active', btn.getAttribute('href')?.endsWith(`#${stageKey}`));
             });
 
-            const prevBtn = document.getElementById('prevStepBtn');
-            const nextBtn = document.getElementById('nextStepBtn');
-            if (prevBtn) prevBtn.disabled = currentStageIndex === 0;
-            if (nextBtn) nextBtn.disabled = currentStageIndex === stageKeys.length - 1;
+            if (window.location.hash !== `#${stageKey}`) {
+                history.replaceState(null, '', `#${stageKey}`);
+            }
         }
 
         function renderStageData() {
@@ -267,41 +259,45 @@
             });
         }
 
-        function buildStepper() {
-            const stepper = document.getElementById('stepper');
-            if (!stepper) return;
-            stageMeta.forEach((stage, index) => {
-                const btn = document.createElement('button');
-                btn.type = 'button';
-                btn.className = 'step';
-                btn.setAttribute('data-stage-key', stage.key);
-                btn.textContent = `${index + 1}. ${stage.label}`;
-                btn.addEventListener('click', () => showStage(stage.key));
-                stepper.appendChild(btn);
+        renderStageData();
+        const initialStage = stageKeys.includes(window.location.hash.replace('#', ''))
+            ? window.location.hash.replace('#', '')
+            : stageKeys[0];
+        showStage(initialStage);
+
+        const prevLink = document.getElementById('workflowPrevLink');
+        const nextLink = document.getElementById('workflowNextLink');
+        document.querySelectorAll('.workflow-step').forEach((link) => {
+            if (link.tagName.toLowerCase() !== 'a') return;
+            link.addEventListener('click', (e) => {
+                const href = link.getAttribute('href') || '';
+                if (!href.includes('#')) return;
+                const targetStage = href.split('#')[1];
+                if (!stageKeys.includes(targetStage)) return;
+                e.preventDefault();
+                showStage(targetStage);
+            });
+        });
+        if (prevLink && prevLink.tagName.toLowerCase() === 'a') {
+            prevLink.addEventListener('click', (e) => {
+                const current = window.location.hash.replace('#', '') || stageKeys[0];
+                const idx = stageKeys.indexOf(current);
+                if (idx > 0) {
+                    e.preventDefault();
+                    showStage(stageKeys[idx - 1]);
+                }
             });
         }
-
-        function bindRoadmapControls() {
-            const prevBtn = document.getElementById('prevStepBtn');
-            const nextBtn = document.getElementById('nextStepBtn');
-            if (prevBtn) {
-                prevBtn.addEventListener('click', () => {
-                    if (currentStageIndex <= 0) return;
-                    showStage(stageKeys[currentStageIndex - 1]);
-                });
-            }
-            if (nextBtn) {
-                nextBtn.addEventListener('click', () => {
-                    if (currentStageIndex >= stageKeys.length - 1) return;
-                    showStage(stageKeys[currentStageIndex + 1]);
-                });
-            }
+        if (nextLink && nextLink.tagName.toLowerCase() === 'a') {
+            nextLink.addEventListener('click', (e) => {
+                const current = window.location.hash.replace('#', '') || stageKeys[0];
+                const idx = stageKeys.indexOf(current);
+                if (idx >= 0 && idx < stageKeys.length - 1) {
+                    e.preventDefault();
+                    showStage(stageKeys[idx + 1]);
+                }
+            });
         }
-
-        buildStepper();
-        bindRoadmapControls();
-        renderStageData();
-        showStage(stageKeys[0]);
     </script>
 </body>
 </html>

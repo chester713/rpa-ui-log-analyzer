@@ -33,6 +33,15 @@
         .filename { font-weight: 600; color: #333; margin-bottom: 10px; }
         .selected-info { margin-top: 15px; padding: 12px; background: #e7f0ff; border-radius: 6px; }
         .button-bar { position: sticky; bottom: 0; background: white; padding: 20px 0; margin-top: 20px; border-top: 1px solid #eee; }
+
+        .workflow-roadmap-wrap { position: sticky; top: 0; z-index: 30; background: #f5f5f5; padding: 10px 0 12px; margin-bottom: 18px; border-bottom: 1px solid #e5e7eb; }
+        .workflow-roadmap-scroll { overflow-x: auto; }
+        .workflow-roadmap { display: grid; grid-template-columns: repeat(6, minmax(160px, 1fr)); gap: 8px; min-width: 980px; }
+        .workflow-step { background: #ffffff; border: 1px solid #dbe1ea; border-radius: 10px; padding: 10px 8px; color: #374151; font-size: 12px; text-align: left; text-decoration: none; white-space: nowrap; }
+        .workflow-step.active { border-color: #2563eb; background: #eff6ff; color: #1d4ed8; font-weight: 600; }
+        .workflow-roadmap-controls { display: flex; gap: 10px; justify-content: flex-end; margin-top: 10px; }
+        .workflow-roadmap-btn { background: #ffffff; color: #1f2937; border: 1px solid #d1d5db; border-radius: 8px; padding: 8px 12px; font-size: 13px; text-decoration: none; }
+        .workflow-roadmap-btn.disabled { opacity: 0.5; pointer-events: none; }
     </style>
 </head>
 <body>
@@ -43,6 +52,12 @@
             <a href="/history">History</a>
             <a href="/settings">Settings</a>
         </nav>
+
+        {% set workflow_active_step = 1 %}
+        {% set workflow_workspace_url = None %}
+        {% set workflow_prev_url = '/upload' %}
+        {% set workflow_next_url = '/analyzing' %}
+        {% include '_workflow_roadmap.html' %}
         
         <h1>Select Event Column</h1>
         <p class="subtitle">Click on a column header to select it as the event column</p>

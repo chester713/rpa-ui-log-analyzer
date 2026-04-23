@@ -1,0 +1,31 @@
+<div class="workflow-roadmap-wrap">
+    <div class="workflow-roadmap-scroll">
+        <div class="workflow-roadmap" id="workflowRoadmap">
+            {% set _steps = [
+                {'index': 1, 'label': 'Event grouping', 'href': (workflow_workspace_url if workflow_workspace_url else '/upload') + '#event_grouping'},
+                {'index': 2, 'label': 'Activity Inference', 'href': (workflow_workspace_url if workflow_workspace_url else '/upload') + '#activity_naming'},
+                {'index': 3, 'label': 'Action/Object Identification', 'href': (workflow_workspace_url if workflow_workspace_url else '/upload') + '#action_object_extraction'},
+                {'index': 4, 'label': 'Pattern Matching', 'href': (workflow_workspace_url if workflow_workspace_url else '/upload') + '#pattern_matching'},
+                {'index': 5, 'label': 'Context identification', 'href': (workflow_workspace_url if workflow_workspace_url else '/upload') + '#context_determination'},
+                {'index': 6, 'label': 'Method recommendation', 'href': (workflow_workspace_url if workflow_workspace_url else '/upload') + '#method_recommendation'}
+            ] %}
+            {% for s in _steps %}
+                <a class="workflow-step {% if workflow_active_step == s.index %}active{% endif %}" href="{{ s.href }}" data-workflow-step="{{ s.index }}">{{ s.index }}. {{ s.label }}</a>
+            {% endfor %}
+        </div>
+    </div>
+    {% if workflow_prev_url or workflow_next_url %}
+    <div class="workflow-roadmap-controls">
+        {% if workflow_prev_url %}
+            <a class="workflow-roadmap-btn" id="workflowPrevLink" href="{{ workflow_prev_url }}">Last step</a>
+        {% else %}
+            <span class="workflow-roadmap-btn disabled" id="workflowPrevLink">Last step</span>
+        {% endif %}
+        {% if workflow_next_url %}
+            <a class="workflow-roadmap-btn" id="workflowNextLink" href="{{ workflow_next_url }}">Next step</a>
+        {% else %}
+            <span class="workflow-roadmap-btn disabled" id="workflowNextLink">Next step</span>
+        {% endif %}
+    </div>
+    {% endif %}
+</div>
