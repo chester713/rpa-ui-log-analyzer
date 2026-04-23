@@ -40,6 +40,9 @@
         .pane h3 { color: #4b5563; font-size: 13px; margin-bottom: 8px; }
         .artifact-json { white-space: pre-wrap; word-break: break-word; font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 12px; color: #111827; }
         .logic-text { color: #111827; font-size: 14px; line-height: 1.45; }
+        .logic-list { list-style: none; padding: 0; margin: 0; display: flex; flex-direction: column; gap: 8px; }
+        .logic-list li { padding: 10px 14px; background: #f8fafc; border-left: 3px solid #2563eb; border-radius: 0 6px 6px 0; font-size: 13px; line-height: 1.55; color: #1f2937; }
+        .logic-list li strong { color: #1d4ed8; display: block; margin-bottom: 3px; font-size: 13px; }
         .tbl-wrap { overflow: auto; max-height: 400px; border: 1px solid #e5e7eb; border-radius: 8px; }
         .data-tbl { width: 100%; border-collapse: collapse; font-size: 12px; }
         .data-tbl th, .data-tbl td { padding: 6px 10px; text-align: left; border-bottom: 1px solid #eee; white-space: nowrap; }
@@ -241,7 +244,23 @@
                     inputNode.textContent = JSON.stringify(progressiveArtifacts?.[inputKey] || {}, null, 2);
                 }
                 if (logicNode) {
-                    logicNode.textContent = String(progressiveLogic?.[stageKey] || '');
+                    const raw = String(progressiveLogic?.[stageKey] || '');
+                    const lines = raw.split('\n').map(l => l.trim()).filter(Boolean);
+                    if (lines.some(l => l.startsWith('•'))) {
+                        const items = lines.filter(l => l.startsWith('•')).map(l => {
+                            const text = l.replace(/^•\s*/, '');
+                            const colonIdx = text.indexOf(':');
+                            if (colonIdx > -1) {
+                                const title = text.substring(0, colonIdx);
+                                const body = text.substring(colonIdx + 1).trim();
+                                return `<li><strong>${title}</strong>${body}</li>`;
+                            }
+                            return `<li>${text}</li>`;
+                        }).join('');
+                        logicNode.innerHTML = `<ul class="logic-list">${items}</ul>`;
+                    } else {
+                        logicNode.textContent = raw;
+                    }
                 }
             });
 
