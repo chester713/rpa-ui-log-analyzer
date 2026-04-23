@@ -21,9 +21,14 @@
         .btn-muted { background: #fff; color: #1f2937; border-color: #d1d5db; }
         .btn-muted:hover { background: #f9fafb; }
 
-        .stepper { display: grid; grid-template-columns: repeat(6, minmax(0, 1fr)); gap: 10px; margin-bottom: 18px; }
-        .step { background: #ffffff; border: 1px solid #dbe1ea; border-radius: 10px; padding: 10px; color: #374151; font-size: 13px; cursor: pointer; }
+        .roadmap-wrap { margin-bottom: 18px; }
+        .stepper { display: grid; grid-template-columns: repeat(6, minmax(0, 1fr)); gap: 8px; margin-bottom: 10px; }
+        .step { background: #ffffff; border: 1px solid #dbe1ea; border-radius: 10px; padding: 10px 8px; color: #374151; font-size: 12px; cursor: pointer; text-align: left; }
         .step.active { border-color: #2563eb; background: #eff6ff; color: #1d4ed8; font-weight: 600; }
+        .roadmap-controls { display: flex; gap: 10px; justify-content: flex-end; }
+        .roadmap-btn { background: #ffffff; color: #1f2937; border: 1px solid #d1d5db; border-radius: 8px; padding: 8px 12px; cursor: pointer; font-size: 13px; }
+        .roadmap-btn:hover { background: #f9fafb; }
+        .roadmap-btn:disabled { cursor: not-allowed; opacity: 0.5; }
 
         .stage-card { background: #ffffff; border-radius: 12px; box-shadow: 0 2px 8px rgba(0,0,0,0.08); padding: 16px; margin-bottom: 14px; }
         .stage-card[hidden] { display: none; }
@@ -72,7 +77,13 @@
             </div>
         </div>
 
-        <div class="stepper" id="stepper"></div>
+        <div class="roadmap-wrap">
+            <div class="stepper" id="stepper"></div>
+            <div class="roadmap-controls">
+                <button class="roadmap-btn" id="prevStepBtn" type="button">Last step</button>
+                <button class="roadmap-btn" id="nextStepBtn" type="button">Next step</button>
+            </div>
+        </div>
 
         <section class="stage-card" data-stage-key="event_grouping">
             <div class="stage-header"><h2 class="stage-title">1) Event Grouping</h2><span class="badge">event_grouping</span></div>
@@ -143,22 +154,33 @@
     <script>
         const progressiveArtifacts = {{ entry.progressive_artifacts | tojson }};
         const progressiveLogic = {{ entry.progressive_logic | tojson }};
-        const stageKeys = [
-            'event_grouping',
-            'activity_naming',
-            'action_object_extraction',
-            'pattern_matching',
-            'context_determination',
-            'method_recommendation'
+        const stageMeta = [
+            { key: 'event_grouping', label: 'Event grouping' },
+            { key: 'activity_naming', label: 'Activity Inference' },
+            { key: 'action_object_extraction', label: 'Action/Object Identification' },
+            { key: 'pattern_matching', label: 'Pattern Matching' },
+            { key: 'context_determination', label: 'Context identification' },
+            { key: 'method_recommendation', label: 'Method recommendation' }
         ];
+        const stageKeys = stageMeta.map(stage => stage.key);
+        let currentStageIndex = 0;
 
         function showStage(stageKey) {
+            const idx = stageKeys.indexOf(stageKey);
+            if (idx === -1) return;
+            currentStageIndex = idx;
+
             document.querySelectorAll('[data-stage-key]').forEach(section => {
                 section.hidden = section.getAttribute('data-stage-key') !== stageKey;
             });
             document.querySelectorAll('.step').forEach(btn => {
                 btn.classList.toggle('active', btn.getAttribute('data-stage-key') === stageKey);
             });
+
+            const prevBtn = document.getElementById('prevStepBtn');
+            const nextBtn = document.getElementById('nextStepBtn');
+            if (prevBtn) prevBtn.disabled = currentStageIndex === 0;
+            if (nextBtn) nextBtn.disabled = currentStageIndex === stageKeys.length - 1;
         }
 
         function renderStageData() {
@@ -248,18 +270,36 @@
         function buildStepper() {
             const stepper = document.getElementById('stepper');
             if (!stepper) return;
-            stageKeys.forEach((stageKey, index) => {
+            stageMeta.forEach((stage, index) => {
                 const btn = document.createElement('button');
                 btn.type = 'button';
                 btn.className = 'step';
-                btn.setAttribute('data-stage-key', stageKey);
-                btn.textContent = `${index + 1}. ${stageKey.replaceAll('_', ' ')}`;
-                btn.addEventListener('click', () => showStage(stageKey));
+                btn.setAttribute('data-stage-key', stage.key);
+                btn.textContent = `${index + 1}. ${stage.label}`;
+                btn.addEventListener('click', () => showStage(stage.key));
                 stepper.appendChild(btn);
             });
         }
 
+        function bindRoadmapControls() {
+            const prevBtn = document.getElementById('prevStepBtn');
+            const nextBtn = document.getElementById('nextStepBtn');
+            if (prevBtn) {
+                prevBtn.addEventListener('click', () => {
+                    if (currentStageIndex <= 0) return;
+                    showStage(stageKeys[currentStageIndex - 1]);
+                });
+            }
+            if (nextBtn) {
+                nextBtn.addEventListener('click', () => {
+                    if (currentStageIndex >= stageKeys.length - 1) return;
+                    showStage(stageKeys[currentStageIndex + 1]);
+                });
+            }
+        }
+
         buildStepper();
+        bindRoadmapControls();
         renderStageData();
         showStage(stageKeys[0]);
     </script>
