@@ -113,7 +113,15 @@
         <section class="stage-card" data-stage-key="activity_naming" hidden>
             <div class="stage-header"><h2 class="stage-title">2) Activity Naming</h2><span class="badge">activity_naming</span></div>
             <div class="two-col">
-                <div class="pane"><h3>Input</h3><div class="artifact-json" data-input-target="activity_naming"></div></div>
+                <div class="pane">
+                    <h3>Event Groups</h3>
+                    <div class="tbl-wrap">
+                        <table class="data-tbl" id="activityInputTable">
+                            <thead><tr><th>#</th><th>Events</th><th>Size</th></tr></thead>
+                            <tbody id="activityInputTableBody"></tbody>
+                        </table>
+                    </div>
+                </div>
                 <div class="pane"><h3>Output</h3><div class="artifact-json" data-artifact-target="activity_naming"></div></div>
             </div>
             <div class="pane" style="margin-top: 12px;">
@@ -222,6 +230,16 @@
                     logicNode.textContent = String(progressiveLogic?.[stageKey] || '');
                 }
             });
+
+            const groups = progressiveArtifacts?.['event_grouping']?.groups || [];
+            const activityTbody = document.getElementById('activityInputTableBody');
+            if (activityTbody) {
+                activityTbody.innerHTML = groups.map((g, i) => {
+                    const events = (g.event_labels || []).join(', ') || '—';
+                    return `<tr><td>${i + 1}</td><td>${events}</td><td>${g.group_size || 0}</td></tr>`;
+                }).join('');
+            }
+
             initGroupingInteraction();
         }
 
