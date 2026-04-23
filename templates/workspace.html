@@ -257,7 +257,7 @@
             const activityOutputTbody = document.getElementById('activityOutputTableBody');
             if (activityOutputTbody) {
                 const activities = progressiveArtifacts?.['activity_naming']?.activities || [];
-                const typeLabel = { main: 'Main', prerequisite: 'Find', context_switch: 'Switch' };
+                const typeLabel = { main: 'Recorded', prerequisite: 'Prerequisite', context_switch: 'Switch' };
                 activityOutputTbody.innerHTML = activities.map((a, i) => {
                     const type = a.activity_type || 'main';
                     const label = typeLabel[type] || type;
