@@ -278,7 +278,9 @@ def select_column():
 
             llm_client = get_llm_client()
             loader = CSVLoader(llm_client)
-            detected = loader._detect_event_column_with_llm(columns)
+            detected = loader._detect_event_column_with_llm(
+                columns, sample_rows=rows
+            )
 
             session["uploaded_file"] = filepath
             session["filename"] = filename
@@ -324,7 +326,16 @@ def detect_column():
 
         llm_client = get_llm_client()
         loader = CSVLoader(llm_client)
-        detected = loader._detect_event_column_with_llm(columns)
+        preview_rows = []
+        with open(filepath, "r", encoding="utf-8") as preview_f:
+            preview_reader = csv.DictReader(preview_f)
+            for i, row in enumerate(preview_reader):
+                if i < 100:
+                    preview_rows.append(row)
+
+        detected = loader._detect_event_column_with_llm(
+            columns, sample_rows=preview_rows
+        )
 
         session["uploaded_file"] = filepath
         session["filename"] = filename
