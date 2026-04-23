@@ -68,8 +68,16 @@ class ActivityInferrer:
                 except Exception:
                     llm_result = {}
 
-            if not llm_result.get("activity_name"):
-                llm_result["activity_name"] = self._derive_fallback_activity_name(group.events)
+            # When LLM is unavailable or returns an incomplete response, fill gaps
+            # with rule-based detection so prerequisite activities are still generated.
+            if not llm_result.get("activity_name") or "requires_find" not in llm_result:
+                fallback = self._mock_infer_result(group.events)
+                if not llm_result.get("activity_name"):
+                    llm_result["activity_name"] = fallback["activity_name"]
+                if "requires_find" not in llm_result:
+                    llm_result["requires_find"] = fallback.get("requires_find", False)
+                    if fallback.get("find_target"):
+                        llm_result.setdefault("find_target", fallback["find_target"])
 
             # 3. Implicit prerequisite "Find <element>" activity
             if llm_result.get("requires_find") and llm_result.get("find_target"):
