@@ -180,23 +180,61 @@
             const groupTable = document.getElementById('groupTable');
             if (!logTable || !groupTable) return;
 
+            function parseGroupRows(tr) {
+                return (tr?.dataset?.eventRows || '')
+                    .split(',')
+                    .map(r => parseInt(r, 10))
+                    .filter(n => !isNaN(n));
+            }
+
+            function clearHighlights() {
+                document.querySelectorAll('#logTable tr, #groupTable tr').forEach(tr => {
+                    tr.classList.remove('row-highlight', 'row-related');
+                });
+            }
+
+            function highlightGroupSelection(groupTr, clickedRowIdx = null) {
+                const rows = parseGroupRows(groupTr);
+
+                groupTable.querySelectorAll('tr[data-group-index]').forEach(gtr => {
+                    gtr.classList.toggle('row-highlight', gtr === groupTr);
+                });
+
+                logTable.querySelectorAll('tr[data-row-index]').forEach(ltr => {
+                    const lidx = parseInt(ltr.dataset.rowIndex, 10);
+                    ltr.classList.remove('row-highlight', 'row-related');
+                    if (!rows.includes(lidx)) {
+                        return;
+                    }
+
+                    if (clickedRowIdx !== null) {
+                        ltr.classList.add(lidx === clickedRowIdx ? 'row-highlight' : 'row-related');
+                    } else {
+                        ltr.classList.add('row-highlight');
+                    }
+                });
+            }
+
             logTable.querySelectorAll('tr[data-row-index]').forEach(tr => {
                 tr.addEventListener('click', () => {
                     const rowIdx = parseInt(tr.dataset.rowIndex, 10);
-                    document.querySelectorAll('#groupTable tr').forEach(gtr => {
-                        const rows = (gtr.dataset.eventRows || '').split(',').map(r => parseInt(r, 10)).filter(n => !isNaN(n));
-                        gtr.classList.toggle('row-highlight', rows.includes(rowIdx));
-                    });
+                    const matchingGroup = Array.from(
+                        groupTable.querySelectorAll('tr[data-group-index]')
+                    ).find(gtr => parseGroupRows(gtr).includes(rowIdx));
+
+                    if (!matchingGroup) {
+                        clearHighlights();
+                        tr.classList.add('row-highlight');
+                        return;
+                    }
+
+                    highlightGroupSelection(matchingGroup, rowIdx);
                 });
             });
 
             groupTable.querySelectorAll('tr[data-group-index]').forEach(tr => {
                 tr.addEventListener('click', () => {
-                    const rows = (tr.dataset.eventRows || '').split(',').map(r => parseInt(r, 10)).filter(n => !isNaN(n));
-                    document.querySelectorAll('#logTable tr').forEach(ltr => {
-                        const lidx = parseInt(ltr.dataset.rowIndex, 10);
-                        ltr.classList.toggle('row-highlight', rows.includes(lidx));
-                    });
+                    highlightGroupSelection(tr, null);
                 });
             });
 
