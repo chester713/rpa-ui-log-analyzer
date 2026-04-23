@@ -1,4 +1,10 @@
 data/uploads/*.csv
 data/history.json
-src/**/__pycache__/
-*.pyc
+
+# Python cache / bytecode
+__pycache__/
+*.py[cod]
+
+# Test and tooling caches
+.pytest_cache/
+.ruff_cache/
