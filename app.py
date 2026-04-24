@@ -129,6 +129,39 @@ def _build_progressive_contract(mappings, activities, recommendation_payload, en
             }
         )
 
+    # Align implicit recommendation names with enriched activity names so the
+    # frontend nameToMatch lookup (keyed on activity_name from pairs) succeeds.
+    #
+    # Two mismatches exist:
+    # 1. context_switch: pairs use app names ("Switch context from Chrome to Excel"),
+    #    implicit recs use context-type strings ("Switch context from web to desktop").
+    #    Fixed by positional alignment (both iterate events in the same order).
+    # 2. prerequisite Find: pairs use LLM's find_target ("Find element '1'"),
+    #    implicit recs use a hardcoded template ("Find target element for write").
+    #    Fixed by event-set matching (both reference the same source event rows).
+    if enriched_activities is not None:
+        cs_names = [
+            a.name for a in enriched_activities
+            if getattr(a, "activity_type", "") == "context_switch"
+        ]
+        cs_rec_indices = [
+            i for i, rec in enumerate(recommendation_payload)
+            if rec.get("context_switch") and rec.get("activity_action") == "Switch"
+        ]
+        for name, rec_idx in zip(cs_names, cs_rec_indices):
+            recommendation_payload[rec_idx]["inferred_activity"] = name
+
+        prereq_by_events = {
+            tuple(sorted(a.source_events or [])): a.name
+            for a in enriched_activities
+            if getattr(a, "activity_type", "") == "prerequisite"
+        }
+        for i, rec in enumerate(recommendation_payload):
+            if rec.get("activity_action") == "Find" and not rec.get("context_switch"):
+                key = tuple(sorted(rec.get("events", [])))
+                if key in prereq_by_events:
+                    recommendation_payload[i]["inferred_activity"] = prereq_by_events[key]
+
     pattern_matching = []
     context_determination = []
     method_recommendation = []
