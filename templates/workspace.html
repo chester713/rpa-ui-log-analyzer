@@ -529,7 +529,8 @@
 
             document.addEventListener('click', (e) => {
                 if (!e.target.closest('#logTable') && !e.target.closest('#groupTable')
-                    && !e.target.closest('#activityInputTable') && !e.target.closest('#activityOutputTable')) {
+                    && !e.target.closest('#activityInputTable') && !e.target.closest('#activityOutputTable')
+                    && !e.target.closest('#aoInputTable') && !e.target.closest('#aomcOutputTable')) {
                     document.querySelectorAll('.row-highlight').forEach(el => el.classList.remove('row-highlight'));
                 }
             });
