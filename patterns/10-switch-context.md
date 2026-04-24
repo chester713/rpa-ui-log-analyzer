@@ -1,10 +1,10 @@
 # Pattern: Switch Context
 
 ## Action
-Switch context
+Switch
 
 ## Object
-UI element
+Context
 
 ## Method
 UI Automation manipulation (Desktop) / Hardware simulation (Desktop)
