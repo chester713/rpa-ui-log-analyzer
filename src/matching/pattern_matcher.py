@@ -64,14 +64,14 @@ class PatternMatcher:
                 seen_switches.add(switch_key)
 
                 switch_pattern = self._find_pattern_by_action_object(
-                    "Switch", "Context", "desktop"
+                    "Switch context", "UI element", "desktop"
                 )
                 if switch_pattern:
                     implicit.append(
                         MethodRecommendation(
                             activity_name=f"Switch context from {prev_ctx} to {cur_ctx}",
-                            activity_action="Switch",
-                            activity_object="Context",
+                            activity_action="Switch context",
+                            activity_object="UI element",
                             events=mappings[i].activity.source_events,
                             execution_environment="desktop",
                             pattern=switch_pattern,
@@ -229,7 +229,7 @@ class PatternMatcher:
             "refresh": "Refresh",
             "select": "Select",
             "hover": "Hover",
-            "switch": "Switch",
+            "switch": "Switch context",
             "delete": "Delete",
             "remove": "Delete",
             "disable": "Disable",
@@ -283,7 +283,7 @@ class PatternMatcher:
         elif any(
             k in obj_l for k in ["context", "window", "application", "app switch"]
         ):
-            normalized_obj = "Context"
+            normalized_obj = "UI element"
         else:
             # Most patterns in this library use Element
             normalized_obj = "Element"

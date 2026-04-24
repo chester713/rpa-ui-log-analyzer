@@ -1,10 +1,10 @@
 # Pattern: Switch Context
 
 ## Action
-Switch
+Switch context
 
 ## Object
-Context
+UI element
 
 ## Method
 UI Automation manipulation (Desktop) / Hardware simulation (Desktop)
@@ -22,12 +22,15 @@ This pattern has two variants:
 1. UI element → UI Automation manipulation → Desktop environment
 2. UI element → Hardware simulation → Desktop environment
 
-Note: Automatically handled by OS when using DOM/UI Automation methods. Primarily required for hardware simulation.
+Note: Context switching is automatically handled by the OS when structured methods (DOM manipulation and UI Automation manipulation) are used. This pattern is particularly required when using hardware simulation methods.
 
 ## Applicability
-- Bot requires operating on more than one execution contexts
-- Bot can access all execution contexts required
-- NOT applicable when interactions occur within same context (e.g., navigating containers on same web page)
+- The bot requires operating on more than one execution context
+- The bot can access all execution contexts required
+- NOT applicable when interactions occur within the same execution context (e.g., navigating between containers on the same web page, or visual regions within the same screen)
 
 ## Operation
-The bot invokes appropriate method to switch the active context to the target context, identified using application windows, browser handles, or tab references.
+When required, the bot invokes an appropriate method to switch the currently active context to the target context. The target context can be identified using available identifiers such as application windows, browser handles, or tab references. Upon completion, the bot may verify that the target context is active before proceeding with subsequent actions.
+
+## Example
+A bot transfers customer data from an Excel workbook to a web-based CRM system. After retrieving the required data from the spreadsheet, the bot invokes hardware simulation (virtual keyboard shortcut Alt+Tab) to switch to the browser. After confirming the browser is the active context and the URL is correct, the bot proceeds to locate the input field for data entry.

@@ -7,7 +7,7 @@ Hover
 Element
 
 ## Method
-HTML DOM manipulation (Web) / Hardware simulation (Desktop/Visual)
+HTML DOM manipulation (Web) / Hardware simulation (Web/Desktop/Screen)
 
 ## Category
 Control
