@@ -57,6 +57,10 @@
         .act-type-main { background: #dcfce7; color: #166534; }
         .act-type-prerequisite { background: #f3e8ff; color: #6d28d9; }
         .act-type-context_switch { background: #fef3c7; color: #92400e; }
+        .aomc-cat { display: inline-block; border-radius: 4px; padding: 2px 7px; font-size: 11px; font-weight: 500; }
+        .aomc-cat-extraction { background: #dbeafe; color: #1e40af; }
+        .aomc-cat-modification { background: #fef9c3; color: #854d0e; }
+        .aomc-cat-control { background: #f3e8ff; color: #6d28d9; }
         .group-link { color: #2563eb; text-decoration: none; font-weight: 500; }
         .group-link:hover { text-decoration: underline; }
 
@@ -150,8 +154,24 @@
         <section class="stage-card" data-stage-key="action_object_extraction" hidden>
             <div class="stage-header"><h2 class="stage-title">3) Action/Object Extraction</h2><span class="badge">action_object_extraction</span></div>
             <div class="two-col">
-                <div class="pane"><h3>Input</h3><div class="artifact-json" data-input-target="action_object_extraction"></div></div>
-                <div class="pane"><h3>Output</h3><div class="artifact-json" data-artifact-target="action_object_extraction"></div></div>
+                <div class="pane">
+                    <h3>Inferred Activities</h3>
+                    <div class="tbl-wrap">
+                        <table class="data-tbl" id="aoInputTable">
+                            <thead><tr><th>#</th><th>Type</th><th>Activity</th></tr></thead>
+                            <tbody id="aoInputTableBody"></tbody>
+                        </table>
+                    </div>
+                </div>
+                <div class="pane">
+                    <h3>AOMC Extraction</h3>
+                    <div class="tbl-wrap">
+                        <table class="data-tbl" id="aomcOutputTable">
+                            <thead><tr><th>#</th><th>Action</th><th>Object</th><th>Category</th></tr></thead>
+                            <tbody id="aomcOutputTableBody"></tbody>
+                        </table>
+                    </div>
+                </div>
             </div>
             <div class="pane" style="margin-top: 12px;">
                 <h3>Logic Explanation</h3>
@@ -199,6 +219,50 @@
     <script>
         const progressiveArtifacts = {{ entry.progressive_artifacts | tojson }};
         const progressiveLogic = {{ entry.progressive_logic | tojson }};
+
+        const AOMC_ACTION_MAP = {
+            'find': 'Find/Identify', 'identify': 'Find/Identify',
+            'read': 'Read/Extract', 'extract': 'Read/Extract', 'get': 'Read/Extract', 'getcell': 'Read/Extract',
+            'observe': 'Observe', 'monitor': 'Observe',
+            'write': 'Write/Input/Update/Modify', 'input': 'Write/Input/Update/Modify',
+            'update': 'Write/Input/Update/Modify', 'modify': 'Write/Input/Update/Modify',
+            'type': 'Write/Input/Update/Modify', 'paste': 'Write/Input/Update/Modify',
+            'fill': 'Write/Input/Update/Modify', 'enter': 'Write/Input/Update/Modify',
+            'changefield': 'Write/Input/Update/Modify',
+            'delete': 'Delete/Remove', 'remove': 'Delete/Remove',
+            'disable': 'Disable/Hide', 'hide': 'Disable/Hide',
+            'open': 'Open/Run', 'run': 'Open/Run', 'launch': 'Open/Run',
+            'activate': 'Activate', 'click': 'Activate', 'press': 'Activate', 'tap': 'Activate',
+            'hover': 'Hover',
+            'switch': 'Switch context', 'navigate': 'Switch context',
+            'scroll': 'Scroll',
+            'focus': 'Focus',
+            'refresh': 'Refresh', 'reload': 'Refresh',
+            'perform': 'Activate',
+        };
+        const AOMC_CATEGORY_MAP = {
+            'Find/Identify': 'Extraction', 'Read/Extract': 'Extraction', 'Observe': 'Extraction',
+            'Write/Input/Update/Modify': 'Modification', 'Delete/Remove': 'Modification', 'Disable/Hide': 'Modification',
+            'Open/Run': 'Control', 'Activate': 'Control', 'Hover': 'Control',
+            'Switch context': 'Control', 'Scroll': 'Control', 'Focus': 'Control', 'Refresh': 'Control',
+        };
+
+        function mapToAomcAction(rawAction) {
+            const key = (rawAction || '').toLowerCase().split(/\s+/)[0];
+            return AOMC_ACTION_MAP[key] || rawAction || '—';
+        }
+
+        function extractAomcObject(activityObject) {
+            const obj = (activityObject || '').trim();
+            const onIdx = obj.indexOf(' on ');
+            const inIdx = obj.indexOf(' in ');
+            let cutAt = -1;
+            if (onIdx > 0 && inIdx > 0) cutAt = Math.min(onIdx, inIdx);
+            else if (onIdx > 0) cutAt = onIdx;
+            else if (inIdx > 0) cutAt = inIdx;
+            return cutAt > 0 ? obj.substring(0, cutAt).trim() : obj;
+        }
+
         const stageKeys = [
             'event_grouping',
             'activity_naming',
@@ -341,6 +405,63 @@
             }
 
             initGroupingInteraction();
+            renderAoExtraction();
+        }
+
+        function renderAoExtraction() {
+            const activities = progressiveArtifacts?.['activity_naming']?.activities || [];
+            const pairs = progressiveArtifacts?.['action_object_extraction']?.pairs || [];
+            const typeLabel = { main: 'Recorded', prerequisite: 'Prerequisite', context_switch: 'Switch' };
+
+            const inputTbody = document.getElementById('aoInputTableBody');
+            if (inputTbody) {
+                inputTbody.innerHTML = activities.map((a, i) => {
+                    const type = a.activity_type || 'main';
+                    const label = typeLabel[type] || type;
+                    return `<tr data-ao-index="${i}">
+                        <td>${i + 1}</td>
+                        <td><span class="act-badge act-type-${type}">${label}</span></td>
+                        <td>${a.activity_name || '—'}</td>
+                    </tr>`;
+                }).join('');
+            }
+
+            const outputTbody = document.getElementById('aomcOutputTableBody');
+            if (outputTbody) {
+                outputTbody.innerHTML = pairs.map((p, i) => {
+                    const aomcAction = mapToAomcAction(p.activity_action);
+                    const aomcObj = extractAomcObject(p.activity_object) || '—';
+                    const category = AOMC_CATEGORY_MAP[aomcAction] || '—';
+                    const catClass = category.toLowerCase();
+                    return `<tr data-ao-index="${i}">
+                        <td>${i + 1}</td>
+                        <td>${aomcAction}</td>
+                        <td>${aomcObj}</td>
+                        <td><span class="aomc-cat aomc-cat-${catClass}">${category}</span></td>
+                    </tr>`;
+                }).join('');
+
+                function clearAoHighlights() {
+                    inputTbody?.querySelectorAll('tr[data-ao-index]').forEach(r => r.classList.remove('row-highlight'));
+                    outputTbody.querySelectorAll('tr[data-ao-index]').forEach(r => r.classList.remove('row-highlight'));
+                }
+
+                inputTbody?.querySelectorAll('tr[data-ao-index]').forEach(tr => {
+                    tr.addEventListener('click', () => {
+                        clearAoHighlights();
+                        tr.classList.add('row-highlight');
+                        outputTbody.querySelector(`tr[data-ao-index="${tr.dataset.aoIndex}"]`)?.classList.add('row-highlight');
+                    });
+                });
+
+                outputTbody.querySelectorAll('tr[data-ao-index]').forEach(tr => {
+                    tr.addEventListener('click', () => {
+                        clearAoHighlights();
+                        tr.classList.add('row-highlight');
+                        inputTbody?.querySelector(`tr[data-ao-index="${tr.dataset.aoIndex}"]`)?.classList.add('row-highlight');
+                    });
+                });
+            }
         }
 
         function initGroupingInteraction() {

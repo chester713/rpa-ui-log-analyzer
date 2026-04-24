@@ -181,7 +181,15 @@ def _build_progressive_contract(mappings, activities, recommendation_payload, en
             "• Context Switches: When the application context changes between groups (e.g., from Excel to a browser), an implicit "
             "'Switch context from X to Y' activity is inserted to explicitly represent the environment transition."
         ),
-        "action_object_extraction": "Inferred activity names are split into explicit action/object pairs used by matching and explanation views.",
+        "action_object_extraction": (
+            "• Action Extraction: The verb from each inferred activity name is mapped to a canonical AOMC Action "
+            "(e.g., 'Write' → Write/Input/Update/Modify, 'Click' → Activate, 'Find' → Find/Identify). "
+            "Actions are grouped into three AOMC categories — Extraction, Modification, and Control — reflecting the bot's interaction intent.\n"
+            "• Object Extraction: The target UI element is isolated from the activity name by stripping context qualifiers "
+            "(URL, application name), leaving the element descriptor "
+            "(e.g., 'textfield \\'username\\'', 'button \\'submit\\'', 'cell range B2:B4'). "
+            "This corresponds to the AOMC Object: the interface element upon which the action is performed."
+        ),
         "pattern_matching": "Activities are compared against known pattern definitions to identify category-level automation strategies.",
         "context_determination": "Execution environment and context attributes are derived from grouped-event metadata to constrain method selection.",
         "method_recommendation": "Final methods are selected from matched patterns, sorted by method priority, and emitted with confidence details.",
