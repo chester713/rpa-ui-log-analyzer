@@ -174,7 +174,7 @@
                 </div>
             </div>
             <div class="pane" style="margin-top: 12px;">
-                <h3>Logic Explanation</h3>
+                <h3>Action/Object Extraction Logic</h3>
                 <div class="logic-text" data-logic-target="action_object_extraction"></div>
             </div>
         </section>
@@ -182,11 +182,27 @@
         <section class="stage-card" data-stage-key="pattern_matching" hidden>
             <div class="stage-header"><h2 class="stage-title">4) Pattern Matching</h2><span class="badge">pattern_matching</span></div>
             <div class="two-col">
-                <div class="pane"><h3>Input</h3><div class="artifact-json" data-input-target="pattern_matching"></div></div>
-                <div class="pane"><h3>Output</h3><div class="artifact-json" data-artifact-target="pattern_matching"></div></div>
+                <div class="pane">
+                    <h3>Action/Object Pairs</h3>
+                    <div class="tbl-wrap">
+                        <table class="data-tbl" id="pmInputTable">
+                            <thead><tr><th>#</th><th>Action</th><th>Object</th></tr></thead>
+                            <tbody id="pmInputTableBody"></tbody>
+                        </table>
+                    </div>
+                </div>
+                <div class="pane">
+                    <h3>Matched Patterns</h3>
+                    <div class="tbl-wrap">
+                        <table class="data-tbl" id="pmOutputTable">
+                            <thead><tr><th>#</th><th>Pattern</th><th>Environment</th><th>Category</th></tr></thead>
+                            <tbody id="pmOutputTableBody"></tbody>
+                        </table>
+                    </div>
+                </div>
             </div>
             <div class="pane" style="margin-top: 12px;">
-                <h3>Logic Explanation</h3>
+                <h3>Pattern Matching Logic</h3>
                 <div class="logic-text" data-logic-target="pattern_matching"></div>
             </div>
         </section>
@@ -406,6 +422,7 @@
 
             initGroupingInteraction();
             renderAoExtraction();
+            renderPatternMatching();
         }
 
         function renderAoExtraction() {
@@ -459,6 +476,72 @@
                         clearAoHighlights();
                         tr.classList.add('row-highlight');
                         inputTbody?.querySelector(`tr[data-ao-index="${tr.dataset.aoIndex}"]`)?.classList.add('row-highlight');
+                    });
+                });
+            }
+        }
+
+        function renderPatternMatching() {
+            const pairs = progressiveArtifacts?.['action_object_extraction']?.pairs || [];
+            const matches = progressiveArtifacts?.['pattern_matching']?.matches || [];
+
+            // Build activity name → left panel index lookup
+            const nameToIdx = {};
+            pairs.forEach((p, i) => { if (p.activity_name) nameToIdx[p.activity_name] = i; });
+
+            const inputTbody = document.getElementById('pmInputTableBody');
+            if (inputTbody) {
+                inputTbody.innerHTML = pairs.map((p, i) => {
+                    const aomcAction = mapToAomcAction(p.activity_action);
+                    const aomcObj = extractAomcObject(p.activity_object) || '—';
+                    return `<tr data-pm-index="${i}">
+                        <td>${i + 1}</td>
+                        <td>${aomcAction}</td>
+                        <td>${aomcObj}</td>
+                    </tr>`;
+                }).join('');
+            }
+
+            const outputTbody = document.getElementById('pmOutputTableBody');
+            if (outputTbody) {
+                outputTbody.innerHTML = matches.map((m, i) => {
+                    const leftIdx = Object.prototype.hasOwnProperty.call(nameToIdx, m.inferred_activity)
+                        ? nameToIdx[m.inferred_activity] : null;
+                    const leftLabel = leftIdx !== null ? leftIdx + 1 : '—';
+                    const pattern = m.pattern_matched || '—';
+                    const env = m.execution_environment || '—';
+                    const cat = m.method_category || '—';
+                    const catClass = cat.toLowerCase();
+                    return `<tr data-pm-match="${i}" data-pm-left-index="${leftIdx !== null ? leftIdx : ''}">
+                        <td>${leftLabel}</td>
+                        <td>${pattern}</td>
+                        <td>${env}</td>
+                        <td><span class="aomc-cat aomc-cat-${catClass}">${cat}</span></td>
+                    </tr>`;
+                }).join('');
+
+                function clearPmHighlights() {
+                    inputTbody?.querySelectorAll('tr[data-pm-index]').forEach(r => r.classList.remove('row-highlight'));
+                    outputTbody.querySelectorAll('tr[data-pm-match]').forEach(r => r.classList.remove('row-highlight'));
+                }
+
+                inputTbody?.querySelectorAll('tr[data-pm-index]').forEach(tr => {
+                    tr.addEventListener('click', () => {
+                        clearPmHighlights();
+                        tr.classList.add('row-highlight');
+                        outputTbody.querySelectorAll(`tr[data-pm-left-index="${tr.dataset.pmIndex}"]`)
+                            .forEach(r => r.classList.add('row-highlight'));
+                    });
+                });
+
+                outputTbody.querySelectorAll('tr[data-pm-match]').forEach(tr => {
+                    tr.addEventListener('click', () => {
+                        clearPmHighlights();
+                        tr.classList.add('row-highlight');
+                        const li = tr.dataset.pmLeftIndex;
+                        if (li !== '') {
+                            inputTbody?.querySelector(`tr[data-pm-index="${li}"]`)?.classList.add('row-highlight');
+                        }
                     });
                 });
             }
@@ -530,7 +613,8 @@
             document.addEventListener('click', (e) => {
                 if (!e.target.closest('#logTable') && !e.target.closest('#groupTable')
                     && !e.target.closest('#activityInputTable') && !e.target.closest('#activityOutputTable')
-                    && !e.target.closest('#aoInputTable') && !e.target.closest('#aomcOutputTable')) {
+                    && !e.target.closest('#aoInputTable') && !e.target.closest('#aomcOutputTable')
+                    && !e.target.closest('#pmInputTable') && !e.target.closest('#pmOutputTable')) {
                     document.querySelectorAll('.row-highlight').forEach(el => el.classList.remove('row-highlight'));
                 }
             });
