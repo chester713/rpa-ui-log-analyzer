@@ -277,12 +277,13 @@ class PatternMatcher:
             else:
                 normalized_action = action.title() if action else "Activate"
 
-        # Object normalization
+        # Object normalization — use prefix/word-boundary match so that activity
+        # names like "Write Microsoft Excel window in Excel" don't accidentally
+        # match the "window" keyword and get mis-classified as Context.
+        _ctx_keys = ["context", "window", "application", "app switch"]
         if any(k in obj_l for k in ["option", "dropdown", "combo", "list item"]):
             normalized_obj = "Option"
-        elif any(
-            k in obj_l for k in ["context", "window", "application", "app switch"]
-        ):
+        elif any(obj_l == k or obj_l.startswith(k + " ") for k in _ctx_keys):
             normalized_obj = "Context"
         else:
             # Most patterns in this library use Element
