@@ -36,6 +36,7 @@
         .stage-title { font-size: 17px; color: #1f2937; }
         .badge { background: #eef2ff; color: #3730a3; border-radius: 999px; padding: 4px 10px; font-size: 12px; }
         .two-col { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); gap: 12px; }
+        .three-col { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1fr) minmax(0, 1fr); gap: 12px; }
         .pane { border: 1px solid #e5e7eb; border-radius: 10px; padding: 12px; }
         .pane h3 { color: #4b5563; font-size: 13px; margin-bottom: 8px; }
         .artifact-json { white-space: pre-wrap; word-break: break-word; font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 12px; color: #111827; }
@@ -63,9 +64,14 @@
         .aomc-cat-control { background: #f3e8ff; color: #6d28d9; }
         .group-link { color: #2563eb; text-decoration: none; font-weight: 500; }
         .group-link:hover { text-decoration: underline; }
+        .env-badge { display: inline-block; border-radius: 4px; padding: 2px 7px; font-size: 11px; font-weight: 500; }
+        .env-web { background: #d1fae5; color: #065f46; }
+        .env-desktop { background: #dbeafe; color: #1e40af; }
+        .env-visual { background: #fef3c7; color: #92400e; }
 
         @media (max-width: 1100px) {
             .two-col { grid-template-columns: 1fr; }
+            .three-col { grid-template-columns: 1fr; }
         }
     </style>
 </head>
@@ -209,9 +215,34 @@
 
         <section class="stage-card" data-stage-key="context_determination" hidden>
             <div class="stage-header"><h2 class="stage-title">5) Context Determination</h2><span class="badge">context_determination</span></div>
-            <div class="two-col">
-                <div class="pane"><h3>Input</h3><div class="artifact-json" data-input-target="context_determination"></div></div>
-                <div class="pane"><h3>Output</h3><div class="artifact-json" data-artifact-target="context_determination"></div></div>
+            <div class="three-col">
+                <div class="pane">
+                    <h3>Inferred Activities</h3>
+                    <div class="tbl-wrap">
+                        <table class="data-tbl" id="cdActivitiesTable">
+                            <thead><tr><th>#</th><th>Type</th><th>Activity</th></tr></thead>
+                            <tbody id="cdActivitiesBody"></tbody>
+                        </table>
+                    </div>
+                </div>
+                <div class="pane">
+                    <h3>Context Information</h3>
+                    <div class="tbl-wrap">
+                        <table class="data-tbl" id="cdContextTable">
+                            <thead><tr><th>#</th><th>Attributes</th></tr></thead>
+                            <tbody id="cdContextBody"></tbody>
+                        </table>
+                    </div>
+                </div>
+                <div class="pane">
+                    <h3>Execution Environment</h3>
+                    <div class="tbl-wrap">
+                        <table class="data-tbl" id="cdEnvironmentTable">
+                            <thead><tr><th>#</th><th>Environment</th></tr></thead>
+                            <tbody id="cdEnvironmentBody"></tbody>
+                        </table>
+                    </div>
+                </div>
             </div>
             <div class="pane" style="margin-top: 12px;">
                 <h3>Logic Explanation</h3>
@@ -310,6 +341,77 @@
             'context_determination': 'pattern_matching',
             'method_recommendation': 'context_determination'
         };
+
+        function renderContextDetermination() {
+            const contexts = progressiveArtifacts?.['context_determination']?.contexts || [];
+            const activities = progressiveArtifacts?.['activity_naming']?.activities || [];
+
+            const nameToType = {};
+            activities.forEach(a => { if (a.activity_name) nameToType[a.activity_name] = a.activity_type || 'main'; });
+            const typeLabel = { main: 'Recorded', prerequisite: 'Prerequisite', context_switch: 'Switch' };
+
+            const activitiesTbody = document.getElementById('cdActivitiesBody');
+            const contextTbody = document.getElementById('cdContextBody');
+            const environmentTbody = document.getElementById('cdEnvironmentBody');
+
+            if (activitiesTbody) {
+                activitiesTbody.innerHTML = contexts.map((c, i) => {
+                    const type = nameToType[c.inferred_activity] || 'main';
+                    const label = typeLabel[type] || type;
+                    return `<tr data-cd-index="${i}">
+                        <td>${i + 1}</td>
+                        <td><span class="act-badge act-type-${type}">${label}</span></td>
+                        <td>${c.inferred_activity || '—'}</td>
+                    </tr>`;
+                }).join('');
+            }
+
+            if (contextTbody) {
+                contextTbody.innerHTML = contexts.map((c, i) => {
+                    let attrText;
+                    if (c.context_switch) {
+                        const from = c.context_switch_from || '?';
+                        const to = c.context_switch_to || '?';
+                        attrText = `${from} → ${to}`;
+                    } else {
+                        const attrs = c.context_attributes_used || [];
+                        attrText = attrs.length > 0 ? attrs.join(', ') : '—';
+                    }
+                    return `<tr data-cd-index="${i}"><td>${i + 1}</td><td>${attrText}</td></tr>`;
+                }).join('');
+            }
+
+            if (environmentTbody) {
+                environmentTbody.innerHTML = contexts.map((c, i) => {
+                    const env = c.execution_environment || '—';
+                    const envClass = env.toLowerCase();
+                    return `<tr data-cd-index="${i}"><td>${i + 1}</td><td><span class="env-badge env-${envClass}">${env}</span></td></tr>`;
+                }).join('');
+            }
+
+            function clearCdHighlights() {
+                [activitiesTbody, contextTbody, environmentTbody].forEach(tbody => {
+                    tbody?.querySelectorAll('tr[data-cd-index]').forEach(r => r.classList.remove('row-highlight'));
+                });
+            }
+
+            function highlightCdRow(idx) {
+                clearCdHighlights();
+                [activitiesTbody, contextTbody, environmentTbody].forEach(tbody => {
+                    const row = tbody?.querySelector(`tr[data-cd-index="${idx}"]`);
+                    if (row) {
+                        row.classList.add('row-highlight');
+                        row.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
+                    }
+                });
+            }
+
+            [activitiesTbody, contextTbody, environmentTbody].forEach(tbody => {
+                tbody?.querySelectorAll('tr[data-cd-index]').forEach(tr => {
+                    tr.addEventListener('click', () => highlightCdRow(parseInt(tr.dataset.cdIndex, 10)));
+                });
+            });
+        }
 
         function renderStageData() {
             stageKeys.forEach((stageKey) => {
@@ -423,6 +525,7 @@
             initGroupingInteraction();
             renderAoExtraction();
             renderPatternMatching();
+            renderContextDetermination();
         }
 
         function renderAoExtraction() {
@@ -608,7 +711,9 @@
                 if (!e.target.closest('#logTable') && !e.target.closest('#groupTable')
                     && !e.target.closest('#activityInputTable') && !e.target.closest('#activityOutputTable')
                     && !e.target.closest('#aoInputTable') && !e.target.closest('#aomcOutputTable')
-                    && !e.target.closest('#pmInputTable') && !e.target.closest('#pmOutputTable')) {
+                    && !e.target.closest('#pmInputTable') && !e.target.closest('#pmOutputTable')
+                    && !e.target.closest('#cdActivitiesTable') && !e.target.closest('#cdContextTable')
+                    && !e.target.closest('#cdEnvironmentTable')) {
                     document.querySelectorAll('.row-highlight').forEach(el => el.classList.remove('row-highlight'));
                 }
             });

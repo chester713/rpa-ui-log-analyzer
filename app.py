@@ -163,7 +163,6 @@ def _build_progressive_contract(mappings, activities, recommendation_payload, en
                     recommendation_payload[i]["inferred_activity"] = prereq_by_events[key]
 
     pattern_matching = []
-    context_determination = []
     method_recommendation = []
     for rec in recommendation_payload:
         pattern_matching.append(
@@ -175,16 +174,6 @@ def _build_progressive_contract(mappings, activities, recommendation_payload, en
                 "events": rec.get("events", []),
             }
         )
-        context_determination.append(
-            {
-                "inferred_activity": rec.get("inferred_activity"),
-                "execution_environment": rec.get("execution_environment"),
-                "context_attributes_used": rec.get("context_attributes_used", []),
-                "context_switch": rec.get("context_switch", False),
-                "context_switch_from": rec.get("context_switch_from"),
-                "context_switch_to": rec.get("context_switch_to"),
-            }
-        )
         method_recommendation.append(
             {
                 "inferred_activity": rec.get("inferred_activity"),
@@ -192,6 +181,41 @@ def _build_progressive_contract(mappings, activities, recommendation_payload, en
                 "method_category": rec.get("method_category"),
                 "confidence": rec.get("confidence"),
                 "events": rec.get("events", []),
+            }
+        )
+
+    # context_determination is built in temporal order from naming_source so the
+    # panel reflects the actual sequence of activities, not the method-priority sort
+    # applied to pattern_matching / method_recommendation. Context attributes come
+    # from the mapping's shared_attributes (actual CSV columns present in the group)
+    # rather than a hardcoded key list, so any CSV schema produces meaningful output.
+    mapping_by_group = {idx: m for idx, m in enumerate(mappings)}
+    rec_by_name: dict = {}
+    for rec in recommendation_payload:
+        name = rec.get("inferred_activity") or ""
+        rec_by_name.setdefault(name, []).append(rec)
+    rec_name_pos: dict = {}
+    context_determination = []
+    for activity in naming_source:
+        name = activity.name
+        group_idx = getattr(activity, "group_index", 0)
+        recs = rec_by_name.get(name, [])
+        pos = rec_name_pos.get(name, 0)
+        matched_rec = recs[pos] if pos < len(recs) else {}
+        rec_name_pos[name] = pos + 1
+        mapping = mapping_by_group.get(group_idx)
+        shared_attrs = (
+            mapping.attribute_breakdown.get("shared_attributes", [])
+            if mapping else []
+        )
+        context_determination.append(
+            {
+                "inferred_activity": name,
+                "execution_environment": matched_rec.get("execution_environment"),
+                "context_attributes_used": shared_attrs,
+                "context_switch": matched_rec.get("context_switch", False),
+                "context_switch_from": matched_rec.get("context_switch_from"),
+                "context_switch_to": matched_rec.get("context_switch_to"),
             }
         )
 
