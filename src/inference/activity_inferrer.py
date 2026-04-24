@@ -193,38 +193,70 @@ Respond with valid JSON only — no other text:
   "reasoning": "..."
 }}"""
 
-    def _parse_response(self, response: str) -> dict:
-        """Parse JSON response from LLM with line-based text fallback."""
-        if not response:
-            return {}
+    def _parse_response(self, response: str, events=None):
+        """Parse JSON response from LLM with line-based text fallback.
 
-        text = response.strip()
-
-        # Extract JSON object — handle markdown code fences too
-        json_match = re.search(r'\{.*\}', text, re.DOTALL)
-        if json_match:
-            try:
-                return json.loads(json_match.group())
-            except json.JSONDecodeError:
-                pass
-
-        # Fallback: line-based parsing for non-JSON responses
+        When ``events`` is provided, returns an Activity, applying an
+        event-derived fallback name whenever the parsed name is too generic.
+        When ``events`` is None, returns a plain dict (existing internal API).
+        """
         result: dict = {}
-        for line in text.splitlines():
-            lower = line.lower().strip()
-            if lower.startswith("activity:") or lower.startswith("activity name:"):
-                result["activity_name"] = re.sub(
-                    r"^activity( name)?:", "", line, flags=re.IGNORECASE
-                ).strip()
-            elif lower.startswith("confidence:"):
+
+        if response:
+            text = response.strip()
+
+            # Extract JSON object — handle markdown code fences too
+            json_match = re.search(r'\{.*\}', text, re.DOTALL)
+            if json_match:
                 try:
-                    result["confidence"] = float(
-                        re.sub(r"^confidence:", "", line, flags=re.IGNORECASE).strip()
-                    )
-                except ValueError:
+                    result = json.loads(json_match.group())
+                except json.JSONDecodeError:
                     pass
 
-        return result
+            if not result:
+                # Fallback: line-based parsing for non-JSON responses
+                for line in text.splitlines():
+                    lower = line.lower().strip()
+                    if lower.startswith("activity:") or lower.startswith("activity name:"):
+                        result["activity_name"] = re.sub(
+                            r"^activity( name)?:", "", line, flags=re.IGNORECASE
+                        ).strip()
+                    elif lower.startswith("confidence:"):
+                        try:
+                            result["confidence"] = float(
+                                re.sub(r"^confidence:", "", line, flags=re.IGNORECASE).strip()
+                            )
+                        except ValueError:
+                            pass
+
+        if events is None:
+            return result
+
+        # With events: check if name is generic and derive a better one if so
+        name = result.get("activity_name", "")
+        if not name or self._is_generic_activity_name(name):
+            name = self._derive_fallback_activity_name(list(events))
+
+        source_events = [e.row_index for e in events if e.row_index is not None]
+        return Activity(
+            name=name,
+            confidence=result.get("confidence", 0.5),
+            evidence=result.get("evidence", []),
+            source_events=source_events,
+        )
+
+    def _is_generic_activity_name(self, name: str) -> bool:
+        """Return True when a name is too generic to be useful."""
+        text = str(name).strip().lower()
+        return any(p in text for p in ("unknown activity", "html element", "perform ui interaction"))
+
+    def _post_process_inferred_name(self, name: str, events) -> str:
+        """Replace a generic activity name with one derived from event attributes."""
+        if not events or not name:
+            return name
+        if not self._is_generic_activity_name(name):
+            return name
+        return self._derive_fallback_activity_name(list(events))
 
     def _derive_fallback_activity_name(self, event_group: List[Event]) -> str:
         """Derive a meaningful fallback name when the LLM returns nothing."""

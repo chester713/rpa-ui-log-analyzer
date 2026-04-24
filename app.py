@@ -411,6 +411,10 @@ def analyze():
         inferrer = ActivityInferrer(llm_client)
         mapper = EventActivityMapper(grouper, inferrer)
         mappings = mapper.map(events)
+        _post_process = getattr(inferrer, "_post_process_inferred_name", None)
+        if _post_process is not None:
+            for mapping in mappings:
+                mapping.activity.name = _post_process(mapping.activity.name, mapping.events)
         activities = [m.activity for m in mappings]
 
         from src.matching.pattern_matcher import get_context_from_events, PatternMatcher

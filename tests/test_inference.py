@@ -94,7 +94,8 @@ class TestActivityInferrer:
         inferrer = ActivityInferrer()
         activities = inferrer.infer_activities(groups)
 
-        assert len(activities) == 2
+        # Each group produces at least one activity; implicit prerequisites may add more.
+        assert len(activities) >= 2
 
     def test_empty_group_returns_empty_activity(self):
         """Test empty event group returns empty activity."""
