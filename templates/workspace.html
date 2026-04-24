@@ -195,7 +195,7 @@
                     <h3>Matched Patterns</h3>
                     <div class="tbl-wrap">
                         <table class="data-tbl" id="pmOutputTable">
-                            <thead><tr><th>#</th><th>Pattern</th><th>Environment</th><th>Category</th></tr></thead>
+                            <thead><tr><th>#</th><th>Pattern</th><th>Category</th></tr></thead>
                             <tbody id="pmOutputTableBody"></tbody>
                         </table>
                     </div>
@@ -485,11 +485,13 @@
             const pairs = progressiveArtifacts?.['action_object_extraction']?.pairs || [];
             const matches = progressiveArtifacts?.['pattern_matching']?.matches || [];
 
-            // Build activity name → left panel index lookup
-            const nameToIdx = {};
-            pairs.forEach((p, i) => { if (p.activity_name) nameToIdx[p.activity_name] = i; });
+            // Build activity name → match lookup so the right panel follows pairs order exactly
+            const nameToMatch = {};
+            matches.forEach(m => { if (m.inferred_activity) nameToMatch[m.inferred_activity] = m; });
 
             const inputTbody = document.getElementById('pmInputTableBody');
+            const outputTbody = document.getElementById('pmOutputTableBody');
+
             if (inputTbody) {
                 inputTbody.innerHTML = pairs.map((p, i) => {
                     const aomcAction = mapToAomcAction(p.activity_action);
@@ -502,46 +504,38 @@
                 }).join('');
             }
 
-            const outputTbody = document.getElementById('pmOutputTableBody');
             if (outputTbody) {
-                outputTbody.innerHTML = matches.map((m, i) => {
-                    const leftIdx = Object.prototype.hasOwnProperty.call(nameToIdx, m.inferred_activity)
-                        ? nameToIdx[m.inferred_activity] : null;
-                    const leftLabel = leftIdx !== null ? leftIdx + 1 : '—';
+                // Render right panel in the same order as the left panel (one row per pair)
+                outputTbody.innerHTML = pairs.map((p, i) => {
+                    const m = nameToMatch[p.activity_name] || {};
                     const pattern = m.pattern_matched || '—';
-                    const env = m.execution_environment || '—';
                     const cat = m.method_category || '—';
                     const catClass = cat.toLowerCase();
-                    return `<tr data-pm-match="${i}" data-pm-left-index="${leftIdx !== null ? leftIdx : ''}">
-                        <td>${leftLabel}</td>
+                    return `<tr data-pm-index="${i}">
+                        <td>${i + 1}</td>
                         <td>${pattern}</td>
-                        <td>${env}</td>
                         <td><span class="aomc-cat aomc-cat-${catClass}">${cat}</span></td>
                     </tr>`;
                 }).join('');
 
                 function clearPmHighlights() {
                     inputTbody?.querySelectorAll('tr[data-pm-index]').forEach(r => r.classList.remove('row-highlight'));
-                    outputTbody.querySelectorAll('tr[data-pm-match]').forEach(r => r.classList.remove('row-highlight'));
+                    outputTbody.querySelectorAll('tr[data-pm-index]').forEach(r => r.classList.remove('row-highlight'));
                 }
 
                 inputTbody?.querySelectorAll('tr[data-pm-index]').forEach(tr => {
                     tr.addEventListener('click', () => {
                         clearPmHighlights();
                         tr.classList.add('row-highlight');
-                        outputTbody.querySelectorAll(`tr[data-pm-left-index="${tr.dataset.pmIndex}"]`)
-                            .forEach(r => r.classList.add('row-highlight'));
+                        outputTbody.querySelector(`tr[data-pm-index="${tr.dataset.pmIndex}"]`)?.classList.add('row-highlight');
                     });
                 });
 
-                outputTbody.querySelectorAll('tr[data-pm-match]').forEach(tr => {
+                outputTbody.querySelectorAll('tr[data-pm-index]').forEach(tr => {
                     tr.addEventListener('click', () => {
                         clearPmHighlights();
                         tr.classList.add('row-highlight');
-                        const li = tr.dataset.pmLeftIndex;
-                        if (li !== '') {
-                            inputTbody?.querySelector(`tr[data-pm-index="${li}"]`)?.classList.add('row-highlight');
-                        }
+                        inputTbody?.querySelector(`tr[data-pm-index="${tr.dataset.pmIndex}"]`)?.classList.add('row-highlight');
                     });
                 });
             }
