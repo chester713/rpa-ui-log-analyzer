@@ -440,27 +440,37 @@
         }
 
         function renderMethodRecommendation() {
-            const recs = progressiveArtifacts?.['method_recommendation']?.recommendations || [];
+            // Drive from context_determination (temporal order); look up each rec by name.
             const contexts = progressiveArtifacts?.['context_determination']?.contexts || [];
+            const recs = progressiveArtifacts?.['method_recommendation']?.recommendations || [];
             const activities = progressiveArtifacts?.['activity_naming']?.activities || [];
 
             const nameToType = {};
             activities.forEach(a => { if (a.activity_name) nameToType[a.activity_name] = a.activity_type || 'main'; });
             const typeLabel = { main: 'Recorded', prerequisite: 'Prerequisite', context_switch: 'Switch' };
 
-            // Build per-name env queue to handle duplicate activity names correctly
-            const nameToEnvQueue = {};
-            contexts.forEach(c => {
-                const n = c.inferred_activity || '';
-                if (!nameToEnvQueue[n]) nameToEnvQueue[n] = [];
-                nameToEnvQueue[n].push(c.execution_environment || '—');
-            });
-            const nameToEnvPos = {};
-            const envForRec = recs.map(r => {
+            // Build per-name rec queue so duplicate activity names resolve positionally
+            const nameToRecQueue = {};
+            recs.forEach(r => {
                 const n = r.inferred_activity || '';
-                const pos = nameToEnvPos[n] || 0;
-                nameToEnvPos[n] = pos + 1;
-                return (nameToEnvQueue[n] || [])[pos] || '—';
+                if (!nameToRecQueue[n]) nameToRecQueue[n] = [];
+                nameToRecQueue[n].push(r);
+            });
+            const nameToRecPos = {};
+
+            // One row per temporal context entry; each row carries aligned activity/env/method data
+            const rows = contexts.map(c => {
+                const n = c.inferred_activity || '';
+                const pos = nameToRecPos[n] || 0;
+                nameToRecPos[n] = pos + 1;
+                const rec = (nameToRecQueue[n] || [])[pos] || {};
+                return {
+                    activity: n,
+                    type: nameToType[n] || 'main',
+                    env: c.execution_environment || '—',
+                    method: rec.recommended_method || '—',
+                    category: rec.method_category || '—',
+                };
             });
 
             const activitiesTbody = document.getElementById('mrActivitiesBody');
@@ -468,49 +478,48 @@
             const methodTbody = document.getElementById('mrMethodBody');
 
             if (activitiesTbody) {
-                activitiesTbody.innerHTML = recs.map((r, i) => {
-                    const type = nameToType[r.inferred_activity] || 'main';
-                    const label = typeLabel[type] || type;
+                activitiesTbody.innerHTML = rows.map((r, i) => {
+                    const label = typeLabel[r.type] || r.type;
                     return `<tr data-mr-index="${i}">
                         <td>${i + 1}</td>
-                        <td><span class="act-badge act-type-${type}">${label}</span></td>
-                        <td>${r.inferred_activity || '—'}</td>
+                        <td><span class="act-badge act-type-${r.type}">${label}</span></td>
+                        <td>${r.activity || '—'}</td>
                     </tr>`;
                 }).join('');
             }
 
             if (contextTbody) {
-                contextTbody.innerHTML = envForRec.map((env, i) => {
-                    const envClass = (env || '').toLowerCase();
-                    return `<tr data-mr-index="${i}"><td>${i + 1}</td><td><span class="env-badge env-${envClass}">${env}</span></td></tr>`;
+                contextTbody.innerHTML = rows.map((r, i) => {
+                    const envClass = r.env.toLowerCase();
+                    return `<tr data-mr-index="${i}"><td>${i + 1}</td><td><span class="env-badge env-${envClass}">${r.env}</span></td></tr>`;
                 }).join('');
             }
 
             if (methodTbody) {
-                methodTbody.innerHTML = recs.map((r, i) => {
-                    const method = r.recommended_method || '—';
-                    const cat = r.method_category || '—';
-                    const catClass = cat.toLowerCase();
+                methodTbody.innerHTML = rows.map((r, i) => {
+                    const catClass = r.category.toLowerCase();
                     return `<tr data-mr-index="${i}">
                         <td>${i + 1}</td>
-                        <td>${method}</td>
-                        <td><span class="aomc-cat aomc-cat-${catClass}">${cat}</span></td>
+                        <td>${r.method}</td>
+                        <td><span class="aomc-cat aomc-cat-${catClass}">${r.category}</span></td>
                     </tr>`;
                 }).join('');
             }
 
+            const allBodies = [activitiesTbody, contextTbody, methodTbody];
+
             function clearMrHighlights() {
-                [activitiesTbody, contextTbody, methodTbody].forEach(tbody => {
+                allBodies.forEach(tbody => {
                     tbody?.querySelectorAll('tr[data-mr-index]').forEach(r => r.classList.remove('row-highlight'));
                 });
             }
 
-            [activitiesTbody, contextTbody, methodTbody].forEach(tbody => {
+            allBodies.forEach(tbody => {
                 tbody?.querySelectorAll('tr[data-mr-index]').forEach(tr => {
                     tr.addEventListener('click', () => {
                         clearMrHighlights();
                         const idx = tr.dataset.mrIndex;
-                        [activitiesTbody, contextTbody, methodTbody].forEach(tb => {
+                        allBodies.forEach(tb => {
                             const row = tb?.querySelector(`tr[data-mr-index="${idx}"]`);
                             if (row) {
                                 row.classList.add('row-highlight');
