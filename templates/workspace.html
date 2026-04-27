@@ -832,7 +832,9 @@
                     && !e.target.closest('#aoInputTable') && !e.target.closest('#aomcOutputTable')
                     && !e.target.closest('#pmInputTable') && !e.target.closest('#pmOutputTable')
                     && !e.target.closest('#cdActivitiesTable') && !e.target.closest('#cdContextTable')
-                    && !e.target.closest('#cdEnvironmentTable')) {
+                    && !e.target.closest('#cdEnvironmentTable')
+                    && !e.target.closest('#mrActivitiesTable') && !e.target.closest('#mrContextTable')
+                    && !e.target.closest('#mrMethodTable')) {
                     document.querySelectorAll('.row-highlight').forEach(el => el.classList.remove('row-highlight'));
                 }
             });
