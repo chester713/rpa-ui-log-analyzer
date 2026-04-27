@@ -253,9 +253,34 @@
 
         <section class="stage-card" data-stage-key="method_recommendation" hidden>
             <div class="stage-header"><h2 class="stage-title">6) Method Recommendation</h2><span class="badge">method_recommendation</span></div>
-            <div class="two-col">
-                <div class="pane"><h3>Input</h3><div class="artifact-json" data-input-target="method_recommendation"></div></div>
-                <div class="pane"><h3>Output</h3><div class="artifact-json" data-artifact-target="method_recommendation"></div></div>
+            <div class="three-col">
+                <div class="pane">
+                    <h3>Inferred Activities</h3>
+                    <div class="tbl-wrap">
+                        <table class="data-tbl" id="mrActivitiesTable">
+                            <thead><tr><th>#</th><th>Type</th><th>Activity</th></tr></thead>
+                            <tbody id="mrActivitiesBody"></tbody>
+                        </table>
+                    </div>
+                </div>
+                <div class="pane">
+                    <h3>Identified Context</h3>
+                    <div class="tbl-wrap">
+                        <table class="data-tbl" id="mrContextTable">
+                            <thead><tr><th>#</th><th>Environment</th></tr></thead>
+                            <tbody id="mrContextBody"></tbody>
+                        </table>
+                    </div>
+                </div>
+                <div class="pane">
+                    <h3>Recommended Method</h3>
+                    <div class="tbl-wrap">
+                        <table class="data-tbl" id="mrMethodTable">
+                            <thead><tr><th>#</th><th>Method</th><th>Category</th></tr></thead>
+                            <tbody id="mrMethodBody"></tbody>
+                        </table>
+                    </div>
+                </div>
             </div>
             <div class="pane" style="margin-top: 12px;">
                 <h3>Logic Explanation</h3>
@@ -414,6 +439,89 @@
             });
         }
 
+        function renderMethodRecommendation() {
+            const recs = progressiveArtifacts?.['method_recommendation']?.recommendations || [];
+            const contexts = progressiveArtifacts?.['context_determination']?.contexts || [];
+            const activities = progressiveArtifacts?.['activity_naming']?.activities || [];
+
+            const nameToType = {};
+            activities.forEach(a => { if (a.activity_name) nameToType[a.activity_name] = a.activity_type || 'main'; });
+            const typeLabel = { main: 'Recorded', prerequisite: 'Prerequisite', context_switch: 'Switch' };
+
+            // Build per-name env queue to handle duplicate activity names correctly
+            const nameToEnvQueue = {};
+            contexts.forEach(c => {
+                const n = c.inferred_activity || '';
+                if (!nameToEnvQueue[n]) nameToEnvQueue[n] = [];
+                nameToEnvQueue[n].push(c.execution_environment || '—');
+            });
+            const nameToEnvPos = {};
+            const envForRec = recs.map(r => {
+                const n = r.inferred_activity || '';
+                const pos = nameToEnvPos[n] || 0;
+                nameToEnvPos[n] = pos + 1;
+                return (nameToEnvQueue[n] || [])[pos] || '—';
+            });
+
+            const activitiesTbody = document.getElementById('mrActivitiesBody');
+            const contextTbody = document.getElementById('mrContextBody');
+            const methodTbody = document.getElementById('mrMethodBody');
+
+            if (activitiesTbody) {
+                activitiesTbody.innerHTML = recs.map((r, i) => {
+                    const type = nameToType[r.inferred_activity] || 'main';
+                    const label = typeLabel[type] || type;
+                    return `<tr data-mr-index="${i}">
+                        <td>${i + 1}</td>
+                        <td><span class="act-badge act-type-${type}">${label}</span></td>
+                        <td>${r.inferred_activity || '—'}</td>
+                    </tr>`;
+                }).join('');
+            }
+
+            if (contextTbody) {
+                contextTbody.innerHTML = envForRec.map((env, i) => {
+                    const envClass = (env || '').toLowerCase();
+                    return `<tr data-mr-index="${i}"><td>${i + 1}</td><td><span class="env-badge env-${envClass}">${env}</span></td></tr>`;
+                }).join('');
+            }
+
+            if (methodTbody) {
+                methodTbody.innerHTML = recs.map((r, i) => {
+                    const method = r.recommended_method || '—';
+                    const cat = r.method_category || '—';
+                    const catClass = cat.toLowerCase();
+                    return `<tr data-mr-index="${i}">
+                        <td>${i + 1}</td>
+                        <td>${method}</td>
+                        <td><span class="aomc-cat aomc-cat-${catClass}">${cat}</span></td>
+                    </tr>`;
+                }).join('');
+            }
+
+            function clearMrHighlights() {
+                [activitiesTbody, contextTbody, methodTbody].forEach(tbody => {
+                    tbody?.querySelectorAll('tr[data-mr-index]').forEach(r => r.classList.remove('row-highlight'));
+                });
+            }
+
+            [activitiesTbody, contextTbody, methodTbody].forEach(tbody => {
+                tbody?.querySelectorAll('tr[data-mr-index]').forEach(tr => {
+                    tr.addEventListener('click', () => {
+                        clearMrHighlights();
+                        const idx = tr.dataset.mrIndex;
+                        [activitiesTbody, contextTbody, methodTbody].forEach(tb => {
+                            const row = tb?.querySelector(`tr[data-mr-index="${idx}"]`);
+                            if (row) {
+                                row.classList.add('row-highlight');
+                                row.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
+                            }
+                        });
+                    });
+                });
+            });
+        }
+
         function renderStageData() {
             stageKeys.forEach((stageKey) => {
                 const artifactNode = document.querySelector(`[data-artifact-target="${stageKey}"]`);
@@ -527,6 +635,7 @@
             renderAoExtraction();
             renderPatternMatching();
             renderContextDetermination();
+            renderMethodRecommendation();
         }
 
         function renderAoExtraction() {
