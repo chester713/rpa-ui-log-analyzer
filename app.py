@@ -324,6 +324,24 @@ def save_history(history):
         json.dump(history, f, indent=2)
 
 
+def _load_full_log(entry: dict) -> list:
+    """Return full CSV rows for the entry, falling back to the stored preview."""
+    filename = entry.get("filename", "")
+    if filename:
+        filepath = os.path.join(app.config["UPLOAD_FOLDER"], filename)
+        if os.path.exists(filepath):
+            try:
+                rows = []
+                with open(filepath, "r", encoding="utf-8") as f:
+                    reader = csv.DictReader(f)
+                    for i, row in enumerate(reader):
+                        rows.append({"row_index": i, "values": _redact_row(row)})
+                return rows
+            except OSError:
+                pass
+    return entry.get("log_preview", [])
+
+
 def analyze_csv(filepath):
     from src.parser.csv_loader import CSVLoader
     from src.inference.event_grouper import EventGrouper
@@ -762,6 +780,7 @@ def results(history_id):
                     )
                 entry["log_preview"] = normalized
 
+    entry["log_preview"] = _load_full_log(entry)
     return render_template("results.html", entry=entry)
 
 
@@ -842,6 +861,7 @@ def history_detail(history_id):
                     )
                 entry["log_preview"] = normalized
 
+    entry["log_preview"] = _load_full_log(entry)
     return render_template("results.html", entry=entry)
 
 
