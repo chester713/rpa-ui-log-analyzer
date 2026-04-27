@@ -21,6 +21,7 @@
         .nav { display: flex; gap: 20px; margin-bottom: 20px; }
         .nav a { color: #007bff; text-decoration: none; }
         .nav a:hover { text-decoration: underline; }
+        .nav-inactive { color: #9ca3af; cursor: default; font-size: inherit; }
         .loading { display: none; text-align: center; padding: 20px; }
         .spinner { width: 40px; height: 40px; border: 4px solid #f3f3f3; border-top: 4px solid #007bff; border-radius: 50%; animation: spin 1s linear infinite; margin: 0 auto; }
         @keyframes spin { 0% { transform: rotate(0deg); } 100% { transform: rotate(360deg); } }
@@ -33,8 +34,9 @@
         <nav class="nav">
             <a href="/">Welcome</a>
             <a href="/upload">Upload</a>
-            <a href="/history">History</a>
-            <a href="/settings">Settings</a>
+            <span class="nav-inactive">Event Column Selection</span>
+            <span class="nav-inactive">Guided Analysis</span>
+            <span class="nav-inactive">Analysis Results</span>
         </nav>
 
         <h1>RPA UI Log Analyzer</h1>
