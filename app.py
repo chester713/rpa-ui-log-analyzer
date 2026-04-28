@@ -269,7 +269,7 @@ def _build_progressive_contract(mappings, activities, recommendation_payload, en
             "desktop UI elements (exposed through OS accessibility frameworks such as UI Automation), "
             "or visual elements (identified from screen content via image recognition or OCR)."
         ),
-        "pattern_matching": "Activities are compared against known pattern definitions to identify category-level automation strategies.",
+        "pattern_matching": "Activities are matched to RPA UI Interaction patterns, constraining automation method to the matched pattern.",
         "context_determination": "Execution environment and context attributes are derived from grouped-event metadata to constrain method selection.",
         "method_recommendation": "Final methods are selected from matched patterns, sorted by method priority, and emitted with confidence details.",
     }
