@@ -153,7 +153,7 @@
                     <p class="step-desc">Each event group is labeled with a meaningful activity name in Action + Object + context format.</p>
                     <div class="tbl-wrap">
                         <table class="data-tbl" id="anStep1Table">
-                            <thead><tr><th>#</th><th>Activity</th></tr></thead>
+                            <thead><tr><th>#</th><th>Type</th><th>Activity</th></tr></thead>
                             <tbody id="anStep1Body"></tbody>
                         </table>
                     </div>
@@ -495,6 +495,7 @@
             if (step1Body) {
                 step1Body.innerHTML = step1.map((a, i) => `<tr data-an-idx="${a._idx}" data-group-idx="${a.group_index ?? ''}">
                     <td>${i + 1}</td>
+                    <td><span class="act-badge act-type-main">Recorded</span></td>
                     <td>${a.activity_name || '—'}</td>
                 </tr>`).join('');
             }
