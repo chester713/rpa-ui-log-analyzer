@@ -191,9 +191,10 @@
 
         <section class="stage-card" data-stage-key="action_object_extraction" hidden>
             <div class="stage-header"><h2 class="stage-title">3) Action/Object Extraction</h2><span class="badge">action_object_extraction</span></div>
-            <div class="two-col">
+            <div class="two-col two-col-desc">
                 <div class="pane">
                     <h3>Inferred Activities</h3>
+                    <p class="step-desc">The inferred activities from the previous stage serve as input to the extraction.</p>
                     <div class="tbl-wrap">
                         <table class="data-tbl" id="aoInputTable">
                             <thead><tr><th>#</th><th>Type</th><th>Activity</th></tr></thead>
@@ -202,7 +203,8 @@
                     </div>
                 </div>
                 <div class="pane">
-                    <h3>AOMC Extraction</h3>
+                    <h3>Action/Object Extraction</h3>
+                    <p class="step-desc">Extract the relevant Action and Object from the inferred activities.</p>
                     <div class="tbl-wrap">
                         <table class="data-tbl" id="aomcOutputTable">
                             <thead><tr><th>#</th><th>Action</th><th>Object</th><th>Category</th></tr></thead>
