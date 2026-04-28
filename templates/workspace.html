@@ -39,6 +39,7 @@
         .two-col { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); gap: 12px; }
         .three-col { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1fr) minmax(0, 1fr); gap: 12px; }
         .four-col { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 12px; }
+        .four-col .pane { display: grid; grid-row: span 3; grid-template-rows: subgrid; }
         .pane { border: 1px solid #e5e7eb; border-radius: 10px; padding: 12px; }
         .pane h3 { color: #4b5563; font-size: 13px; margin-bottom: 8px; }
         .artifact-json { white-space: pre-wrap; word-break: break-word; font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 12px; color: #111827; }
