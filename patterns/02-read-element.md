@@ -15,7 +15,7 @@ Extraction
 ## Contexts
 - web
 - desktop
-- visual
+- screen
 
 ## Description
 This pattern enables a bot to read the attributes or properties of a target element. It operationalises data extraction within the user interface by allowing bots to retrieve information from specific elements.

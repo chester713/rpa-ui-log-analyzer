@@ -15,7 +15,7 @@ Control
 ## Contexts
 - web
 - desktop
-- visual
+- screen
 
 ## Description
 This pattern enables a bot to trigger or invoke the functional behaviour of a user interface element. Activation corresponds to executing an action associated with an interactive control, such as clicking a button, selecting a menu item, opening a link, or confirming an operation.

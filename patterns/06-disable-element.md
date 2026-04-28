@@ -15,7 +15,7 @@ Modification
 ## Contexts
 - web
 - desktop
-- visual
+- screen
 
 ## Description
 This pattern enables a bot to deactivate or suppress a target element without removing it from the UI hierarchy. It modifies the state of an element so that it no longer interferes with task execution. Typical use cases include suppressing pop-ups, overlays, or modal dialogues.

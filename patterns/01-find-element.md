@@ -15,7 +15,7 @@ Extraction
 ## Contexts
 - web
 - desktop
-- visual
+- screen
 
 ## Description
 The Find Element pattern enables a bot to establish a reference to a target UI element. Within the AOMC model, Find Element represents an interaction action that connects a bot to an interaction object through context-dependent identification methods.

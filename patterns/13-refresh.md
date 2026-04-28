@@ -15,7 +15,7 @@ Control
 ## Contexts
 - web
 - desktop
-- visual
+- screen
 
 ## Description
 This pattern enables a bot to update or reload the current state of a user interface element or view to reflect the most recent data. Refreshing triggers a re-render or re-query of UI content.

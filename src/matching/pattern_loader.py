@@ -63,7 +63,7 @@ class PatternLoader:
         contexts_str = self._extract_section(content, "Contexts") or ""
 
         contexts = []
-        for ctx in ["web", "desktop", "visual"]:
+        for ctx in ["web", "desktop", "screen"]:
             if ctx in contexts_str.lower():
                 contexts.append(ctx)
 

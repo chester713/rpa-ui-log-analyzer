@@ -15,7 +15,7 @@ Control
 ## Contexts
 - web
 - desktop
-- visual
+- screen
 
 ## Description
 The Focus pattern enables the bot to set the input focus on a target UI element, allowing it to receive subsequent input actions. Unlike Activate, Focus assigns input focus without invoking any associated behaviour.

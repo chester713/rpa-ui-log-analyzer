@@ -599,7 +599,7 @@ def analyze():
                     "cell_range_number",
                     "event_src_path",
                 ],
-                "visual": ["screenshot", "mouse_coord", "tag_html"],
+                "screen": ["screenshot", "mouse_coord", "tag_html"],
             }
             obj_keys = [
                 "id",

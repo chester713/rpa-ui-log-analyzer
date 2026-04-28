@@ -15,7 +15,7 @@ Extraction
 ## Contexts
 - web
 - desktop
-- visual
+- screen
 
 ## Description
 The Observe pattern enables a bot to monitor a target object for state changes over time. Unlike the Read Element pattern, which performs a one-time extraction of a value, the Observe pattern continuously monitors the target over time, capturing dynamic UI changes as they occur.

@@ -15,7 +15,7 @@ Control
 ## Contexts
 - web
 - desktop
-- visual
+- screen
 
 ## Description
 The Open pattern captures actions that create a new software instance to enable access to a file, application, or web page. Unlike the Activate pattern, which triggers functional behaviour of an already available element, the Open pattern establishes the required context for subsequent interactions.

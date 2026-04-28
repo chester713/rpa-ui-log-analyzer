@@ -15,7 +15,7 @@ Modification
 ## Contexts
 - web
 - desktop
-- visual
+- screen
 
 ## Description
 This pattern enables a bot to write, update, or insert data into a target UI element exposed through the application interface. It operationalises content modification within the user interface.

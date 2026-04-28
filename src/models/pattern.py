@@ -26,7 +26,7 @@ class Pattern:
         Args:
             activity_action: Action from inferred activity
             activity_object: Object from inferred activity
-            context: Execution context (web, desktop, visual)
+            context: Execution context (web, desktop, screen, unknown)
 
         Returns:
             True if activity matches pattern in given context
@@ -41,7 +41,7 @@ class Pattern:
         Get the appropriate method for the given context.
 
         Args:
-            context: Execution context (web, desktop, visual)
+            context: Execution context (web, desktop, screen, unknown)
 
         Returns:
             Method string or None if context not supported
@@ -58,7 +58,7 @@ class Pattern:
                 return re.sub(r"\s*\([^)]*\)\s*", "", part).strip()
             if context == "desktop" and "(desktop" in lower:
                 return re.sub(r"\s*\([^)]*\)\s*", "", part).strip()
-            if context == "visual" and "(visual" in lower:
+            if context == "screen" and "(screen" in lower:
                 return re.sub(r"\s*\([^)]*\)\s*", "", part).strip()
 
         # Fallback to full method text when no explicit context marker found

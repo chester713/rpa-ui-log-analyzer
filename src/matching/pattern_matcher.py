@@ -27,7 +27,7 @@ class PatternMatcher:
         Args:
             activity: Inferred Activity
             events: Source events for the activity
-            context: Execution context (web, desktop, visual)
+            context: Execution context (web, desktop, screen, unknown)
 
         Returns:
             Matching Pattern or None
@@ -294,66 +294,58 @@ class PatternMatcher:
 
 def get_context_from_events(events: List[Event]) -> str:
     """
-    Extract execution context from event attributes.
+    Extract execution context from event attributes using priority-based rules.
 
-    Args:
-        events: List of Event objects
+    Priority order:
+      1. Web   — HTML-property attributes present (XPath, tag, HTML id, browser URL)
+      2. Desktop — application/UI-hierarchy attributes present, no HTML properties
+      3. Screen  — coordinate attributes present, no HTML or app/hierarchy attributes
+      4. Unknown — no distinguishing attributes found
 
     Returns:
-        Context string: "web", "desktop", or "visual"
+        Context string: "web", "desktop", "screen", or "unknown"
     """
-    context_scores = {"web": 0, "desktop": 0, "visual": 0}
+    _HTML_ATTRS = {
+        "xpath", "xpath_full", "html_id", "tag_name", "tag_type",
+        "tag_html", "tag_href", "browser_url", "webpage", "url",
+    }
+    _APP_ATTRS = {
+        "application", "app", "window_title", "workbook", "worksheet",
+        "cell_range", "cell_range_number", "control_type", "ui_path",
+    }
+    _COORD_ATTRS = {
+        "x", "y", "mouse_x", "mouse_y", "coordinates", "coordinate",
+        "click_x", "click_y",
+    }
 
-    browser_apps = {"edge", "chrome", "firefox", "safari", "browser"}
+    has_html = False
+    has_app = False
+    has_coord = False
 
     for event in events:
         attrs = event.attributes
+        if any(k in attrs and attrs[k] not in (None, "", "None", "none") for k in _HTML_ATTRS):
+            has_html = True
+            break  # highest priority — no need to check further
 
-        # Web indicators
-        if "webpage" in attrs or "url" in attrs or "browser_url" in attrs:
-            context_scores["web"] += 2
+    if not has_html:
+        for event in events:
+            attrs = event.attributes
+            if any(k in attrs and attrs[k] not in (None, "", "None", "none") for k in _APP_ATTRS):
+                has_app = True
+                break
 
-        if any(
-            k in attrs
-            for k in ["tag_name", "tag_html", "tag_href", "xpath", "xpath_full"]
-        ):
-            context_scores["web"] += 2
+    if not has_html and not has_app:
+        for event in events:
+            attrs = event.attributes
+            if any(k in attrs and attrs[k] not in (None, "", "None", "none") for k in _COORD_ATTRS):
+                has_coord = True
+                break
 
-        app_name = str(attrs.get("application") or attrs.get("app") or "").lower()
-        category = str(attrs.get("category") or "").lower()
-        if app_name in browser_apps or category == "browser":
-            context_scores["web"] += 4
-        elif "app" in attrs or "application" in attrs:
-            context_scores["desktop"] += 2
-
-        if any(
-            k in attrs and str(attrs.get(k, "")).strip() not in ["", "None", "none"]
-            for k in ["workbook", "worksheet", "cell_range", "cell_range_number"]
-        ):
-            context_scores["desktop"] += 3
-
-        if "element_type" in attrs:
-            elem_type = attrs["element_type"].lower()
-            if "image" in elem_type or "icon" in elem_type:
-                context_scores["visual"] += 1
-            if "cell" in elem_type or "worksheet" in elem_type:
-                context_scores["desktop"] += 1
-
-        if "environment" in attrs:
-            env = attrs["environment"].lower()
-            if "web" in env:
-                context_scores["web"] += 3
-            elif "desktop" in env or "application" in env:
-                context_scores["desktop"] += 3
-            elif "visual" in env or "screen" in env:
-                context_scores["visual"] += 3
-
-    max_score = max(context_scores.values())
-    if max_score == 0:
+    if has_html:
         return "web"
-
-    for ctx, score in context_scores.items():
-        if score == max_score:
-            return ctx
-
-    return "web"
+    if has_app:
+        return "desktop"
+    if has_coord:
+        return "screen"
+    return "unknown"

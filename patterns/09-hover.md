@@ -15,7 +15,7 @@ Control
 ## Contexts
 - web
 - desktop
-- visual
+- screen
 
 ## Description
 The Hover pattern captures actions where the bot positions the pointer over a target element to trigger context-dependent UI behaviour (tooltips, pop-ups, dynamic menus). Unlike activation, hovering does not alter the application state.

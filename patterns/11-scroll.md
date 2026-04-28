@@ -15,7 +15,7 @@ Control
 ## Contexts
 - web
 - desktop
-- visual
+- screen
 
 ## Description
 The Scroll pattern enables the bot to perform scrolling actions to reveal UI elements that are not currently visible within the viewport.
