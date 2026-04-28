@@ -293,9 +293,10 @@
 
         <section class="stage-card" data-stage-key="method_recommendation" hidden>
             <div class="stage-header"><h2 class="stage-title">6) Method Recommendation</h2><span class="badge">method_recommendation</span></div>
-            <div class="three-col">
+            <div class="three-col three-col-desc">
                 <div class="pane">
                     <h3>Inferred Activities</h3>
+                    <p class="step-desc">The inferred activities from the Activity Inference stage.</p>
                     <div class="tbl-wrap">
                         <table class="data-tbl" id="mrActivitiesTable">
                             <thead><tr><th>#</th><th>Type</th><th>Activity</th></tr></thead>
@@ -305,6 +306,7 @@
                 </div>
                 <div class="pane">
                     <h3>Identified Context</h3>
+                    <p class="step-desc">The execution environment identified for each activity in the previous stage.</p>
                     <div class="tbl-wrap">
                         <table class="data-tbl" id="mrContextTable">
                             <thead><tr><th>#</th><th>Environment</th></tr></thead>
@@ -314,6 +316,7 @@
                 </div>
                 <div class="pane">
                     <h3>Recommended Method</h3>
+                    <p class="step-desc">The most suitable automation method recommended based on the activity and its execution environment.</p>
                     <div class="tbl-wrap">
                         <table class="data-tbl" id="mrMethodTable">
                             <thead><tr><th>#</th><th>Method</th><th>Category</th></tr></thead>
