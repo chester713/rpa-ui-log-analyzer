@@ -204,24 +204,18 @@ def _build_progressive_contract(mappings, activities, recommendation_payload, en
         matched_rec = recs[pos] if pos < len(recs) else {}
         rec_name_pos[name] = pos + 1
         mapping = mapping_by_group.get(group_idx)
-        shared_attrs = (
-            mapping.attribute_breakdown.get("shared_attributes", [])
-            if mapping else []
-        )
         unique_attr_vals = (
             mapping.attribute_breakdown.get("unique_attributes", {})
             if mapping else {}
         )
-        context_attr_values = {
-            attr: (unique_attr_vals.get(attr) or [None])[0]
-            for attr in shared_attrs
-        }
+        env = matched_rec.get("execution_environment") or ""
+        context_attr_values = _pick_deciding_attributes(env, unique_attr_vals)
         is_ctx_switch = getattr(activity, "activity_type", "main") == "context_switch"
         context_determination.append(
             {
                 "inferred_activity": name,
                 "execution_environment": matched_rec.get("execution_environment"),
-                "context_attributes_used": shared_attrs,
+                "context_attributes_used": list(context_attr_values.keys()),
                 "context_attribute_values": context_attr_values,
                 "context_switch": is_ctx_switch,
                 "context_switch_from": matched_rec.get("context_switch_from") if is_ctx_switch else None,
@@ -331,6 +325,33 @@ def save_history(history):
     history_path = "data/history.json"
     with open(history_path, "w", encoding="utf-8") as f:
         json.dump(history, f, indent=2)
+
+
+def _pick_deciding_attributes(env: str, unique_attr_vals: dict) -> dict:
+    """Return the minimal set of attributes that explain the environment decision."""
+    _WEB = ["xpath", "xpath_full", "html_id", "tag_name", "tag_type",
+            "tag_html", "tag_href", "browser_url", "webpage", "url"]
+    _DESKTOP = ["application", "app", "window_title", "workbook",
+                "worksheet", "cell_range", "control_type", "ui_path"]
+    _SCREEN = ["x", "y", "mouse_x", "mouse_y", "click_x", "click_y",
+               "coordinates", "coordinate"]
+
+    def _first_present(candidates):
+        for attr in candidates:
+            val = (unique_attr_vals.get(attr) or [None])[0]
+            if val not in (None, "", "None", "none"):
+                return {attr: val}
+        return {}
+
+    if env == "web":
+        return _first_present(_WEB)
+    if env == "desktop":
+        result = _first_present(["application", "app"])
+        result.update(_first_present(["window_title", "workbook", "worksheet"]))
+        return result
+    if env == "screen":
+        return _first_present(_SCREEN)
+    return {}
 
 
 def _load_full_log(entry: dict) -> list:
