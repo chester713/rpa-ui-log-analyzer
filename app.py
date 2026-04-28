@@ -208,12 +208,21 @@ def _build_progressive_contract(mappings, activities, recommendation_payload, en
             mapping.attribute_breakdown.get("shared_attributes", [])
             if mapping else []
         )
+        unique_attr_vals = (
+            mapping.attribute_breakdown.get("unique_attributes", {})
+            if mapping else {}
+        )
+        context_attr_values = {
+            attr: (unique_attr_vals.get(attr) or [None])[0]
+            for attr in shared_attrs
+        }
         is_ctx_switch = getattr(activity, "activity_type", "main") == "context_switch"
         context_determination.append(
             {
                 "inferred_activity": name,
                 "execution_environment": matched_rec.get("execution_environment"),
                 "context_attributes_used": shared_attrs,
+                "context_attribute_values": context_attr_values,
                 "context_switch": is_ctx_switch,
                 "context_switch_from": matched_rec.get("context_switch_from") if is_ctx_switch else None,
                 "context_switch_to": matched_rec.get("context_switch_to") if is_ctx_switch else None,

@@ -442,9 +442,18 @@
                         attrText = `${from} → ${to}`;
                     } else {
                         const attrs = c.context_attributes_used || [];
-                        attrText = attrs.length > 0 ? attrs.join(', ') : '—';
+                        const vals = c.context_attribute_values || {};
+                        if (attrs.length > 0) {
+                            attrText = attrs.map(a => {
+                                const v = vals[a] != null ? String(vals[a]) : '';
+                                const vDisplay = v.length > 45 ? v.substring(0, 45) + '…' : (v || '—');
+                                return `<span style="color:#6b7280;font-size:11px">${a}:</span> ${vDisplay}`;
+                            }).join('<br>');
+                        } else {
+                            attrText = '—';
+                        }
                     }
-                    return `<tr data-cd-index="${i}"><td>${i + 1}</td><td>${attrText}</td></tr>`;
+                    return `<tr data-cd-index="${i}"><td>${i + 1}</td><td style="white-space:normal;line-height:1.6">${attrText}</td></tr>`;
                 }).join('');
             }
 
