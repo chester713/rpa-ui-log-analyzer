@@ -59,6 +59,10 @@
         .act-type-main { background: #dcfce7; color: #166534; }
         .act-type-prerequisite { background: #f3e8ff; color: #6d28d9; }
         .act-type-context_switch { background: #fef3c7; color: #92400e; }
+        .step-desc { font-size: 12px; color: #6b7280; margin-bottom: 8px; line-height: 1.45; }
+        .an-step-new { border-left: 3px solid; }
+        .an-step-prerequisite { border-left-color: #7c3aed; background: #faf5ff !important; }
+        .an-step-context-switch { border-left-color: #b45309; background: #fffbeb !important; }
         .aomc-cat { display: inline-block; border-radius: 4px; padding: 2px 7px; font-size: 11px; font-weight: 500; }
         .aomc-cat-extraction { background: #dbeafe; color: #1e40af; }
         .aomc-cat-modification { background: #fef9c3; color: #854d0e; }
@@ -132,22 +136,34 @@
 
         <section class="stage-card" data-stage-key="activity_naming" hidden>
             <div class="stage-header"><h2 class="stage-title">2) Activity Inference</h2><span class="badge">activity_naming</span></div>
-            <div class="two-col">
+            <div class="three-col">
                 <div class="pane">
-                    <h3>Event Groups</h3>
+                    <h3>Step 1: Label Groups</h3>
+                    <p class="step-desc">Each event group is labeled with a meaningful activity name in Action + Object + context format. These are the recorded activities.</p>
                     <div class="tbl-wrap">
-                        <table class="data-tbl" id="activityInputTable">
-                            <thead><tr><th>#</th><th>Events</th><th>Size</th></tr></thead>
-                            <tbody id="activityInputTableBody"></tbody>
+                        <table class="data-tbl" id="anStep1Table">
+                            <thead><tr><th>#</th><th>Activity</th></tr></thead>
+                            <tbody id="anStep1Body"></tbody>
                         </table>
                     </div>
                 </div>
                 <div class="pane">
-                    <h3>Inferred Activities</h3>
+                    <h3>Step 2: + Prerequisites</h3>
+                    <p class="step-desc">Activities targeting a specific UI element get a prerequisite Find/Identify step inserted before them.</p>
                     <div class="tbl-wrap">
-                        <table class="data-tbl" id="activityOutputTable">
-                            <thead><tr><th>#</th><th>Type</th><th>Activity</th><th>Group</th></tr></thead>
-                            <tbody id="activityOutputTableBody"></tbody>
+                        <table class="data-tbl" id="anStep2Table">
+                            <thead><tr><th>#</th><th>Type</th><th>Activity</th></tr></thead>
+                            <tbody id="anStep2Body"></tbody>
+                        </table>
+                    </div>
+                </div>
+                <div class="pane">
+                    <h3>Step 3: + Context Switches</h3>
+                    <p class="step-desc">When the active application changes between groups, a Switch Context activity is inserted at the transition boundary.</p>
+                    <div class="tbl-wrap">
+                        <table class="data-tbl" id="anStep3Table">
+                            <thead><tr><th>#</th><th>Type</th><th>Activity</th></tr></thead>
+                            <tbody id="anStep3Body"></tbody>
                         </table>
                     </div>
                 </div>
@@ -441,6 +457,77 @@
             });
         }
 
+        function renderActivityInference() {
+            const activities = progressiveArtifacts?.['activity_naming']?.activities || [];
+            const typeLabel = { main: 'Recorded', prerequisite: 'Prerequisite', context_switch: 'Switch' };
+
+            const indexed = activities.map((a, i) => ({ ...a, _idx: i }));
+            const step1 = indexed.filter(a => (a.activity_type || 'main') === 'main');
+            const step2 = indexed.filter(a => ['main', 'prerequisite'].includes(a.activity_type || 'main'));
+            const step3 = indexed;
+
+            const step1Body = document.getElementById('anStep1Body');
+            const step2Body = document.getElementById('anStep2Body');
+            const step3Body = document.getElementById('anStep3Body');
+
+            if (step1Body) {
+                step1Body.innerHTML = step1.map((a, i) => `<tr data-an-idx="${a._idx}">
+                    <td>${i + 1}</td>
+                    <td>${a.activity_name || '—'}</td>
+                </tr>`).join('');
+            }
+
+            if (step2Body) {
+                step2Body.innerHTML = step2.map((a, i) => {
+                    const type = a.activity_type || 'main';
+                    const isNew = type === 'prerequisite';
+                    const label = typeLabel[type] || type;
+                    return `<tr data-an-idx="${a._idx}" class="${isNew ? 'an-step-new an-step-prerequisite' : ''}">
+                        <td>${i + 1}</td>
+                        <td><span class="act-badge act-type-${type}">${label}</span></td>
+                        <td>${a.activity_name || '—'}</td>
+                    </tr>`;
+                }).join('');
+            }
+
+            if (step3Body) {
+                step3Body.innerHTML = step3.map((a, i) => {
+                    const type = a.activity_type || 'main';
+                    const isNew = type === 'context_switch';
+                    const label = typeLabel[type] || type;
+                    return `<tr data-an-idx="${a._idx}" class="${isNew ? 'an-step-new an-step-context-switch' : ''}">
+                        <td>${i + 1}</td>
+                        <td><span class="act-badge act-type-${type}">${label}</span></td>
+                        <td>${a.activity_name || '—'}</td>
+                    </tr>`;
+                }).join('');
+            }
+
+            const allBodies = [step1Body, step2Body, step3Body];
+
+            function clearAnHighlights() {
+                allBodies.forEach(tbody => {
+                    tbody?.querySelectorAll('tr[data-an-idx]').forEach(r => r.classList.remove('row-highlight'));
+                });
+            }
+
+            allBodies.forEach(tbody => {
+                tbody?.querySelectorAll('tr[data-an-idx]').forEach(tr => {
+                    tr.addEventListener('click', () => {
+                        clearAnHighlights();
+                        const idx = tr.dataset.anIdx;
+                        allBodies.forEach(tb => {
+                            const row = tb?.querySelector(`tr[data-an-idx="${idx}"]`);
+                            if (row) {
+                                row.classList.add('row-highlight');
+                                row.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
+                            }
+                        });
+                    });
+                });
+            });
+        }
+
         function renderMethodRecommendation() {
             // Drive from context_determination (temporal order); look up each rec by name.
             const contexts = progressiveArtifacts?.['context_determination']?.contexts || [];
@@ -566,81 +653,7 @@
                 }
             });
 
-            const groups = progressiveArtifacts?.['event_grouping']?.groups || [];
-            const activityTbody = document.getElementById('activityInputTableBody');
-            if (activityTbody) {
-                activityTbody.innerHTML = groups.map((g, i) => {
-                    const events = (g.event_labels || []).join(', ') || '—';
-                    return `<tr data-group-row="${i}"><td>${i + 1}</td><td>${events}</td><td>${g.group_size || 0}</td></tr>`;
-                }).join('');
-            }
-
-            const activityOutputTbody = document.getElementById('activityOutputTableBody');
-            if (activityOutputTbody) {
-                const activities = progressiveArtifacts?.['activity_naming']?.activities || [];
-                const typeLabel = { main: 'Recorded', prerequisite: 'Prerequisite', context_switch: 'Switch' };
-                activityOutputTbody.innerHTML = activities.map((a, i) => {
-                    const type = a.activity_type || 'main';
-                    const label = typeLabel[type] || type;
-                    const gIdx = a.group_index ?? 0;
-                    return `<tr data-group-index="${gIdx}">
-                        <td>${i + 1}</td>
-                        <td><span class="act-badge act-type-${type}">${label}</span></td>
-                        <td>${a.activity_name || '—'}</td>
-                        <td><a href="#" class="group-link" data-group-index="${gIdx}">${gIdx + 1}</a></td>
-                    </tr>`;
-                }).join('');
-
-                function clearActivityHighlights() {
-                    activityTbody?.querySelectorAll('tr[data-group-row]').forEach(r => r.classList.remove('row-highlight', 'row-related'));
-                    activityOutputTbody.querySelectorAll('tr[data-group-index]').forEach(r => r.classList.remove('row-highlight', 'row-related'));
-                }
-
-                // Left → Right: click group row → highlight all matching activity rows
-                activityTbody?.querySelectorAll('tr[data-group-row]').forEach(tr => {
-                    tr.addEventListener('click', () => {
-                        clearActivityHighlights();
-                        tr.classList.add('row-highlight');
-                        const gIdx = parseInt(tr.dataset.groupRow, 10);
-                        activityOutputTbody.querySelectorAll(`tr[data-group-index="${gIdx}"]`).forEach(r => {
-                            r.classList.add('row-highlight');
-                            r.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
-                        });
-                    });
-                });
-
-                // Right → Left: click activity row → highlight that row + its source group row
-                activityOutputTbody.querySelectorAll('tr[data-group-index]').forEach(tr => {
-                    tr.addEventListener('click', e => {
-                        if (e.target.classList.contains('group-link')) return;
-                        clearActivityHighlights();
-                        tr.classList.add('row-highlight');
-                        const gIdx = parseInt(tr.dataset.groupIndex, 10);
-                        const groupRow = activityTbody?.querySelector(`tr[data-group-row="${gIdx}"]`);
-                        if (groupRow) {
-                            groupRow.classList.add('row-highlight');
-                            groupRow.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
-                        }
-                    });
-                });
-
-                // Group link click → same as row click but initiated from the link
-                activityOutputTbody.querySelectorAll('.group-link').forEach(link => {
-                    link.addEventListener('click', e => {
-                        e.preventDefault();
-                        e.stopPropagation();
-                        clearActivityHighlights();
-                        const parentRow = link.closest('tr');
-                        if (parentRow) parentRow.classList.add('row-highlight');
-                        const gIdx = parseInt(link.dataset.groupIndex, 10);
-                        const groupRow = activityTbody?.querySelector(`tr[data-group-row="${gIdx}"]`);
-                        if (groupRow) {
-                            groupRow.classList.add('row-highlight');
-                            groupRow.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
-                        }
-                    });
-                });
-            }
+            renderActivityInference();
 
             initGroupingInteraction();
             renderAoExtraction();
@@ -830,7 +843,7 @@
 
             document.addEventListener('click', (e) => {
                 if (!e.target.closest('#logTable') && !e.target.closest('#groupTable')
-                    && !e.target.closest('#activityInputTable') && !e.target.closest('#activityOutputTable')
+                    && !e.target.closest('#anStep1Table') && !e.target.closest('#anStep2Table') && !e.target.closest('#anStep3Table')
                     && !e.target.closest('#aoInputTable') && !e.target.closest('#aomcOutputTable')
                     && !e.target.closest('#pmInputTable') && !e.target.closest('#pmOutputTable')
                     && !e.target.closest('#cdActivitiesTable') && !e.target.closest('#cdContextTable')
