@@ -40,6 +40,7 @@
         .three-col { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1fr) minmax(0, 1fr); gap: 12px; }
         .four-col { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 12px; }
         .four-col .pane { display: grid; grid-row: span 3; grid-template-rows: subgrid; }
+        .two-col-desc .pane { display: grid; grid-row: span 3; grid-template-rows: subgrid; }
         .pane { border: 1px solid #e5e7eb; border-radius: 10px; padding: 12px; }
         .pane h3 { color: #4b5563; font-size: 13px; margin-bottom: 8px; }
         .artifact-json { white-space: pre-wrap; word-break: break-word; font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 12px; color: #111827; }
@@ -110,9 +111,10 @@
 
         <section class="stage-card" data-stage-key="event_grouping">
             <div class="stage-header"><h2 class="stage-title">1) Event Grouping</h2><span class="badge">event_grouping</span></div>
-            <div class="two-col">
+            <div class="two-col two-col-desc">
                 <div class="pane">
-                    <h3>Original Log (click row)</h3>
+                    <h3>Original Log</h3>
+                    <p class="step-desc">The raw UI event log as recorded. Each row represents one captured UI interaction event.</p>
                     <div class="tbl-wrap">
                         <table class="data-tbl" id="logTable">
                             <thead><tr>{% for col in entry.log_columns | default(['Event']) %}<th>{{ col }}</th>{% endfor %}</tr></thead>
@@ -121,7 +123,8 @@
                     </div>
                 </div>
                 <div class="pane">
-                    <h3>Event Groups (click group)</h3>
+                    <h3>Event Groups</h3>
+                    <p class="step-desc">Events are grouped by temporal proximity and context-related information, such as the application where the interactions occured.</p>
                     <div class="tbl-wrap">
                         <table class="data-tbl" id="groupTable">
                             <thead><tr><th>Group</th><th>Rows</th><th>Events</th><th>Size</th></tr></thead>
