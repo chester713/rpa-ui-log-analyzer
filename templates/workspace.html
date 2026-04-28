@@ -38,6 +38,7 @@
         .badge { background: #eef2ff; color: #3730a3; border-radius: 999px; padding: 4px 10px; font-size: 12px; }
         .two-col { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); gap: 12px; }
         .three-col { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1fr) minmax(0, 1fr); gap: 12px; }
+        .four-col { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 12px; }
         .pane { border: 1px solid #e5e7eb; border-radius: 10px; padding: 12px; }
         .pane h3 { color: #4b5563; font-size: 13px; margin-bottom: 8px; }
         .artifact-json { white-space: pre-wrap; word-break: break-word; font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 12px; color: #111827; }
@@ -136,10 +137,20 @@
 
         <section class="stage-card" data-stage-key="activity_naming" hidden>
             <div class="stage-header"><h2 class="stage-title">2) Activity Inference</h2><span class="badge">activity_naming</span></div>
-            <div class="three-col">
+            <div class="four-col">
                 <div class="pane">
-                    <h3>Step 1: Label Groups</h3>
-                    <p class="step-desc">Each event group is labeled with a meaningful activity name in Action + Object + context format. These are the recorded activities.</p>
+                    <h3>Input: Event Groups</h3>
+                    <p class="step-desc">Event groups are the input to activity inference. Each group contains one or more related events.</p>
+                    <div class="tbl-wrap">
+                        <table class="data-tbl" id="anGroupsTable">
+                            <thead><tr><th>#</th><th>Events</th><th>Size</th></tr></thead>
+                            <tbody id="anGroupsBody"></tbody>
+                        </table>
+                    </div>
+                </div>
+                <div class="pane">
+                    <h3>Step 1: Recorded Activities</h3>
+                    <p class="step-desc">Each event group is labeled with a meaningful activity name in Action + Object + context format.</p>
                     <div class="tbl-wrap">
                         <table class="data-tbl" id="anStep1Table">
                             <thead><tr><th>#</th><th>Activity</th></tr></thead>
@@ -459,6 +470,7 @@
 
         function renderActivityInference() {
             const activities = progressiveArtifacts?.['activity_naming']?.activities || [];
+            const groups = progressiveArtifacts?.['event_grouping']?.groups || [];
             const typeLabel = { main: 'Recorded', prerequisite: 'Prerequisite', context_switch: 'Switch' };
 
             const indexed = activities.map((a, i) => ({ ...a, _idx: i }));
@@ -466,12 +478,22 @@
             const step2 = indexed.filter(a => ['main', 'prerequisite'].includes(a.activity_type || 'main'));
             const step3 = indexed;
 
+            const groupsBody = document.getElementById('anGroupsBody');
             const step1Body = document.getElementById('anStep1Body');
             const step2Body = document.getElementById('anStep2Body');
             const step3Body = document.getElementById('anStep3Body');
 
+            if (groupsBody) {
+                groupsBody.innerHTML = groups.map((g, i) => {
+                    const events = (g.event_labels || []).join(', ') || '—';
+                    return `<tr data-group-idx="${g.group_index ?? i}">
+                        <td>${i + 1}</td><td>${events}</td><td>${g.group_size || 0}</td>
+                    </tr>`;
+                }).join('');
+            }
+
             if (step1Body) {
-                step1Body.innerHTML = step1.map((a, i) => `<tr data-an-idx="${a._idx}">
+                step1Body.innerHTML = step1.map((a, i) => `<tr data-an-idx="${a._idx}" data-group-idx="${a.group_index ?? ''}">
                     <td>${i + 1}</td>
                     <td>${a.activity_name || '—'}</td>
                 </tr>`).join('');
@@ -482,7 +504,7 @@
                     const type = a.activity_type || 'main';
                     const isNew = type === 'prerequisite';
                     const label = typeLabel[type] || type;
-                    return `<tr data-an-idx="${a._idx}" class="${isNew ? 'an-step-new an-step-prerequisite' : ''}">
+                    return `<tr data-an-idx="${a._idx}" data-group-idx="${a.group_index ?? ''}" class="${isNew ? 'an-step-new an-step-prerequisite' : ''}">
                         <td>${i + 1}</td>
                         <td><span class="act-badge act-type-${type}">${label}</span></td>
                         <td>${a.activity_name || '—'}</td>
@@ -495,7 +517,7 @@
                     const type = a.activity_type || 'main';
                     const isNew = type === 'context_switch';
                     const label = typeLabel[type] || type;
-                    return `<tr data-an-idx="${a._idx}" class="${isNew ? 'an-step-new an-step-context-switch' : ''}">
+                    return `<tr data-an-idx="${a._idx}" data-group-idx="${a.group_index ?? ''}" class="${isNew ? 'an-step-new an-step-context-switch' : ''}">
                         <td>${i + 1}</td>
                         <td><span class="act-badge act-type-${type}">${label}</span></td>
                         <td>${a.activity_name || '—'}</td>
@@ -503,26 +525,51 @@
                 }).join('');
             }
 
-            const allBodies = [step1Body, step2Body, step3Body];
+            const activityBodies = [step1Body, step2Body, step3Body];
 
             function clearAnHighlights() {
-                allBodies.forEach(tbody => {
+                groupsBody?.querySelectorAll('tr[data-group-idx]').forEach(r => r.classList.remove('row-highlight'));
+                activityBodies.forEach(tbody => {
                     tbody?.querySelectorAll('tr[data-an-idx]').forEach(r => r.classList.remove('row-highlight'));
                 });
             }
 
-            allBodies.forEach(tbody => {
+            // Click event group → highlight matching activity rows across all three steps
+            groupsBody?.querySelectorAll('tr[data-group-idx]').forEach(tr => {
+                tr.addEventListener('click', () => {
+                    clearAnHighlights();
+                    tr.classList.add('row-highlight');
+                    const gIdx = tr.dataset.groupIdx;
+                    activityBodies.forEach(tb => {
+                        tb?.querySelectorAll(`tr[data-group-idx="${gIdx}"]`).forEach(row => {
+                            row.classList.add('row-highlight');
+                            row.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
+                        });
+                    });
+                });
+            });
+
+            // Click any activity row → highlight same activity in other steps + source group
+            activityBodies.forEach(tbody => {
                 tbody?.querySelectorAll('tr[data-an-idx]').forEach(tr => {
                     tr.addEventListener('click', () => {
                         clearAnHighlights();
                         const idx = tr.dataset.anIdx;
-                        allBodies.forEach(tb => {
+                        const gIdx = tr.dataset.groupIdx;
+                        // Highlight same activity across all step columns
+                        activityBodies.forEach(tb => {
                             const row = tb?.querySelector(`tr[data-an-idx="${idx}"]`);
                             if (row) {
                                 row.classList.add('row-highlight');
                                 row.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
                             }
                         });
+                        // Highlight source event group
+                        const groupRow = groupsBody?.querySelector(`tr[data-group-idx="${gIdx}"]`);
+                        if (groupRow) {
+                            groupRow.classList.add('row-highlight');
+                            groupRow.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
+                        }
                     });
                 });
             });
@@ -843,7 +890,7 @@
 
             document.addEventListener('click', (e) => {
                 if (!e.target.closest('#logTable') && !e.target.closest('#groupTable')
-                    && !e.target.closest('#anStep1Table') && !e.target.closest('#anStep2Table') && !e.target.closest('#anStep3Table')
+                    && !e.target.closest('#anGroupsTable') && !e.target.closest('#anStep1Table') && !e.target.closest('#anStep2Table') && !e.target.closest('#anStep3Table')
                     && !e.target.closest('#aoInputTable') && !e.target.closest('#aomcOutputTable')
                     && !e.target.closest('#pmInputTable') && !e.target.closest('#pmOutputTable')
                     && !e.target.closest('#cdActivitiesTable') && !e.target.closest('#cdContextTable')
