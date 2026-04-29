@@ -77,6 +77,8 @@
         .env-web { background: #d1fae5; color: #065f46; }
         .env-desktop { background: #dbeafe; color: #1e40af; }
         .env-visual { background: #fef3c7; color: #92400e; }
+        .pattern-detail-desc { font-size: 13px; color: #374151; line-height: 1.6; }
+        .pattern-detail-empty { color: #9ca3af; font-size: 13px; }
 
         @media (max-width: 1100px) {
             .two-col { grid-template-columns: 1fr; }
@@ -222,7 +224,7 @@
 
         <section class="stage-card" data-stage-key="pattern_matching" hidden>
             <div class="stage-header"><h2 class="stage-title">4) Pattern Matching</h2><span class="badge">pattern_matching</span></div>
-            <div class="two-col two-col-desc">
+            <div class="three-col three-col-desc">
                 <div class="pane">
                     <h3>Action/Object Pairs</h3>
                     <p class="step-desc">The extracted Action and Object pairs from the previous stage.</p>
@@ -241,6 +243,15 @@
                             <thead><tr><th>#</th><th>Pattern</th><th>Category</th></tr></thead>
                             <tbody id="pmOutputTableBody"></tbody>
                         </table>
+                    </div>
+                </div>
+                <div class="pane">
+                    <h3>Pattern Description</h3>
+                    <p class="step-desc">Select a row in the Matched Patterns panel to view its description.</p>
+                    <div id="pmPatternInfoEmpty" class="pattern-detail-empty">No pattern selected.</div>
+                    <div id="pmPatternInfoContent" style="display:none;">
+                        <div id="pmPatternName" style="font-size:13px; font-weight:600; color:#1f2937; margin-bottom:6px;"></div>
+                        <div id="pmPatternDesc" class="pattern-detail-desc"></div>
                     </div>
                 </div>
             </div>
@@ -788,6 +799,38 @@
             }
         }
 
+        const PATTERN_DESCRIPTIONS = {
+            'Find Element': 'Establishes a reference to a target UI element using context-dependent identification methods (DOM parsing, UI Automation tree parsing, or visual recognition). This connects the bot to an interaction object before further operations can occur.',
+            'Read Element': 'Reads the attributes or properties of a target element to extract data from the user interface. Supports HTML DOM parsing, UI Automation tree parsing, and visual recognition depending on the execution environment.',
+            'Observe': 'Monitors a target object for state changes over time. Unlike a one-time Read Element, Observe continuously watches the target and captures dynamic UI changes as they occur.',
+            'Write Element': 'Writes, updates, or inserts data into a target UI element exposed through the application interface, operationalising content modification within the user interface.',
+            'Delete Element': 'Removes a target element from the DOM or UI hierarchy. This is a structural manipulation (eliminating the element itself) rather than a content-level modification like Write Element.',
+            'Disable Element': 'Deactivates or suppresses a target element without removing it from the UI hierarchy, modifying its state so it no longer interferes with task execution (e.g. suppressing pop-ups or modal dialogues).',
+            'Open': 'Creates a new software instance to enable access to a file, application, or web page. Unlike Activate, Open establishes the required execution context for subsequent interactions.',
+            'Activate': 'Triggers or invokes the functional behaviour of a UI element — clicking a button, selecting a menu item, opening a link, or confirming an operation — without requiring the element to be re-located.',
+            'Hover': 'Positions the pointer over a target element to trigger context-dependent UI behaviour such as tooltips, pop-ups, or dynamic menus. Unlike Activate, hovering does not alter application state.',
+            'Switch Context': 'Changes the active execution context between different applications, windows, or containers so the bot can continue interacting with UI elements that reside in another context.',
+            'Scroll': 'Performs scrolling actions to reveal UI elements that are not currently visible within the viewport.',
+            'Focus': 'Sets input focus on a target UI element so it can receive subsequent input actions. Unlike Activate, Focus assigns focus without invoking any associated behaviour.',
+            'Refresh': 'Updates or reloads the current state of a UI element or view to reflect the most recent data, triggering a re-render or re-query of UI content.',
+        };
+
+        function updatePmPatternPanel(patternName) {
+            const empty = document.getElementById('pmPatternInfoEmpty');
+            const content = document.getElementById('pmPatternInfoContent');
+            const nameEl = document.getElementById('pmPatternName');
+            const descEl = document.getElementById('pmPatternDesc');
+            if (!patternName || patternName === '—') {
+                if (empty) empty.style.display = '';
+                if (content) content.style.display = 'none';
+                return;
+            }
+            if (nameEl) nameEl.textContent = patternName;
+            if (descEl) descEl.textContent = PATTERN_DESCRIPTIONS[patternName] || 'No description available for this pattern.';
+            if (empty) empty.style.display = 'none';
+            if (content) content.style.display = 'block';
+        }
+
         function renderPatternMatching() {
             const pairs = progressiveArtifacts?.['action_object_extraction']?.pairs || [];
             const matches = progressiveArtifacts?.['pattern_matching']?.matches || [];
@@ -834,7 +877,12 @@
                     tr.addEventListener('click', () => {
                         clearPmHighlights();
                         tr.classList.add('row-highlight');
-                        outputTbody.querySelector(`tr[data-pm-index="${tr.dataset.pmIndex}"]`)?.classList.add('row-highlight');
+                        const matchedRow = outputTbody.querySelector(`tr[data-pm-index="${tr.dataset.pmIndex}"]`);
+                        if (matchedRow) {
+                            matchedRow.classList.add('row-highlight');
+                            const patternCell = matchedRow.cells[1];
+                            updatePmPatternPanel(patternCell ? patternCell.textContent.trim() : null);
+                        }
                     });
                 });
 
@@ -843,6 +891,8 @@
                         clearPmHighlights();
                         tr.classList.add('row-highlight');
                         inputTbody?.querySelector(`tr[data-pm-index="${tr.dataset.pmIndex}"]`)?.classList.add('row-highlight');
+                        const patternCell = tr.cells[1];
+                        updatePmPatternPanel(patternCell ? patternCell.textContent.trim() : null);
                     });
                 });
             }
