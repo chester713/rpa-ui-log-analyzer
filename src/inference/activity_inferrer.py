@@ -488,9 +488,12 @@ Respond with valid JSON only — no other text:
             return True
         if any(token in text for token in ["/", "[", "]", "@", "="]):
             return False
-        if len(text) >= 40 and " " not in text:
+        if len(text) >= 32 and " " not in text:
             return True
         if re.fullmatch(r"[0-9a-fA-F\-]{24,}", text):
+            return True
+        # Chrome extension IDs: 32-char lowercase a-p strings
+        if re.fullmatch(r"[a-p]{32}", text):
             return True
         return False
 

@@ -207,6 +207,8 @@ class PatternMatcher:
             "press": "Activate",
             "tap": "Activate",
             "activate": "Activate",
+            "perform": "Activate",
+            "enable": "Activate",
             "open": "Open",
             "launch": "Open",
             "new": "Open",
