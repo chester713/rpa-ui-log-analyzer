@@ -83,6 +83,8 @@ class MethodRecommendation:
     context_switch: bool = False
     context_switch_from: Optional[str] = None
     context_switch_to: Optional[str] = None
+    inference_evidence: Optional[List[str]] = None
+    inference_reasoning: Optional[str] = None
 
     def to_dict(self) -> dict:
         """Convert to dictionary for output."""
@@ -102,5 +104,7 @@ class MethodRecommendation:
             "context_switch": self.context_switch,
             "context_switch_from": self.context_switch_from,
             "context_switch_to": self.context_switch_to,
+            "inference_evidence": self.inference_evidence or [],
+            "inference_reasoning": self.inference_reasoning or "",
         }
         return recommendation_record

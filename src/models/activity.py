@@ -13,6 +13,7 @@ class Activity:
         name: str,
         confidence: float,
         evidence: Optional[List[str]] = None,
+        reasoning: Optional[str] = None,
         source_events: Optional[List[int]] = None,
         activity_type: str = "main",
         is_implicit: bool = False,
@@ -21,6 +22,7 @@ class Activity:
         self.name = name
         self.confidence = max(0.0, min(1.0, confidence))
         self.evidence = evidence or []
+        self.reasoning = reasoning or ""
         self.source_events = source_events or []
         self.activity_type = activity_type  # "main", "prerequisite", "context_switch"
         self.is_implicit = is_implicit
@@ -51,6 +53,7 @@ class EventActivityMapping:
                 "name": self.activity.name,
                 "confidence": self.activity.confidence,
                 "evidence": self.activity.evidence,
+                "reasoning": self.activity.reasoning,
                 "source_events": self.activity.source_events,
                 "activity_type": self.activity.activity_type,
                 "is_implicit": self.activity.is_implicit,

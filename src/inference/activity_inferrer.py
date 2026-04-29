@@ -94,8 +94,9 @@ class ActivityInferrer:
             # 4. Main activity
             activities.append(Activity(
                 name=llm_result["activity_name"],
-                confidence=llm_result.get("confidence", 0.5),
+                confidence=llm_result.get("confidence", 0.3),
                 evidence=llm_result.get("evidence", []),
+                reasoning=llm_result.get("reasoning", ""),
                 source_events=source_events,
                 activity_type="main",
                 is_implicit=False,
@@ -126,8 +127,9 @@ class ActivityInferrer:
 
         return Activity(
             name=name,
-            confidence=result.get("confidence", 0.5),
+            confidence=result.get("confidence", 0.3),
             evidence=result.get("evidence", []),
+            reasoning=result.get("reasoning", ""),
             source_events=source_events,
         )
 
@@ -181,14 +183,16 @@ Instructions:
 1. "activity_name": Natural language name capturing the INTERACTION INTENT, not the low-level events. Use verb + object format (e.g., "Write data into search field", "Click submit button", "Select option from dropdown", "Read cell value from spreadsheet").
 2. "requires_find": In RPA the bot must LOCATE a UI element before interacting with it. Set true when this activity targets a specific element (input fields, buttons, dropdowns, checkboxes, links, table cells). Set false for page-level actions (opening a URL, scrolling, switching windows, launching an application).
 3. "find_target": If requires_find is true, concisely describe the element to locate (e.g., "username textfield", "login button", "country dropdown"). Omit if requires_find is false.
-4. "confidence": Your confidence from 0.0 to 1.0.
-5. "reasoning": One sentence explaining your interpretation.
+4. "evidence": List of 2–4 concise observations drawn directly from the events and attributes above that justify your interpretation. Each item must name a specific event keyword or attribute value and explain what it signals. Example: ["Event 'type' on input element indicates keyboard text entry", "browser_url 'checkout.store.com' places action in e-commerce checkout context", "Element tag 'button' with id 'submit' identifies the target element"].
+5. "confidence": Your confidence from 0.0 to 1.0, reflecting how strongly the evidence supports your interpretation. Use lower values when events are ambiguous or key attributes are missing.
+6. "reasoning": One sentence summarising your overall interpretation.
 
 Respond with valid JSON only — no other text:
 {{
   "activity_name": "...",
   "requires_find": true,
   "find_target": "...",
+  "evidence": ["...", "..."],
   "confidence": 0.9,
   "reasoning": "..."
 }}"""
@@ -240,8 +244,9 @@ Respond with valid JSON only — no other text:
         source_events = [e.row_index for e in events if e.row_index is not None]
         return Activity(
             name=name,
-            confidence=result.get("confidence", 0.5),
+            confidence=result.get("confidence", 0.3),
             evidence=result.get("evidence", []),
+            reasoning=result.get("reasoning", ""),
             source_events=source_events,
         )
 
@@ -498,7 +503,7 @@ Respond with valid JSON only — no other text:
         return False
 
     def _mock_infer_result(self, event_group: List[Event]) -> dict:
-        """Mock LLM result for testing without a real LLM client."""
+        """Rule-based fallback result when no LLM client is configured."""
         event_text = " ".join([e.event.lower() for e in event_group])
         action, target, context = self._derive_activity_components(event_group)
         name = self._compose_activity_name(action, target, context)
@@ -509,17 +514,76 @@ Respond with valid JSON only — no other text:
         )
         find_target = target if requires_find else None
 
-        if any(w in event_text for w in ["type", "fill", "input", "paste", "changefield"]):
-            confidence = 0.8
-        elif any(w in event_text for w in ["click", "select", "press"]):
-            confidence = 0.7
+        evidence = []
+        input_kws = ["type", "fill", "input", "paste", "changefield"]
+        click_kws = ["click", "select", "press"]
+        read_kws = ["getcell", "read", "extract"]
+        nav_kws = ["navigate", "tab", "startpage", "link"]
+        open_kws = ["open", "newworkbook", "openworkbook", "openwindow", "launch"]
+
+        matched_input = next((w for w in input_kws if w in event_text), None)
+        matched_click = next((w for w in click_kws if w in event_text), None)
+        matched_read = next((w for w in read_kws if w in event_text), None)
+        matched_nav = next((w for w in nav_kws if w in event_text), None)
+        matched_open = next((w for w in open_kws if w in event_text), None)
+
+        if matched_input:
+            evidence.append(f"Event keyword '{matched_input}' indicates a text-input interaction")
+            confidence = 0.65
+        elif matched_click:
+            evidence.append(f"Event keyword '{matched_click}' indicates a pointer/activation interaction")
+            confidence = 0.55
+        elif matched_read:
+            evidence.append(f"Event keyword '{matched_read}' indicates a data-read operation")
+            confidence = 0.55
+        elif matched_nav:
+            evidence.append(f"Event keyword '{matched_nav}' indicates a navigation action")
+            confidence = 0.50
+        elif matched_open:
+            evidence.append(f"Event keyword '{matched_open}' indicates an application or resource open action")
+            confidence = 0.50
         else:
-            confidence = 0.5
+            evidence.append("No strong action keyword matched; activity inferred from event sequence heuristics")
+            confidence = 0.4
+
+        is_web = self._is_web_group(event_group)
+        if is_web:
+            url = next(
+                (e.attributes.get("browser_url") or e.attributes.get("url")
+                 for e in event_group
+                 if e.attributes.get("browser_url") or e.attributes.get("url")),
+                None,
+            )
+            if url:
+                evidence.append(f"Attribute 'browser_url' = '{url}' identifies web execution context")
+            else:
+                evidence.append("Browser-related attributes present, identifying web execution context")
+        else:
+            app_val = next(
+                (e.attributes.get("application") or e.attributes.get("app")
+                 for e in event_group
+                 if e.attributes.get("application") or e.attributes.get("app")),
+                None,
+            )
+            if app_val:
+                evidence.append(f"Attribute 'application' = '{app_val}' identifies desktop execution context")
+
+        attrs = self._collect_attributes(event_group)
+        el_id = attrs.get("element_id") or attrs.get("id")
+        tag = attrs.get("tag_name") or attrs.get("tag_type")
+        if el_id and not self._is_opaque_identifier(str(el_id)):
+            evidence.append(f"Element identifier '{el_id}' pinpoints the target UI element")
+        elif tag:
+            evidence.append(f"Element tag '{tag}' describes the type of UI element targeted")
+
+        reasoning = f"Rule-based inference: '{action}' action on '{target}' derived from event keywords and available attributes."
 
         result = {
             "activity_name": name,
             "requires_find": requires_find,
             "confidence": confidence,
+            "evidence": evidence,
+            "reasoning": reasoning,
         }
         if find_target:
             result["find_target"] = find_target
@@ -529,10 +593,10 @@ Respond with valid JSON only — no other text:
         """Mock inference returning an Activity (used by legacy infer_activity callers)."""
         result = self._mock_infer_result(event_group)
         source_events = [e.row_index for e in event_group if e.row_index is not None]
-        evidence = list(set(attr for e in event_group for attr in e.attributes.keys()))
         return Activity(
             name=result["activity_name"],
             confidence=result["confidence"],
-            evidence=evidence,
+            evidence=result.get("evidence", []),
+            reasoning=result.get("reasoning", ""),
             source_events=source_events,
         )

@@ -733,6 +733,8 @@ def analyze():
                 context_switch=context_switch,
                 context_switch_from=context_switch_from,
                 context_switch_to=context_switch_to,
+                inference_evidence=list(activity.evidence or []),
+                inference_reasoning=getattr(activity, "reasoning", "") or "",
             )
             recommendations.append(recommendation)
 
