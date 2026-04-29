@@ -20,6 +20,24 @@ class CSVLoader:
         self._force_column = None
         self.detected_column = None
 
+    @staticmethod
+    def _dedup_headers(raw_headers: List[str]) -> List[str]:
+        """Rename duplicate column names by appending .1, .2, etc.
+
+        csv.DictReader silently overwrites earlier columns when names collide.
+        This preserves every column's data by giving each occurrence a unique key.
+        """
+        seen: Dict[str, int] = {}
+        result: List[str] = []
+        for h in raw_headers:
+            if h in seen:
+                seen[h] += 1
+                result.append(f"{h}.{seen[h]}")
+            else:
+                seen[h] = 0
+                result.append(h)
+        return result
+
     def load(self, filepath: str) -> List[Event]:
         """
         Load CSV file and return list of Event objects.
@@ -37,38 +55,36 @@ class CSVLoader:
             ValueError: If event column cannot be detected
             FileNotFoundError: If file doesn't exist
         """
+        with open(filepath, "r", encoding="utf-8-sig", newline="") as f:
+            reader = csv.reader(f)
+            raw_headers = next(reader, [])
+            fieldnames = self._dedup_headers(raw_headers)
+            rows = [
+                {h: (values[j] if j < len(values) else "") for j, h in enumerate(fieldnames)}
+                for values in reader
+            ]
+
+        if self._force_column:
+            event_column = self._force_column
+        else:
+            event_column = self._detect_event_column_with_llm(
+                fieldnames, sample_rows=rows[:50]
+            )
+
+        self.detected_column = event_column
+
+        if event_column is None:
+            raise ValueError(
+                f"Missing required column: event (could not detect event column. Found columns: {fieldnames})"
+            )
+
         events = []
-
-        with open(filepath, "r", encoding="utf-8") as f:
-            reader = csv.DictReader(f)
-            fieldnames = reader.fieldnames
-            rows = list(reader)
-
-            if self._force_column:
-                event_column = self._force_column
-            else:
-                event_column = self._detect_event_column_with_llm(
-                    fieldnames, sample_rows=rows[:50]
-                )
-
-            self.detected_column = event_column
-
-            if event_column is None:
-                raise ValueError(
-                    f"Missing required column: event (could not detect event column. Found columns: {fieldnames})"
-                )
-
-            for row_index, row in enumerate(rows):
-                event_name = row.get(event_column, "").strip()
-
-                attributes = {}
-                for key, value in row.items():
-                    if key != event_column and value:
-                        attributes[key] = value
-
-                events.append(
-                    Event(event=event_name, attributes=attributes, row_index=row_index)
-                )
+        for row_index, row in enumerate(rows):
+            event_name = row.get(event_column, "").strip()
+            attributes = {k: v for k, v in row.items() if k != event_column and v}
+            events.append(
+                Event(event=event_name, attributes=attributes, row_index=row_index)
+            )
 
         return events
 

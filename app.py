@@ -60,6 +60,42 @@ def _is_masked_api_key(value: str) -> bool:
     return bool(value) and ("..." in value or set(value) == {"*"})
 
 
+def _dedup_headers(raw_headers: list) -> list:
+    """Rename duplicate CSV column names by appending .1, .2, etc.
+
+    csv.DictReader silently overwrites earlier columns when names collide.
+    This preserves every column's data by giving each occurrence a unique key.
+    """
+    seen: dict = {}
+    result: list = []
+    for h in raw_headers:
+        if h in seen:
+            seen[h] += 1
+            result.append(f"{h}.{seen[h]}")
+        else:
+            seen[h] = 0
+            result.append(h)
+    return result
+
+
+def _read_csv_dedup(filepath: str, max_rows: int | None = None) -> tuple:
+    """Open a CSV and return (unique_fieldnames, rows_as_dicts).
+
+    Uses utf-8-sig to strip an optional BOM and _dedup_headers so that
+    files with duplicate column names are read correctly.
+    """
+    with open(filepath, "r", encoding="utf-8-sig", newline="") as f:
+        reader = csv.reader(f)
+        raw_headers = next(reader, [])
+        headers = _dedup_headers(raw_headers)
+        rows = []
+        for i, values in enumerate(reader):
+            if max_rows is not None and i >= max_rows:
+                break
+            rows.append({h: (values[j] if j < len(values) else "") for j, h in enumerate(headers)})
+    return headers, rows
+
+
 def _redact_row(row: dict) -> dict:
     redacted = {}
     for key, value in (row or {}).items():
@@ -405,12 +441,8 @@ def _load_full_log(entry: dict) -> list:
         filepath = os.path.join(app.config["UPLOAD_FOLDER"], filename)
         if os.path.exists(filepath):
             try:
-                rows = []
-                with open(filepath, "r", encoding="utf-8") as f:
-                    reader = csv.DictReader(f)
-                    for i, row in enumerate(reader):
-                        rows.append({"row_index": i, "values": _redact_row(row)})
-                return rows
+                _, rows = _read_csv_dedup(filepath)
+                return [{"row_index": i, "values": _redact_row(row)} for i, row in enumerate(rows)]
             except OSError:
                 pass
     return entry.get("log_preview", [])
@@ -461,13 +493,7 @@ def select_column():
         file.save(filepath)
 
         try:
-            with open(filepath, "r", encoding="utf-8") as f:
-                reader = csv.DictReader(f)
-                columns = reader.fieldnames
-                rows = []
-                for i, row in enumerate(reader):
-                    if i < MAX_PREVIEW_ROWS:
-                        rows.append(row)
+            columns, rows = _read_csv_dedup(filepath, max_rows=MAX_PREVIEW_ROWS)
 
             from src.llm.client import get_llm_client
             from src.parser.csv_loader import CSVLoader
@@ -513,22 +539,13 @@ def detect_column():
     file.save(filepath)
 
     try:
-        with open(filepath, "r", encoding="utf-8") as f:
-            reader = csv.DictReader(f)
-            columns = reader.fieldnames
+        columns, preview_rows = _read_csv_dedup(filepath, max_rows=100)
 
         from src.llm.client import get_llm_client
         from src.parser.csv_loader import CSVLoader
 
         llm_client = get_llm_client()
         loader = CSVLoader(llm_client)
-        preview_rows = []
-        with open(filepath, "r", encoding="utf-8") as preview_f:
-            preview_reader = csv.DictReader(preview_f)
-            for i, row in enumerate(preview_reader):
-                if i < 100:
-                    preview_rows.append(row)
-
         detected = loader._detect_event_column_with_llm(
             columns, sample_rows=preview_rows
         )
@@ -573,14 +590,8 @@ def analyze():
         if event_column:
             loader._force_column = event_column
 
-        log_columns = []
-        log_preview = []
-        with open(filepath, "r", encoding="utf-8") as preview_file:
-            preview_reader = csv.DictReader(preview_file)
-            log_columns = preview_reader.fieldnames or []
-            for i, row in enumerate(preview_reader):
-                if i < MAX_PREVIEW_ROWS:
-                    log_preview.append({"row_index": i, "values": _redact_row(row)})
+        log_columns, _preview_rows = _read_csv_dedup(filepath, max_rows=MAX_PREVIEW_ROWS)
+        log_preview = [{"row_index": i, "values": _redact_row(row)} for i, row in enumerate(_preview_rows)]
 
         events = loader.load(filepath)
 
