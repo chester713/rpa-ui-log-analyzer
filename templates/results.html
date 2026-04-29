@@ -67,8 +67,6 @@
         .muted { color: #6b7280; font-size: 13px; }
         .empty { color: #6b7280; padding: 16px; border: 1px dashed #ddd; border-radius: 8px; font-size: 13px; }
 
-        .activity-header { font-size: 13px; font-weight: 600; color: #1d4ed8; background: #eff6ff; border-radius: 6px; padding: 6px 10px; margin-bottom: 12px; white-space: normal; word-break: break-word; }
-
         /* Activity type badges — mirrors workspace.html */
         .act-badge { display: inline-block; border-radius: 4px; padding: 2px 7px; font-size: 11px; font-weight: 500; white-space: nowrap; }
         .act-type-main { background: #dcfce7; color: #166534; }
@@ -150,7 +148,6 @@
                 <h2>Pattern &amp; Method</h2>
                 <div class="empty" id="emptyState">Select an activity from the middle panel.</div>
                 <div id="detailsScroll" style="display:none; overflow:auto; flex:1;">
-                    <div class="activity-header" id="dActivityHeader"></div>
                     <div class="kv">
                         <div class="k">Matched Pattern</div>
                         <div class="v" id="dPattern"></div>
@@ -163,10 +160,6 @@
                     <div class="kv">
                         <div class="k">Context Attributes</div>
                         <div id="dContextAttrs"></div>
-                    </div>
-                    <div class="kv">
-                        <div class="k">Prerequisite Steps</div>
-                        <div id="dPrereq" class="muted">None</div>
                     </div>
                 </div>
             </div>
@@ -562,21 +555,18 @@
         function renderNoDetails(activityName) {
             document.getElementById('emptyState').style.display = 'none';
             document.getElementById('detailsScroll').style.display = 'block';
-            document.getElementById('dActivityHeader').textContent = activityName || 'Unknown Activity';
             document.getElementById('dPattern').textContent = '—';
             document.getElementById('dMethodSelect').innerHTML = '';
             document.getElementById('dMethodHint').textContent = 'No method recommendation for this activity type.';
             const ctxWrap = document.getElementById('dContextAttrs');
             ctxWrap.textContent = '—';
             ctxWrap.className = 'muted';
-            document.getElementById('dPrereq').textContent = '—';
         }
 
         function renderDetails(rec) {
             document.getElementById('emptyState').style.display = 'none';
             document.getElementById('detailsScroll').style.display = 'block';
 
-            document.getElementById('dActivityHeader').textContent = rec.inferred_activity || 'Unknown Activity';
             document.getElementById('dPattern').textContent = rec.pattern_matched || 'N/A';
 
             const methodSelect = document.getElementById('dMethodSelect');
@@ -635,39 +625,29 @@
                     : recommended ? `Default: ${recommended}` : `Selected: ${sel}`;
             };
 
-            // Context attributes
+            // Context attributes with values — sourced from context_determination, matching workspace style
             const ctxWrap = document.getElementById('dContextAttrs');
             ctxWrap.innerHTML = '';
-            let ctxAttrs = rec.context_attributes_used || [];
+            const ctxEntry = (progressiveArtifacts?.context_determination?.contexts || [])
+                .find(c => String(c.inferred_activity || '') === String(rec.inferred_activity || ''));
+            let ctxAttrs = ctxEntry?.context_attributes_used || rec.context_attributes_used || [];
             if (!ctxAttrs.length) ctxAttrs = deriveContextAttributes(rec);
+            const ctxVals = ctxEntry?.context_attribute_values || {};
             if (!ctxAttrs.length) {
                 ctxWrap.textContent = 'None';
                 ctxWrap.className = 'muted';
             } else {
                 ctxWrap.className = '';
                 ctxAttrs.forEach(a => {
-                    const span = document.createElement('span');
-                    span.className = 'pill';
-                    span.textContent = a;
-                    ctxWrap.appendChild(span);
+                    const row = document.createElement('div');
+                    row.style.cssText = 'margin-bottom:4px; font-size:12px; line-height:1.5; word-break:break-word;';
+                    const v = ctxVals[a] != null ? String(ctxVals[a]) : '';
+                    const vDisplay = v.length > 50 ? v.substring(0, 50) + '…' : (v || '—');
+                    row.innerHTML = `<span style="color:#6b7280;font-size:11px">${a}:</span> ${vDisplay}`;
+                    ctxWrap.appendChild(row);
                 });
             }
 
-            // Prerequisites
-            const prereqWrap = document.getElementById('dPrereq');
-            const prereqs = getPrerequisitesForRecommendation(rec);
-            if (!prereqs.length) {
-                prereqWrap.textContent = 'None';
-            } else {
-                prereqWrap.innerHTML = '';
-                prereqs.forEach(p => {
-                    const span = document.createElement('span');
-                    span.className = 'pill';
-                    const pattern = p.pattern_matched ? ` (${p.pattern_matched})` : '';
-                    span.textContent = `${p.inferred_activity}${pattern}`;
-                    prereqWrap.appendChild(span);
-                });
-            }
         }
 
         /* ── Export CSV ── */
