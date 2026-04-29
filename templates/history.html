@@ -52,7 +52,11 @@
                         <td>{{ entry.timestamp[:19] }}</td>
                         <td>{{ entry.filename }}</td>
                         <td>{{ entry.activities|length }} activities</td>
-                        <td><a href="/history/{{ entry.id }}">View</a></td>
+                        <td>
+                            <a href="/workspace/{{ entry.id }}">Workspace</a>
+                            &nbsp;·&nbsp;
+                            <a href="/history/{{ entry.id }}">Results</a>
+                        </td>
                     </tr>
                     {% endfor %}
                 </tbody>

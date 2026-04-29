@@ -233,7 +233,17 @@ def _build_progressive_contract(mappings, activities, recommendation_payload, en
     }
 
     progressive_logic = {
-        "event_grouping": "Events are grouped by shared context and sequential evidence before downstream inference.",
+        "event_grouping": (
+            "• Grouping Criterion: Consecutive events are placed in the same group when they share at least one "
+            "context attribute — such as the active application name, webpage URL, or element identifier — indicating "
+            "they belong to the same interaction unit within the log.\n"
+            "• Context Switch Detection: When the application attribute changes between two consecutive events, the "
+            "current group closes and a new group begins. This boundary marks an environment transition in the log "
+            "and is later surfaced as an explicit Switch Context activity during activity inference.\n"
+            "• Group Scope: Each group represents one contiguous interaction unit. Its size (number of events) "
+            "reflects the complexity of that interaction. Groups are the primary input to activity inference: "
+            "one group produces one inferred activity name."
+        ),
         "activity_naming": (
             "• Activity Labeling: Each event group is sent to an LLM which interprets the interaction intent and assigns a natural language activity name "
             "(e.g., 'Write data into a textfield') rather than describing low-level events.\n"
@@ -272,9 +282,43 @@ def _build_progressive_contract(mappings, activities, recommendation_payload, en
             "desktop UI elements (exposed through OS accessibility frameworks such as UI Automation), "
             "or visual elements (identified from screen content via image recognition or OCR)."
         ),
-        "pattern_matching": "Activities are matched to RPA UI Interaction patterns, constraining automation method to the matched pattern.",
-        "context_determination": "Execution environment and context attributes are derived from grouped-event metadata to constrain method selection.",
-        "method_recommendation": "Final methods are selected from matched patterns, sorted by method priority, and emitted with confidence details.",
+        "pattern_matching": (
+            "• Action-Based Candidate Selection: The AOMC action extracted in the previous stage is compared against "
+            "each of the 13 RPA UI Interaction patterns' recognised action vocabularies. Patterns whose action list "
+            "includes the activity's AOMC action are selected as candidates (e.g., AOMC 'Write/Input/Update/Modify' "
+            "→ candidate: Write Element pattern).\n"
+            "• Context Filtering: Candidate patterns are filtered by the execution environment determined for the "
+            "activity. Only patterns whose defined contexts include the current environment (web, desktop, or screen) "
+            "are eligible for selection.\n"
+            "• First-Match Rule: The first eligible pattern in catalogue order is selected as the matched pattern. "
+            "The matched pattern constrains the automation method: only the methods defined within that pattern's "
+            "context-method mapping are valid recommendations for the activity."
+        ),
+        "context_determination": (
+            "• Attribute-Based Environment Inference: Each activity group is examined for context-related CSV "
+            "attributes — such as a browser URL or XPath (indicating a web environment), an application name or "
+            "workbook reference (indicating a desktop environment), or screen coordinates (indicating a screen "
+            "environment). The first matching attribute found determines the execution environment.\n"
+            "• Priority Rule: Web indicators take precedence over desktop indicators, which take precedence over "
+            "screen indicators. This priority reflects the method fidelity hierarchy: DOM-level methods are more "
+            "reliable than UI Automation methods, which in turn are more reliable than visual recognition.\n"
+            "• Deciding Attributes: Only the attributes that actually drove the environment decision are shown — "
+            "not all attributes present in the group. This makes it explicit which evidence was used and allows "
+            "analysts to verify or override the inferred context."
+        ),
+        "method_recommendation": (
+            "• Pattern-Driven Method Lookup: The automation method is drawn from the matched pattern's "
+            "context-method mapping for the activity's execution environment. Each pattern defines one method "
+            "per supported context (e.g., Write Element in web → DOM Manipulation; in desktop → UI Automation "
+            "Manipulation; in screen → Hardware Simulation).\n"
+            "• Priority Ordering: When multiple activities are compared, methods are ranked by fidelity: "
+            "DOM-level methods (content-level) rank highest, followed by UI Automation methods (accessibility-level), "
+            "followed by visual recognition and hardware simulation (input-level). Higher-fidelity methods are "
+            "preferred because they are more robust to UI changes and less error-prone.\n"
+            "• One Recommendation per Activity: A single method is recommended per activity — the highest-priority "
+            "method available for the matched pattern and context. Analysts may override this recommendation on the "
+            "Analysis Results page if a different method better suits the deployment constraints."
+        ),
     }
 
     # Preserve deterministic key order for replay contracts.
