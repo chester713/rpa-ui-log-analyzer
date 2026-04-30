@@ -99,6 +99,14 @@ python src_cli.py sample.csv --verbose
 python src_cli.py sample.csv --group-attr app webpage element_id
 ```
 
+## Known Limitations
+
+- **Attribute-less sandwiched events** — Some loggers do not record target-object attributes (e.g. element ID, URL) for certain events such as `Paste` or keyboard shortcuts. If such an event has *no* grouping attributes at all, the grouper treats it as a context-switch boundary and splits the group incorrectly, rather than absorbing it into the surrounding group. In practice this only affects logs where the intermediate event carries zero attributes; most loggers retain at least the application name or URL, which is sufficient for correct grouping.
+
+- **SME task interpretation is simulated by LLM** — The recommendation approach as described requires a Subject Matter Expert (SME) to map interaction segments to meaningful business tasks. In this prototype that step is approximated by LLM inference. The LLM may misinterpret activities in unfamiliar domains or where log attributes are sparse.
+
+- **No API key = rule-based fallback** — Without a configured LLM, activity inference falls back to keyword matching, which produces lower-quality activity names and pattern assignments.
+
 ## Project Structure
 
 ```
