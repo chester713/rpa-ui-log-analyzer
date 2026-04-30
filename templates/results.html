@@ -40,6 +40,16 @@
         .dfg-node.dfg-node-related { fill: #bfdbfe; }
         .dfg-node.dfg-node-active { fill: #60a5fa; stroke: #1d4ed8; stroke-width: 2.5; }
         .dfg-node-label { fill: #1f2937; font-size: 12px; }
+        .dfg-node-type-prerequisite { fill: #f3e8ff; stroke: #7c3aed; }
+        .dfg-node-type-prerequisite.dfg-node-active { fill: #c4b5fd; stroke: #5b21b6; }
+        .dfg-node-type-context-switch { fill: #fef3c7; stroke: #d97706; }
+        .dfg-node-type-context-switch.dfg-node-active { fill: #fde68a; stroke: #92400e; }
+        .dfg-legend { display: flex; gap: 16px; flex-wrap: wrap; margin-top: 8px; }
+        .dfg-legend-item { display: flex; align-items: center; gap: 5px; font-size: 12px; color: #374151; }
+        .dfg-legend-swatch { width: 13px; height: 13px; border-radius: 50%; border: 1.5px solid; display: inline-block; flex-shrink: 0; }
+        .dfg-legend-main { background: #dbeafe; border-color: #2563eb; }
+        .dfg-legend-prerequisite { background: #f3e8ff; border-color: #7c3aed; }
+        .dfg-legend-switch { background: #fef3c7; border-color: #d97706; }
 
         /* Tables (log + activities) */
         .table-wrap { border: 1px solid #ddd; border-radius: 8px; flex: 1; min-width: 0; overflow: auto; }
@@ -179,7 +189,12 @@
                 <div class="dfg-wrap">
                     <svg id="dfgSvg" role="img" aria-label="Direct-follow graph"></svg>
                 </div>
-                <div class="muted" style="margin-top:8px;">Node labels show inferred activities and edge labels show direct-follow frequencies.</div>
+                <div class="dfg-legend">
+                    <span class="dfg-legend-item"><span class="dfg-legend-swatch dfg-legend-main"></span>Recorded</span>
+                    <span class="dfg-legend-item"><span class="dfg-legend-swatch dfg-legend-prerequisite"></span>Prerequisite (Find)</span>
+                    <span class="dfg-legend-item"><span class="dfg-legend-swatch dfg-legend-switch"></span>Context Switch</span>
+                </div>
+                <div class="muted" style="margin-top:6px;">All inferred activities — including Find prerequisites and Context Switches — are shown. Edge labels show direct-follow frequencies.</div>
             </div>
         </section>
         {% else %}
@@ -279,8 +294,47 @@
             const svg = document.getElementById('dfgSvg');
             if (!svg) return;
             while (svg.firstChild) svg.removeChild(svg.firstChild);
-            const nodes = Array.isArray(dfg?.nodes) ? dfg.nodes : [];
-            const edges = Array.isArray(dfg?.edges) ? dfg.edges : [];
+
+            // Build nodes and edges from all inferred activities (main + prerequisite + context_switch)
+            const allActivities = progressiveArtifacts?.activity_naming?.activities || [];
+            const nodeTypeMap = new Map();
+            const nodeList = [];
+            const seenNodeNames = new Set();
+            for (const act of allActivities) {
+                const name = String(act.activity_name || '');
+                if (!name) continue;
+                nodeTypeMap.set(name, act.activity_type || 'main');
+                if (!seenNodeNames.has(name)) {
+                    seenNodeNames.add(name);
+                    nodeList.push(name);
+                }
+            }
+
+            // Look up pm4py-computed frequencies for edges we already know about
+            const dfgFreqMap = new Map();
+            for (const edge of (dfg?.edges || [])) {
+                dfgFreqMap.set(`${edge.source}||${edge.target}`, edge.frequency || 1);
+            }
+
+            // Derive edges from the ordered activity sequence (consecutive pairs)
+            const orderedNames = allActivities.map(a => String(a.activity_name || ''));
+            const edgeList = [];
+            const seenEdges = new Set();
+            for (let i = 0; i < orderedNames.length - 1; i++) {
+                const src = orderedNames[i];
+                const tgt = orderedNames[i + 1];
+                if (!src || !tgt) continue;
+                const key = `${src}||${tgt}`;
+                if (!seenEdges.has(key)) {
+                    seenEdges.add(key);
+                    edgeList.push({ source: src, target: tgt, frequency: dfgFreqMap.get(key) || 1 });
+                }
+            }
+
+            // Fall back to backend DFG payload if progressiveArtifacts not available
+            const nodes = nodeList.length ? nodeList : (Array.isArray(dfg?.nodes) ? dfg.nodes : []);
+            const edges = nodeList.length ? edgeList : (Array.isArray(dfg?.edges) ? dfg.edges : []);
+
             dfgNodeElements.clear();
             if (!nodes.length) {
                 dfgViewportGroup = null;
@@ -335,7 +389,10 @@
                 const pos = nodePositions.get(String(nodeName));
                 if (!pos) return;
                 const circle = createSvgNode('circle');
-                circle.setAttribute('class', 'dfg-node');
+                const nodeType = nodeTypeMap.get(String(nodeName)) || 'main';
+                const typeClass = nodeType === 'prerequisite' ? 'dfg-node-type-prerequisite'
+                    : nodeType === 'context_switch' ? 'dfg-node-type-context-switch' : '';
+                circle.setAttribute('class', typeClass ? `dfg-node ${typeClass}` : 'dfg-node');
                 circle.setAttribute('cx', String(pos.x));
                 circle.setAttribute('cy', String(pos.y));
                 circle.setAttribute('r', String(nodeRadius));
