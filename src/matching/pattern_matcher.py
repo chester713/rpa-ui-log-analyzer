@@ -32,6 +32,15 @@ class PatternMatcher:
         Returns:
             Matching Pattern or None
         """
+        # Primary path: use LLM-supplied pattern name (semantic mapping already done by LLM)
+        llm_pattern_name = getattr(activity, "pattern_name", None)
+        if llm_pattern_name:
+            for pattern in self.patterns:
+                if pattern.name.lower() == llm_pattern_name.strip().lower():
+                    if not pattern.contexts or context in pattern.contexts:
+                        return pattern
+
+        # Fallback: rule-based keyword normalisation for when LLM omits the pattern field
         action, obj = self._parse_activity_name(activity.name)
         action, obj = self._normalize_activity(action, obj, events)
 

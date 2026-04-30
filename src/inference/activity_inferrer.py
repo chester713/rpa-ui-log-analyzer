@@ -18,9 +18,26 @@ _BATCH_SIZE = 5  # event groups per LLM call
 class ActivityInferrer:
     """Uses LLM to infer activities from event groups."""
 
-    def __init__(self, llm_client=None, progress_callback=None):
+    def __init__(self, llm_client=None, progress_callback=None, patterns=None):
         self.llm_client = llm_client
         self.progress_callback = progress_callback
+        self.patterns = patterns or []
+
+    def _build_pattern_reference(self) -> str:
+        """Build a compact pattern reference block from loaded Pattern objects."""
+        if not self.patterns:
+            return (
+                "RPA Patterns (choose exactly one name for the \"pattern\" field):\n"
+                "Find Element, Read Element, Observe, Write Element, Delete Element, "
+                "Disable Element, Open, Activate, Hover, Switch Context, Scroll, Focus, Refresh"
+            )
+        lines = ['RPA Pattern Reference (use exactly one pattern name for the "pattern" field):']
+        for p in self.patterns:
+            first_sentence = p.description.split(".")[0].strip() if p.description else ""
+            lines.append(
+                f"- {p.name} [Action={p.action}, Object={p.object}]: {first_sentence}"
+            )
+        return "\n".join(lines)
 
     def infer_activities(self, event_groups) -> List[Activity]:
         """
@@ -119,6 +136,7 @@ class ActivityInferrer:
                 activity_type="main",
                 is_implicit=False,
                 group_index=group_idx,
+                pattern_name=llm_result.get("pattern"),
             ))
 
         return activities
@@ -189,7 +207,10 @@ class ActivityInferrer:
             )
 
         groups_block = "\n\n".join(sections)
+        pattern_reference = self._build_pattern_reference()
         return f"""You are an RPA (Robotic Process Automation) designer analyzing UI event logs.
+
+{pattern_reference}
 
 Analyze the following {n} event group(s). Return a JSON ARRAY with exactly {n} objects — one per group, in the same order.
 
@@ -197,7 +218,8 @@ Analyze the following {n} event group(s). Return a JSON ARRAY with exactly {n} o
 
 For each group return this JSON structure:
 {{
-  "activity_name": "Verb + object format (e.g. 'Click login button', 'Write data into search field')",
+  "activity_name": "Verb + object format aligned with the matched pattern (e.g. 'Write credentials into username field', 'Activate submit button', 'Open login page')",
+  "pattern": "Exactly one pattern name from the reference above — choose based on semantic meaning of the interaction, not the exact words in the log",
   "requires_find": true,
   "find_target": "element description when requires_find is true, omit otherwise",
   "evidence": ["2-4 concise observations from events/attributes"],
@@ -206,7 +228,7 @@ For each group return this JSON structure:
 }}
 
 Respond with a valid JSON array only — no other text:
-[{{"activity_name": "...", ...}}, ...]"""
+[{{"activity_name": "...", "pattern": "...", ...}}, ...]"""
 
     def _parse_batch_response(self, raw: str, n: int) -> List[dict]:
         """Parse a JSON array response from a batch prompt. Returns exactly n dicts."""
@@ -252,6 +274,7 @@ Respond with a valid JSON array only — no other text:
             evidence=result.get("evidence", []),
             reasoning=result.get("reasoning", ""),
             source_events=source_events,
+            pattern_name=result.get("pattern"),
         )
 
     def _build_prompt(self, group) -> str:
@@ -290,7 +313,10 @@ Respond with a valid JSON array only — no other text:
         events_text = "\n".join(event_lines) or "- (none)"
         attrs_text = "\n".join(attr_lines) or "- (none available)"
 
+        pattern_reference = self._build_pattern_reference()
         return f"""You are an RPA (Robotic Process Automation) designer analyzing UI event logs.
+
+{pattern_reference}
 
 Analyze the following UI events and return structured JSON for RPA design.
 
@@ -301,16 +327,18 @@ Context attributes:
 {attrs_text}
 
 Instructions:
-1. "activity_name": Natural language name capturing the INTERACTION INTENT, not the low-level events. Use verb + object format (e.g., "Write data into search field", "Click submit button", "Select option from dropdown", "Read cell value from spreadsheet").
-2. "requires_find": In RPA the bot must LOCATE a UI element before interacting with it. Set true when this activity targets a specific element (input fields, buttons, dropdowns, checkboxes, links, table cells). Set false for page-level actions (opening a URL, scrolling, switching windows, launching an application).
-3. "find_target": If requires_find is true, concisely describe the element to locate (e.g., "username textfield", "login button", "country dropdown"). Omit if requires_find is false.
-4. "evidence": List of 2–4 concise observations drawn directly from the events and attributes above that justify your interpretation. Each item must name a specific event keyword or attribute value and explain what it signals. Example: ["Event 'type' on input element indicates keyboard text entry", "browser_url 'checkout.store.com' places action in e-commerce checkout context", "Element tag 'button' with id 'submit' identifies the target element"].
-5. "confidence": Your confidence from 0.0 to 1.0, reflecting how strongly the evidence supports your interpretation. Use lower values when events are ambiguous or key attributes are missing.
-6. "reasoning": One sentence summarising your overall interpretation.
+1. "activity_name": Name the interaction INTENT using verb + object format, aligned with the matched pattern vocabulary (e.g., "Write credentials into username field", "Activate submit button", "Open login page", "Read cell value from spreadsheet"). The verb should reflect the pattern's Action field.
+2. "pattern": The single best-matching pattern name from the reference above. Choose based on the semantic meaning of the interaction — not the exact words in the log. A log may say "enterText", "inputValue", "keystroke" — all map to Write Element because they share the same intent.
+3. "requires_find": In RPA the bot must LOCATE a UI element before interacting with it. Set true when this activity targets a specific element (input fields, buttons, dropdowns, checkboxes, links, table cells). Set false for page-level actions (opening a URL, scrolling, switching windows, launching an application).
+4. "find_target": If requires_find is true, concisely describe the element to locate (e.g., "username textfield", "login button", "country dropdown"). Omit if requires_find is false.
+5. "evidence": List of 2–4 concise observations drawn directly from the events and attributes above that justify your interpretation. Each item must name a specific event keyword or attribute value and explain what it signals.
+6. "confidence": Your confidence from 0.0 to 1.0, reflecting how strongly the evidence supports your interpretation. Use lower values when events are ambiguous or key attributes are missing.
+7. "reasoning": One sentence summarising your overall interpretation.
 
 Respond with valid JSON only — no other text:
 {{
   "activity_name": "...",
+  "pattern": "Write Element",
   "requires_find": true,
   "find_target": "...",
   "evidence": ["...", "..."],
@@ -369,6 +397,7 @@ Respond with valid JSON only — no other text:
             evidence=result.get("evidence", []),
             reasoning=result.get("reasoning", ""),
             source_events=source_events,
+            pattern_name=result.get("pattern"),
         )
 
     def _is_generic_activity_name(self, name: str) -> bool:

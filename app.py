@@ -649,8 +649,10 @@ def analyze():
                     "total": total,
                 })
 
+        from src.matching import PATTERNS
+
         grouper = EventGrouper()
-        inferrer = ActivityInferrer(llm_client, progress_callback=_on_inference_progress)
+        inferrer = ActivityInferrer(llm_client, progress_callback=_on_inference_progress, patterns=PATTERNS)
         mapper = EventActivityMapper(grouper, inferrer)
         mappings = mapper.map(events)
         _post_process = getattr(inferrer, "_post_process_inferred_name", None)
