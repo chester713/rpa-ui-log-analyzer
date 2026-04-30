@@ -7,22 +7,78 @@
     <style>
         * { box-sizing: border-box; margin: 0; padding: 0; }
         body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif; background: #f5f7fb; min-height: 100vh; }
-        .container { max-width: 920px; margin: 0 auto; padding: 24px 20px; }
+        .container { max-width: 960px; margin: 0 auto; padding: 24px 20px; }
         .nav { display: flex; gap: 20px; margin-bottom: 20px; }
         .nav a { color: #007bff; text-decoration: none; }
         .nav a:hover { text-decoration: underline; }
         .nav-inactive { color: #9ca3af; cursor: default; font-size: inherit; }
-        .hero { background: white; border-radius: 14px; padding: 34px; box-shadow: 0 2px 10px rgba(0,0,0,0.08); }
-        h1 { color: #1f2937; margin-bottom: 10px; }
-        .subtitle { color: #4b5563; margin-bottom: 24px; line-height: 1.5; }
-        .points { margin-bottom: 24px; padding-left: 18px; color: #374151; }
-        .points li { margin-bottom: 10px; }
+
+        /* Cards */
+        .card { background: white; border-radius: 14px; padding: 28px 32px; box-shadow: 0 2px 10px rgba(0,0,0,0.08); margin-bottom: 20px; }
+        h1 { color: #1f2937; margin-bottom: 10px; font-size: 1.6rem; }
+        h2 { color: #1f2937; font-size: 1.15rem; margin-bottom: 16px; }
+        h3 { color: #374151; font-size: 0.95rem; font-weight: 600; margin-bottom: 6px; }
+        p { color: #4b5563; line-height: 1.6; }
+        .subtitle { color: #4b5563; margin-bottom: 24px; line-height: 1.6; }
+
+        /* Badges */
+        .badge { display: inline-block; font-size: 0.72rem; font-weight: 700; letter-spacing: 0.04em; padding: 2px 8px; border-radius: 20px; vertical-align: middle; }
+        .badge-llm { background: #ede9fe; color: #6d28d9; }
+        .badge-rule { background: #d1fae5; color: #065f46; }
+        .badge-hybrid { background: #fef3c7; color: #92400e; }
+
+        /* Pipeline steps */
+        .steps { display: flex; flex-direction: column; gap: 0; }
+        .step { display: grid; grid-template-columns: 44px 1fr; gap: 0 16px; position: relative; }
+        .step:not(:last-child) .step-connector { position: absolute; left: 21px; top: 44px; bottom: 0; width: 2px; background: #e5e7eb; }
+        .step-num { width: 44px; height: 44px; border-radius: 50%; background: #2563eb; color: white; display: flex; align-items: center; justify-content: center; font-weight: 700; font-size: 0.95rem; flex-shrink: 0; position: relative; z-index: 1; }
+        .step-body { padding-bottom: 22px; }
+        .step-header { display: flex; align-items: center; gap: 8px; height: 44px; }
+        .step-title { font-weight: 600; color: #111827; font-size: 0.98rem; }
+        .step-desc { color: #6b7280; font-size: 0.88rem; line-height: 1.55; margin-top: 4px; }
+
+        /* Implicit activities box */
+        .implicit-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 14px; margin-top: 4px; }
+        .implicit-item { background: #f9fafb; border: 1px solid #e5e7eb; border-radius: 10px; padding: 14px 16px; }
+        .implicit-item h3 { margin-bottom: 4px; }
+        .implicit-item p { font-size: 0.86rem; color: #6b7280; }
+        .implicit-conf { font-size: 0.8rem; color: #9ca3af; margin-top: 6px; }
+
+        /* Pattern grid */
+        .pattern-category { margin-bottom: 18px; }
+        .category-label { font-size: 0.78rem; font-weight: 700; letter-spacing: 0.07em; text-transform: uppercase; margin-bottom: 8px; }
+        .cat-extraction { color: #1d4ed8; }
+        .cat-modification { color: #b45309; }
+        .cat-control { color: #065f46; }
+        .pattern-list { display: flex; flex-wrap: wrap; gap: 8px; }
+        .pattern-chip { border-radius: 8px; padding: 6px 12px; font-size: 0.84rem; font-weight: 500; }
+        .chip-extraction { background: #eff6ff; color: #1e40af; border: 1px solid #bfdbfe; }
+        .chip-modification { background: #fffbeb; color: #92400e; border: 1px solid #fde68a; }
+        .chip-control { background: #ecfdf5; color: #065f46; border: 1px solid #a7f3d0; }
+
+        /* Method table */
+        .method-table { width: 100%; border-collapse: collapse; font-size: 0.87rem; margin-top: 6px; }
+        .method-table th { text-align: left; padding: 8px 12px; background: #f3f4f6; color: #374151; font-weight: 600; border-bottom: 2px solid #e5e7eb; }
+        .method-table td { padding: 9px 12px; border-bottom: 1px solid #f3f4f6; color: #4b5563; vertical-align: top; }
+        .method-table tr:last-child td { border-bottom: none; }
+        .env-badge { display: inline-block; font-size: 0.75rem; font-weight: 600; padding: 2px 8px; border-radius: 12px; }
+        .env-web { background: #dbeafe; color: #1e40af; }
+        .env-desktop { background: #f3e8ff; color: #6d28d9; }
+        .env-screen { background: #fce7f3; color: #9d174d; }
+
+        /* Actions */
         .actions { display: flex; gap: 12px; flex-wrap: wrap; }
-        .btn { display: inline-block; border-radius: 8px; padding: 12px 18px; text-decoration: none; font-weight: 600; }
+        .btn { display: inline-block; border-radius: 8px; padding: 12px 20px; text-decoration: none; font-weight: 600; font-size: 0.95rem; }
         .btn-primary { background: #2563eb; color: white; }
         .btn-primary:hover { background: #1d4ed8; }
         .btn-secondary { background: #e5e7eb; color: #111827; }
         .btn-secondary:hover { background: #d1d5db; }
+
+        .section-intro { color: #6b7280; font-size: 0.9rem; margin-bottom: 18px; line-height: 1.55; }
+
+        @media (max-width: 600px) {
+            .implicit-grid { grid-template-columns: 1fr; }
+        }
     </style>
 </head>
 <body>
@@ -35,14 +91,199 @@
             <span class="nav-inactive">Analysis Results</span>
         </nav>
 
-        <section class="hero">
+        <!-- Hero -->
+        <section class="card">
             <h1>Welcome to RPA UI Log Analyzer</h1>
-            <p class="subtitle">This prototype brings RPA UI interaction patterns into practical use through a recommendation approach that helps designers identify automation requirements from UI logs and choose appropriate automation methods, instead of only replaying mouse clicks and keystrokes.</p>
+            <p class="subtitle">This prototype applies RPA UI interaction patterns to help automation designers move beyond simple click/keystroke replay. Upload a UI event log (CSV) and the tool will infer human-intent activities, match them to recognised RPA patterns, and recommend the appropriate automation method for each — broken down by execution environment.</p>
             <div class="actions">
                 <a class="btn btn-primary" href="/upload">Continue to Upload</a>
                 <a class="btn btn-secondary" href="/history">View Analysis History</a>
             </div>
         </section>
+
+        <!-- Pipeline -->
+        <section class="card">
+            <h2>Recommendation Pipeline</h2>
+            <p class="section-intro">The analysis runs through six sequential steps. Steps marked <span class="badge badge-llm">LLM</span> send data to a language model; steps marked <span class="badge badge-rule">Rule-based</span> use deterministic logic; <span class="badge badge-hybrid">Hybrid</span> steps use LLM with a rule-based fallback.</p>
+            <div class="steps">
+
+                <div class="step">
+                    <div class="step-connector"></div>
+                    <div class="step-num">1</div>
+                    <div class="step-body">
+                        <div class="step-header">
+                            <span class="step-title">Event Grouping</span>
+                            <span class="badge badge-rule">Rule-based</span>
+                        </div>
+                        <p class="step-desc">Raw CSV rows are merged into <em>activity groups</em>. Two consecutive events are placed in the same group when they share at least one key attribute (<code>app</code>, <code>application</code>, <code>webpage</code>, <code>url</code>, or <code>element_id</code>). A change in the <code>app</code> / <code>application</code> attribute triggers a <strong>context-switch boundary</strong> — the current group ends and a new one begins, flagged as a context switch.</p>
+                    </div>
+                </div>
+
+                <div class="step">
+                    <div class="step-connector"></div>
+                    <div class="step-num">2</div>
+                    <div class="step-body">
+                        <div class="step-header">
+                            <span class="step-title">Activity Inference</span>
+                            <span class="badge badge-llm">LLM</span>
+                        </div>
+                        <p class="step-desc">Each activity group is sent to an LLM (batched in groups of 5 for efficiency, parallelised across up to 5 threads). The LLM reads the event names and key attributes (<code>tag_name</code>, <code>element_id</code>, <code>browser_url</code>, <code>workbook</code>, etc.) and returns a structured JSON with: an <strong>activity name</strong> in verb + object format (e.g. "Write credentials into username field"), the <strong>best-matching RPA pattern name</strong>, whether a prerequisite Find step is needed (<code>requires_find</code>), the <strong>target element</strong> to find, a <strong>context-switch detection</strong> flag with from/to context labels, supporting <strong>evidence</strong> observations, and a <strong>confidence score</strong>.</p>
+                    </div>
+                </div>
+
+                <div class="step">
+                    <div class="step-connector"></div>
+                    <div class="step-num">3</div>
+                    <div class="step-body">
+                        <div class="step-header">
+                            <span class="step-title">Action / Object Extraction</span>
+                            <span class="badge badge-hybrid">Hybrid</span>
+                        </div>
+                        <p class="step-desc">The LLM's activity name is parsed into an <strong>Action</strong> (first word) and an <strong>Object</strong> (remainder). A rule-based normaliser then maps both to the AOMC pattern vocabulary — for example, "click / press / tap" all normalise to <em>Activate</em>; "type / input / paste" normalise to <em>Write</em>; clicking a text-field target is reclassified as <em>Focus</em>. If the LLM provided a <code>pattern</code> field, that name is matched directly against the pattern library (bypassing normalisation). Object normalisation reduces most targets to <em>Element</em>, but detects <em>Option</em> (dropdowns) and <em>Context</em> (window/application switches) as special cases.</p>
+                    </div>
+                </div>
+
+                <div class="step">
+                    <div class="step-connector"></div>
+                    <div class="step-num">4</div>
+                    <div class="step-body">
+                        <div class="step-header">
+                            <span class="step-title">Pattern Matching</span>
+                            <span class="badge badge-hybrid">Hybrid</span>
+                        </div>
+                        <p class="step-desc">The normalised action + object pair is looked up in the 13-pattern library. <strong>Primary path</strong>: if the LLM supplied a <code>pattern</code> name, the library is searched for an exact name match (case-insensitive) in the correct execution context. <strong>Fallback</strong>: if no LLM pattern name is present, the rule-normalised action/object pair is matched against each pattern's <code>Action</code> and <code>Object</code> fields. The first match wins. If no pattern matches, the recommendation is left without a pattern assignment.</p>
+                    </div>
+                </div>
+
+                <div class="step">
+                    <div class="step-connector"></div>
+                    <div class="step-num">5</div>
+                    <div class="step-body">
+                        <div class="step-header">
+                            <span class="step-title">Context Identification</span>
+                            <span class="badge badge-rule">Rule-based</span>
+                        </div>
+                        <p class="step-desc">Each group's execution environment is identified by scanning event attributes in priority order:</p>
+                        <p class="step-desc" style="margin-top:6px;">
+                            1. <strong>Web</strong> — if any event carries HTML-specific attributes: <code>xpath</code>, <code>tag_name</code>, <code>html_id</code>, <code>browser_url</code>, <code>webpage</code>, <code>url</code>.<br>
+                            2. <strong>Desktop</strong> — if HTML attributes are absent but app/UI-hierarchy attributes exist: <code>application</code>, <code>app</code>, <code>window_title</code>, <code>workbook</code>, <code>worksheet</code>, <code>control_type</code>.<br>
+                            3. <strong>Screen (visual)</strong> — if neither HTML nor app attributes are found but coordinate attributes exist: <code>x</code>, <code>y</code>, <code>mouse_x</code>, <code>mouse_y</code>.<br>
+                            4. <strong>Unknown</strong> — if no distinguishing attributes are found.
+                        </p>
+                    </div>
+                </div>
+
+                <div class="step">
+                    <div class="step-num">6</div>
+                    <div class="step-body">
+                        <div class="step-header">
+                            <span class="step-title">Method Recommendation</span>
+                            <span class="badge badge-rule">Rule-based</span>
+                        </div>
+                        <p class="step-desc">The matched pattern carries a <code>Method</code> field listing one implementation approach per execution environment, separated by " / " (e.g. "HTML DOM manipulation (Web) / UI Automation manipulation (Desktop) / Hardware simulation (Visual)"). The tool selects the slice whose context label matches the identified environment and strips the label, returning just the technique name. This is the final <strong>method recommendation</strong>.</p>
+                    </div>
+                </div>
+
+            </div>
+        </section>
+
+        <!-- Implicit activities -->
+        <section class="card">
+            <h2>Implicit Activities</h2>
+            <p class="section-intro">Two types of activity are automatically inserted into the sequence — they are not directly observed in the log but are necessary for a realistic RPA bot design.</p>
+            <div class="implicit-grid">
+                <div class="implicit-item">
+                    <h3>Prerequisite Find Element <span class="badge badge-hybrid">Hybrid</span></h3>
+                    <p>When an activity targets a specific UI element (button, input, dropdown, etc.) the bot must <em>locate</em> that element before it can interact with it. A "Find [element]" step is automatically inserted immediately before any such activity. The LLM decides whether a Find is needed (<code>requires_find</code>) and names the element (<code>find_target</code>). A keyword-based rule provides the fallback.</p>
+                    <p class="implicit-conf">Fixed confidence: 0.85</p>
+                </div>
+                <div class="implicit-item">
+                    <h3>Context Switch <span class="badge badge-hybrid">Hybrid</span></h3>
+                    <p>When the active application changes between consecutive groups, a "Switch context from A to B" step is inserted at the boundary. The LLM detects the switch and names the from/to environments. A rule-based fallback checks the <code>app</code> / <code>application</code> attribute directly. Page navigation within the same site is <em>not</em> treated as a context switch.</p>
+                    <p class="implicit-conf">Fixed confidence: 0.90</p>
+                </div>
+            </div>
+        </section>
+
+        <!-- Patterns -->
+        <section class="card">
+            <h2>RPA Pattern Library (13 patterns)</h2>
+            <p class="section-intro">All activities are matched against the 13 UI interaction patterns below. Each pattern has a fixed <strong>Action</strong> and <strong>Object</strong>, one or more supported execution environments, and a category.</p>
+
+            <div class="pattern-category">
+                <div class="category-label cat-extraction">Extraction — read or locate data without modifying the UI</div>
+                <div class="pattern-list">
+                    <span class="pattern-chip chip-extraction">Find Element</span>
+                    <span class="pattern-chip chip-extraction">Read Element</span>
+                    <span class="pattern-chip chip-extraction">Observe</span>
+                </div>
+            </div>
+
+            <div class="pattern-category">
+                <div class="category-label cat-modification">Modification — change or remove UI content</div>
+                <div class="pattern-list">
+                    <span class="pattern-chip chip-modification">Write Element</span>
+                    <span class="pattern-chip chip-modification">Delete Element</span>
+                    <span class="pattern-chip chip-modification">Disable Element</span>
+                </div>
+            </div>
+
+            <div class="pattern-category">
+                <div class="category-label cat-control">Control — navigate, trigger, or manage UI state</div>
+                <div class="pattern-list">
+                    <span class="pattern-chip chip-control">Open</span>
+                    <span class="pattern-chip chip-control">Activate</span>
+                    <span class="pattern-chip chip-control">Hover</span>
+                    <span class="pattern-chip chip-control">Switch Context</span>
+                    <span class="pattern-chip chip-control">Scroll</span>
+                    <span class="pattern-chip chip-control">Focus</span>
+                    <span class="pattern-chip chip-control">Refresh</span>
+                </div>
+            </div>
+        </section>
+
+        <!-- Method computation -->
+        <section class="card">
+            <h2>Method Computation by Execution Environment</h2>
+            <p class="section-intro">The recommended automation method depends on both the matched pattern and the identified execution environment. The table below summarises the method assigned for each environment across pattern categories.</p>
+            <table class="method-table">
+                <thead>
+                    <tr>
+                        <th>Environment</th>
+                        <th>Detection signal</th>
+                        <th>Extraction method</th>
+                        <th>Modification / Control method</th>
+                    </tr>
+                </thead>
+                <tbody>
+                    <tr>
+                        <td><span class="env-badge env-web">Web</span></td>
+                        <td>XPath, tag_name, browser_url, html_id, webpage</td>
+                        <td>HTML DOM parsing</td>
+                        <td>HTML DOM manipulation</td>
+                    </tr>
+                    <tr>
+                        <td><span class="env-badge env-desktop">Desktop</span></td>
+                        <td>application, app, workbook, worksheet, window_title, control_type</td>
+                        <td>UI Automation (UIA) tree parsing</td>
+                        <td>UI Automation (UIA) manipulation</td>
+                    </tr>
+                    <tr>
+                        <td><span class="env-badge env-screen">Screen</span></td>
+                        <td>x, y, mouse_x, mouse_y, coordinates</td>
+                        <td>Visual recognition</td>
+                        <td>Hardware simulation</td>
+                    </tr>
+                </tbody>
+            </table>
+            <p style="font-size:0.82rem; color:#9ca3af; margin-top:10px;">Note: Delete Element does not support the Screen environment. Switch Context is Desktop-only. Hover on Web also supports hardware simulation as an alternative.</p>
+        </section>
+
+        <!-- Bottom CTA -->
+        <div class="actions" style="margin-bottom: 32px;">
+            <a class="btn btn-primary" href="/upload">Continue to Upload</a>
+            <a class="btn btn-secondary" href="/history">View Analysis History</a>
+        </div>
     </div>
 </body>
 </html>
