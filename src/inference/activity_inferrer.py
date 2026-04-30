@@ -23,6 +23,21 @@ class ActivityInferrer:
         self.progress_callback = progress_callback
         self.patterns = patterns or []
 
+    def _extract_context_summary(self, events: List[Event]) -> Optional[Dict[str, str]]:
+        """Extract a brief app/URL/window summary from a group's events for cross-group comparison."""
+        context_keys = [
+            "application", "app", "browser_url", "url", "webpage",
+            "window_title", "window", "workbook",
+        ]
+        summary: Dict[str, str] = {}
+        for key in context_keys:
+            for e in events:
+                val = e.attributes.get(key)
+                if val and str(val).strip().lower() not in {"none", "null", ""}:
+                    summary[key] = str(val).strip()
+                    break
+        return summary if summary else None
+
     def _build_pattern_reference(self) -> str:
         """Build a compact pattern reference block from loaded Pattern objects."""
         if not self.patterns:
@@ -64,8 +79,14 @@ class ActivityInferrer:
             else:
                 normalised.append(EG(events=g))
 
+        # Precompute previous-group context summary for each group so the LLM can detect
+        # context switches without relying on hardcoded attribute names.
+        prev_summaries = [None] * len(normalised)
+        for i in range(1, len(normalised)):
+            prev_summaries[i] = self._extract_context_summary(normalised[i - 1].events)
+
         # Split into batches and fan out in parallel — groups within each batch share one LLM call.
-        indexed = list(enumerate(normalised))
+        indexed = [(i, g, prev_summaries[i]) for i, g in enumerate(normalised)]
         batches = [indexed[i:i + _BATCH_SIZE] for i in range(0, len(indexed), _BATCH_SIZE)]
         max_workers = min(5, len(batches)) if batches else 1
         llm_results: Dict[int, dict] = {}
@@ -102,10 +123,20 @@ class ActivityInferrer:
                     if fallback.get("find_target"):
                         llm_result.setdefault("find_target", fallback["find_target"])
 
-            # 1. Implicit context-switch activity (no LLM needed)
-            if group.is_context_switch and group.previous_app and group.current_app:
+            # 1. Implicit context-switch activity — LLM-detected first, rule-based fallback
+            cs_info = llm_result.get("context_switch") or {}
+            if not isinstance(cs_info, dict):
+                cs_info = {}
+            llm_cs = cs_info.get("detected", False)
+            llm_from = cs_info.get("from_context") or None
+            llm_to = cs_info.get("to_context") or None
+            rule_cs = group.is_context_switch and group.previous_app and group.current_app
+            from_ctx = llm_from or group.previous_app
+            to_ctx = llm_to or group.current_app
+
+            if (llm_cs or rule_cs) and (from_ctx or to_ctx):
                 activities.append(Activity(
-                    name=f"Switch context from {group.previous_app} to {group.current_app}",
+                    name=f"Switch context from {from_ctx or 'unknown'} to {to_ctx or 'unknown'}",
                     confidence=1.0,
                     evidence=[],
                     source_events=source_events,
@@ -144,7 +175,7 @@ class ActivityInferrer:
     def _call_llm_for_batch(self, indexed_groups: list) -> list:
         """Fan-out worker: one LLM call for a batch of groups. Returns [(group_idx, result_dict), ...]."""
         if self.llm_client is None:
-            return [(idx, self._mock_infer_result(group.events)) for idx, group in indexed_groups]
+            return [(idx, self._mock_infer_result(group.events)) for idx, group, *_ in indexed_groups]
         n = len(indexed_groups)
         prompt = self._build_batch_prompt(indexed_groups)
         try:
@@ -155,7 +186,7 @@ class ActivityInferrer:
             _logger.warning("Batch LLM inference failed (size %d): %s", n, exc)
             # Fall back to individual calls so partial failures don't lose all groups.
             results = []
-            for orig_idx, group in indexed_groups:
+            for orig_idx, group, *_ in indexed_groups:
                 try:
                     single_prompt = self._build_prompt(group)
                     raw = self.llm_client.complete(single_prompt)
@@ -169,7 +200,7 @@ class ActivityInferrer:
         """Build a single prompt asking the LLM to analyse multiple event groups at once."""
         n = len(indexed_groups)
         sections = []
-        for local_i, (_, group) in enumerate(indexed_groups):
+        for local_i, (_, group, prev_ctx) in enumerate(indexed_groups):
             events = group.events
             event_lines = []
             for e in events:
@@ -200,10 +231,18 @@ class ActivityInferrer:
                     vals = sorted(attr_summary[k])[:3]
                     attr_lines.append(f"  {k}: {', '.join(vals)}")
 
+            if prev_ctx:
+                prev_ctx_text = ", ".join(f"{k}={v}" for k, v in prev_ctx.items())
+            else:
+                prev_ctx_text = "(first activity — no previous context)"
+
             events_text = "\n".join(event_lines) or "- (none)"
             attrs_text = "\n".join(attr_lines) or "  (none available)"
             sections.append(
-                f"GROUP {local_i + 1}:\nEvents:\n{events_text}\nContext:\n{attrs_text}"
+                f"GROUP {local_i + 1}:\n"
+                f"Previous context: {prev_ctx_text}\n"
+                f"Events:\n{events_text}\n"
+                f"Context:\n{attrs_text}"
             )
 
         groups_block = "\n\n".join(sections)
@@ -220,6 +259,7 @@ For each group return this JSON structure:
 {{
   "activity_name": "Verb + object format aligned with the matched pattern (e.g. 'Write credentials into username field', 'Activate submit button', 'Open login page')",
   "pattern": "Exactly one pattern name from the reference above — choose based on semantic meaning of the interaction, not the exact words in the log",
+  "context_switch": {{"detected": false, "from_context": null, "to_context": null}},
   "requires_find": true,
   "find_target": "element description when requires_find is true, omit otherwise",
   "evidence": ["2-4 concise observations from events/attributes"],
@@ -227,8 +267,10 @@ For each group return this JSON structure:
   "reasoning": "One sentence summary"
 }}
 
+Context switch guide: Set "detected" to true only when the user moves to a genuinely different application, tool, or execution environment compared to the "Previous context" shown above. Examples that ARE context switches: Excel → Chrome, one web app → a different web app, desktop app → browser. Examples that are NOT: navigating to a new page within the same site, opening a modal in the same app, scrolling. When detected is true, "from_context" and "to_context" must name the environments (e.g. "Microsoft Excel", "Google Chrome").
+
 Respond with a valid JSON array only — no other text:
-[{{"activity_name": "...", "pattern": "...", ...}}, ...]"""
+[{{"activity_name": "...", "pattern": "...", "context_switch": {{"detected": false, ...}}, ...}}, ...]"""
 
     def _parse_batch_response(self, raw: str, n: int) -> List[dict]:
         """Parse a JSON array response from a batch prompt. Returns exactly n dicts."""
