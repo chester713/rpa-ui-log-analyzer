@@ -4,6 +4,8 @@ import logging
 import os
 import json
 import secrets
+import threading
+import time
 import uuid
 import csv
 import warnings
@@ -50,6 +52,10 @@ MAX_PREVIEW_ROWS = 100
 MAX_HISTORY_ENTRIES = 200
 MAX_UPLOAD_MB = 16
 LLM_DETECT_SAMPLE_ROWS = 100
+
+# In-memory progress store keyed by analysis_id (one entry per active analysis).
+_analysis_progress: dict = {}
+_progress_lock = threading.Lock()
 PROGRESSIVE_STAGE_KEYS = (
     "event_grouping",
     "activity_naming",
@@ -583,6 +589,16 @@ def detect_column():
         return jsonify({"error": "An internal error occurred. Please try again."}), 500
 
 
+@app.route("/progress", methods=["GET"])
+def progress():
+    analysis_id = session.get("analysis_id")
+    if not analysis_id:
+        return jsonify({"stage": "waiting", "completed": 0, "total": 0})
+    with _progress_lock:
+        state = dict(_analysis_progress.get(analysis_id, {"stage": "waiting", "completed": 0, "total": 0}))
+    return jsonify(state)
+
+
 @app.route("/analyze", methods=["POST"])
 def analyze():
     data = request.get_json()
@@ -593,6 +609,16 @@ def analyze():
 
     if not filepath or not os.path.exists(filepath):
         return jsonify({"error": "No file uploaded"}), 400
+
+    analysis_id = str(uuid.uuid4())
+    session["analysis_id"] = analysis_id
+    with _progress_lock:
+        _analysis_progress[analysis_id] = {
+            "stage": "parsing",
+            "completed": 0,
+            "total": 0,
+            "started_at": time.time(),
+        }
 
     try:
         from src.parser.csv_loader import CSVLoader
@@ -615,8 +641,16 @@ def analyze():
 
         from src.models.activity import Activity, EventActivityMapping
 
+        def _on_inference_progress(completed, total):
+            with _progress_lock:
+                _analysis_progress[analysis_id].update({
+                    "stage": "inferring",
+                    "completed": completed,
+                    "total": total,
+                })
+
         grouper = EventGrouper()
-        inferrer = ActivityInferrer(llm_client)
+        inferrer = ActivityInferrer(llm_client, progress_callback=_on_inference_progress)
         mapper = EventActivityMapper(grouper, inferrer)
         mappings = mapper.map(events)
         _post_process = getattr(inferrer, "_post_process_inferred_name", None)
@@ -624,6 +658,9 @@ def analyze():
             for mapping in mappings:
                 mapping.activity.name = _post_process(mapping.activity.name, mapping.events)
         activities = [m.activity for m in mappings]
+
+        with _progress_lock:
+            _analysis_progress[analysis_id]["stage"] = "matching"
 
         from src.matching.pattern_matcher import get_context_from_events, PatternMatcher
         from src.matching import PATTERNS

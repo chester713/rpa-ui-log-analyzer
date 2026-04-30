@@ -1,5 +1,6 @@
 """LLM-powered activity inference."""
 
+import concurrent.futures
 import json
 import logging
 import os
@@ -11,12 +12,15 @@ from ..models.activity import Activity
 
 _logger = logging.getLogger(__name__)
 
+_BATCH_SIZE = 5  # event groups per LLM call
+
 
 class ActivityInferrer:
     """Uses LLM to infer activities from event groups."""
 
-    def __init__(self, llm_client=None):
+    def __init__(self, llm_client=None, progress_callback=None):
         self.llm_client = llm_client
+        self.progress_callback = progress_callback
 
     def infer_activities(self, event_groups) -> List[Activity]:
         """
@@ -43,10 +47,43 @@ class ActivityInferrer:
             else:
                 normalised.append(EG(events=g))
 
-        activities: List[Activity] = []
+        # Split into batches and fan out in parallel — groups within each batch share one LLM call.
+        indexed = list(enumerate(normalised))
+        batches = [indexed[i:i + _BATCH_SIZE] for i in range(0, len(indexed), _BATCH_SIZE)]
+        max_workers = min(5, len(batches)) if batches else 1
+        llm_results: Dict[int, dict] = {}
+        completed = 0
+        total = len(normalised)
+        if self.progress_callback:
+            self.progress_callback(0, total)
+        with concurrent.futures.ThreadPoolExecutor(max_workers=max_workers) as executor:
+            futures = {
+                executor.submit(self._call_llm_for_batch, batch): batch
+                for batch in batches
+            }
+            for future in concurrent.futures.as_completed(futures):
+                batch_results = future.result()
+                for group_idx, result in batch_results:
+                    llm_results[group_idx] = result
+                completed += len(batch_results)
+                if self.progress_callback:
+                    self.progress_callback(completed, total)
 
+        # Assemble activities in original group order.
+        activities: List[Activity] = []
         for group_idx, group in enumerate(normalised):
             source_events = [e.row_index for e in group.events if e.row_index is not None]
+            llm_result = llm_results.get(group_idx, {})
+
+            # Fill gaps with rule-based fallback so prerequisite activities are still generated.
+            if not llm_result.get("activity_name") or "requires_find" not in llm_result:
+                fallback = self._mock_infer_result(group.events)
+                if not llm_result.get("activity_name"):
+                    llm_result["activity_name"] = fallback["activity_name"]
+                if "requires_find" not in llm_result:
+                    llm_result["requires_find"] = fallback.get("requires_find", False)
+                    if fallback.get("find_target"):
+                        llm_result.setdefault("find_target", fallback["find_target"])
 
             # 1. Implicit context-switch activity (no LLM needed)
             if group.is_context_switch and group.previous_app and group.current_app:
@@ -60,30 +97,7 @@ class ActivityInferrer:
                     group_index=group_idx,
                 ))
 
-            # 2. LLM call for main activity interpretation
-            if self.llm_client is None:
-                llm_result = self._mock_infer_result(group.events)
-            else:
-                prompt = self._build_prompt(group)
-                try:
-                    raw = self.llm_client.complete(prompt)
-                    llm_result = self._parse_response(raw)
-                except Exception as exc:
-                    _logger.warning("LLM inference failed for group %d: %s", group_idx, exc)
-                    llm_result = {}
-
-            # When LLM is unavailable or returns an incomplete response, fill gaps
-            # with rule-based detection so prerequisite activities are still generated.
-            if not llm_result.get("activity_name") or "requires_find" not in llm_result:
-                fallback = self._mock_infer_result(group.events)
-                if not llm_result.get("activity_name"):
-                    llm_result["activity_name"] = fallback["activity_name"]
-                if "requires_find" not in llm_result:
-                    llm_result["requires_find"] = fallback.get("requires_find", False)
-                    if fallback.get("find_target"):
-                        llm_result.setdefault("find_target", fallback["find_target"])
-
-            # 3. Implicit prerequisite "Find <element>" activity
+            # 2. Implicit prerequisite "Find <element>" activity
             if llm_result.get("requires_find") and llm_result.get("find_target"):
                 activities.append(Activity(
                     name=f"Find {llm_result['find_target']}",
@@ -95,7 +109,7 @@ class ActivityInferrer:
                     group_index=group_idx,
                 ))
 
-            # 4. Main activity
+            # 3. Main activity
             activities.append(Activity(
                 name=llm_result["activity_name"],
                 confidence=llm_result.get("confidence", 0.3),
@@ -108,6 +122,108 @@ class ActivityInferrer:
             ))
 
         return activities
+
+    def _call_llm_for_batch(self, indexed_groups: list) -> list:
+        """Fan-out worker: one LLM call for a batch of groups. Returns [(group_idx, result_dict), ...]."""
+        if self.llm_client is None:
+            return [(idx, self._mock_infer_result(group.events)) for idx, group in indexed_groups]
+        n = len(indexed_groups)
+        prompt = self._build_batch_prompt(indexed_groups)
+        try:
+            raw = self.llm_client.complete(prompt)
+            parsed = self._parse_batch_response(raw, n)
+            return [(indexed_groups[i][0], parsed[i]) for i in range(n)]
+        except Exception as exc:
+            _logger.warning("Batch LLM inference failed (size %d): %s", n, exc)
+            # Fall back to individual calls so partial failures don't lose all groups.
+            results = []
+            for orig_idx, group in indexed_groups:
+                try:
+                    single_prompt = self._build_prompt(group)
+                    raw = self.llm_client.complete(single_prompt)
+                    results.append((orig_idx, self._parse_response(raw)))
+                except Exception as inner:
+                    _logger.warning("Single fallback also failed for group %d: %s", orig_idx, inner)
+                    results.append((orig_idx, {}))
+            return results
+
+    def _build_batch_prompt(self, indexed_groups: list) -> str:
+        """Build a single prompt asking the LLM to analyse multiple event groups at once."""
+        n = len(indexed_groups)
+        sections = []
+        for local_i, (_, group) in enumerate(indexed_groups):
+            events = group.events
+            event_lines = []
+            for e in events:
+                parts = [e.event]
+                tag = (
+                    e.attributes.get("tag_name")
+                    or e.attributes.get("tag_type")
+                    or e.attributes.get("element_id")
+                )
+                if tag:
+                    parts.append(f"(element: {tag})")
+                event_lines.append("- " + " ".join(parts))
+
+            priority_keys = [
+                "application", "app", "webpage", "url", "browser_url",
+                "tag_name", "tag_type", "element_id", "id",
+                "workbook", "worksheet", "window",
+            ]
+            attr_summary: Dict[str, set] = {}
+            for e in events:
+                for k, v in e.attributes.items():
+                    if v and str(v).strip() and str(v).lower() not in {"none", "null"}:
+                        attr_summary.setdefault(k, set()).add(str(v))
+
+            attr_lines = []
+            for k in priority_keys:
+                if k in attr_summary:
+                    vals = sorted(attr_summary[k])[:3]
+                    attr_lines.append(f"  {k}: {', '.join(vals)}")
+
+            events_text = "\n".join(event_lines) or "- (none)"
+            attrs_text = "\n".join(attr_lines) or "  (none available)"
+            sections.append(
+                f"GROUP {local_i + 1}:\nEvents:\n{events_text}\nContext:\n{attrs_text}"
+            )
+
+        groups_block = "\n\n".join(sections)
+        return f"""You are an RPA (Robotic Process Automation) designer analyzing UI event logs.
+
+Analyze the following {n} event group(s). Return a JSON ARRAY with exactly {n} objects — one per group, in the same order.
+
+{groups_block}
+
+For each group return this JSON structure:
+{{
+  "activity_name": "Verb + object format (e.g. 'Click login button', 'Write data into search field')",
+  "requires_find": true,
+  "find_target": "element description when requires_find is true, omit otherwise",
+  "evidence": ["2-4 concise observations from events/attributes"],
+  "confidence": 0.9,
+  "reasoning": "One sentence summary"
+}}
+
+Respond with a valid JSON array only — no other text:
+[{{"activity_name": "...", ...}}, ...]"""
+
+    def _parse_batch_response(self, raw: str, n: int) -> List[dict]:
+        """Parse a JSON array response from a batch prompt. Returns exactly n dicts."""
+        if not raw:
+            return [{} for _ in range(n)]
+        text = raw.strip()
+        arr_match = re.search(r'\[.*\]', text, re.DOTALL)
+        if arr_match:
+            try:
+                results = json.loads(arr_match.group())
+                if isinstance(results, list):
+                    while len(results) < n:
+                        results.append({})
+                    return results[:n]
+            except json.JSONDecodeError:
+                pass
+        return [{} for _ in range(n)]
 
     def infer_activity(self, event_group: List[Event]) -> Activity:
         """Infer a single main activity (no implicit activities). Used for legacy callers."""

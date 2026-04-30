@@ -9,7 +9,7 @@ from typing import Optional, Any
 _logger = logging.getLogger(__name__)
 
 _TIMEOUT = 30
-_MAX_TOKENS = 500
+_MAX_TOKENS = 2000
 _MAX_RETRIES = 2
 _RETRY_BACKOFF = 1  # seconds; doubles on each retry
 

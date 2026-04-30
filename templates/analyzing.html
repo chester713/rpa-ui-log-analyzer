@@ -8,15 +8,31 @@
         * { box-sizing: border-box; margin: 0; padding: 0; }
         body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif; background: #f5f7fb; min-height: 100vh; }
         .container { max-width: 980px; margin: 0 auto; padding: 24px 20px; }
-        .card { width: min(680px, 92vw); background: white; border-radius: 12px; padding: 28px; box-shadow: 0 2px 8px rgba(0,0,0,0.08); }
-        h1 { font-size: 22px; color: #1f2937; margin-bottom: 8px; }
-        .sub { color: #6b7280; margin-bottom: 18px; }
-        .bar { width: 100%; height: 14px; background: #e9edf3; border-radius: 999px; overflow: hidden; border: 1px solid #d8dee8; }
-        .fill { height: 100%; width: 0%; background: linear-gradient(90deg, #2563eb, #60a5fa); transition: width 220ms ease; }
-        .meta { margin-top: 10px; color: #6b7280; font-size: 13px; }
-        .hint { margin-top: 14px; color: #6b7280; font-size: 12px; }
-
         .center-wrap { min-height: calc(100vh - 160px); display: flex; align-items: center; justify-content: center; }
+        .card { width: min(680px, 92vw); background: white; border-radius: 12px; padding: 32px; box-shadow: 0 2px 8px rgba(0,0,0,0.08); }
+
+        h1 { font-size: 22px; color: #1f2937; margin-bottom: 6px; }
+        .sub { color: #6b7280; font-size: 14px; margin-bottom: 24px; }
+
+        .bar-wrap { margin-bottom: 6px; }
+        .bar { width: 100%; height: 12px; background: #e9edf3; border-radius: 999px; overflow: hidden; }
+        .fill { height: 100%; width: 0%; background: linear-gradient(90deg, #2563eb, #60a5fa); transition: width 400ms ease; }
+        .pct { font-size: 12px; color: #6b7280; text-align: right; margin-top: 4px; }
+
+        .stage-label { font-size: 15px; font-weight: 600; color: #1f2937; margin: 18px 0 4px; }
+        .stage-detail { font-size: 13px; color: #6b7280; min-height: 18px; }
+
+        .steps { margin-top: 22px; display: flex; flex-direction: column; gap: 8px; }
+        .step { display: flex; align-items: center; gap: 10px; font-size: 13px; color: #6b7280; }
+        .step.done { color: #16a34a; }
+        .step.active { color: #2563eb; font-weight: 600; }
+        .icon { width: 18px; text-align: center; flex-shrink: 0; }
+        .spin { display: inline-block; animation: spin 1s linear infinite; }
+        @keyframes spin { to { transform: rotate(360deg); } }
+
+        .elapsed { margin-top: 20px; font-size: 12px; color: #9ca3af; border-top: 1px solid #f1f3f7; padding-top: 14px; }
+
+        .error-msg { color: #dc2626; font-size: 14px; margin-top: 16px; }
     </style>
 </head>
 <body>
@@ -24,32 +40,146 @@
         <div class="center-wrap">
             <div class="card">
                 <h1>Analyzing Your Log</h1>
-                <div class="sub">Please wait while we infer activities and recommend methods.</div>
-                <div class="bar"><div class="fill" id="fill"></div></div>
-                <div class="meta" id="meta">Starting...</div>
-                <div class="hint">This page will automatically redirect to the guided workspace.</div>
+                <div class="sub">Groups are inferred in parallel batches — this is much faster than sequential processing.</div>
+
+                <div class="bar-wrap">
+                    <div class="bar"><div class="fill" id="fill"></div></div>
+                    <div class="pct" id="pct">0%</div>
+                </div>
+
+                <div class="stage-label" id="stage-label">Starting...</div>
+                <div class="stage-detail" id="stage-detail"></div>
+
+                <div class="steps">
+                    <div class="step" id="step-parsing">
+                        <span class="icon" id="icon-parsing">○</span> Parsing CSV and grouping events
+                    </div>
+                    <div class="step" id="step-inferring">
+                        <span class="icon" id="icon-inferring">○</span> Inferring activities via LLM (batched, parallel)
+                    </div>
+                    <div class="step" id="step-matching">
+                        <span class="icon" id="icon-matching">○</span> Matching RPA patterns
+                    </div>
+                    <div class="step" id="step-done">
+                        <span class="icon" id="icon-done">○</span> Building recommendations
+                    </div>
+                </div>
+
+                <div class="elapsed" id="elapsed">Elapsed: 0s</div>
+                <div class="error-msg" id="error-msg" style="display:none"></div>
             </div>
         </div>
     </div>
 
     <script>
         const eventColumn = {{ event_column | tojson }};
-        const fill = document.getElementById('fill');
-        const meta = document.getElementById('meta');
 
-        let p = 6;
-        fill.style.width = p + '%';
-        meta.textContent = 'Preparing pipeline...';
+        const fill      = document.getElementById('fill');
+        const pct       = document.getElementById('pct');
+        const stageLbl  = document.getElementById('stage-label');
+        const stageDet  = document.getElementById('stage-detail');
+        const elapsedEl = document.getElementById('elapsed');
+        const errorEl   = document.getElementById('error-msg');
 
-        const ticker = setInterval(() => {
-            p = Math.min(92, p + Math.random() * 7);
-            fill.style.width = p.toFixed(0) + '%';
-            if (p < 30) meta.textContent = 'Reading log and context...';
-            else if (p < 60) meta.textContent = 'Inferring grouped activities...';
-            else if (p < 85) meta.textContent = 'Matching patterns and methods...';
-            else meta.textContent = 'Finalizing recommendations...';
-        }, 280);
+        const steps = {
+            parsing:   { el: document.getElementById('step-parsing'),   icon: document.getElementById('icon-parsing') },
+            inferring: { el: document.getElementById('step-inferring'), icon: document.getElementById('icon-inferring') },
+            matching:  { el: document.getElementById('step-matching'),  icon: document.getElementById('icon-matching') },
+            done:      { el: document.getElementById('step-done'),      icon: document.getElementById('icon-done') },
+        };
 
+        const stageOrder = ['parsing', 'inferring', 'matching', 'done'];
+        const startTime = Date.now();
+        let currentStage = 'waiting';
+        let analysisComplete = false;
+
+        function setProgress(widthPct) {
+            fill.style.width = widthPct.toFixed(0) + '%';
+            pct.textContent  = widthPct.toFixed(0) + '%';
+        }
+
+        function updateSteps(activeStage) {
+            const activeIdx = stageOrder.indexOf(activeStage);
+            stageOrder.forEach((s, i) => {
+                const { el, icon } = steps[s];
+                el.className = 'step';
+                if (i < activeIdx) {
+                    el.classList.add('done');
+                    icon.textContent = '✓';
+                } else if (i === activeIdx) {
+                    el.classList.add('active');
+                    icon.innerHTML = '<span class="spin">⟳</span>';
+                } else {
+                    icon.textContent = '○';
+                }
+            });
+        }
+
+        function applyState(state) {
+            const stage = state.stage || 'waiting';
+            const completed = state.completed || 0;
+            const total = state.total || 0;
+
+            currentStage = stage;
+
+            if (stage === 'waiting' || stage === 'parsing') {
+                setProgress(8);
+                stageLbl.textContent = 'Parsing CSV and grouping events...';
+                stageDet.textContent = 'Reading event log and identifying activity boundaries.';
+                updateSteps('parsing');
+
+            } else if (stage === 'inferring') {
+                const groupPct = total > 0 ? completed / total : 0;
+                const barPct = 10 + groupPct * 68;
+                setProgress(barPct);
+                stageLbl.textContent = 'Inferring activities via LLM...';
+                if (total > 0) {
+                    const batches = Math.ceil(total / 5);
+                    stageDet.textContent = `${completed} of ${total} groups analyzed — ${batches} batch${batches !== 1 ? 'es' : ''} running in parallel.`;
+                } else {
+                    stageDet.textContent = 'Dispatching parallel LLM batches...';
+                }
+                updateSteps('inferring');
+
+            } else if (stage === 'matching') {
+                setProgress(82);
+                stageLbl.textContent = 'Matching RPA patterns...';
+                stageDet.textContent = 'Scoring 13 RPA patterns and selecting the best method per activity.';
+                updateSteps('matching');
+
+            } else if (stage === 'done') {
+                setProgress(100);
+                stageLbl.textContent = 'Done — redirecting...';
+                stageDet.textContent = '';
+                // mark all done
+                stageOrder.forEach(s => {
+                    steps[s].el.className = 'step done';
+                    steps[s].icon.textContent = '✓';
+                });
+            }
+        }
+
+        // Elapsed timer
+        setInterval(() => {
+            const sec = Math.round((Date.now() - startTime) / 1000);
+            elapsedEl.textContent = `Elapsed: ${sec}s`;
+        }, 1000);
+
+        // Poll /progress
+        let pollTimer = null;
+        function poll() {
+            if (analysisComplete) return;
+            fetch('/progress')
+                .then(r => r.json())
+                .then(state => { applyState(state); })
+                .catch(() => {})
+                .finally(() => {
+                    if (!analysisComplete) pollTimer = setTimeout(poll, 500);
+                });
+        }
+        poll();
+
+        // Fire the analysis
         fetch('/analyze', {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
@@ -58,18 +188,21 @@
         .then(async (res) => {
             const data = await res.json();
             if (!res.ok) throw new Error(data.error || 'Analysis failed');
-            clearInterval(ticker);
-            fill.style.width = '100%';
-            meta.textContent = 'Done. Redirecting to guided workspace...';
+            analysisComplete = true;
+            clearTimeout(pollTimer);
+            applyState({ stage: 'done' });
             setTimeout(() => {
                 window.location.href = '/workspace/' + data.history_id;
-            }, 300);
+            }, 500);
         })
         .catch((err) => {
-            clearInterval(ticker);
-            meta.textContent = 'Error: ' + err.message;
-            alert(err.message);
-            window.location.href = '/select-column';
+            analysisComplete = true;
+            clearTimeout(pollTimer);
+            stageLbl.textContent = 'Analysis failed';
+            stageDet.textContent = '';
+            errorEl.textContent = err.message;
+            errorEl.style.display = 'block';
+            setTimeout(() => { window.location.href = '/select-column'; }, 3000);
         });
     </script>
 </body>
