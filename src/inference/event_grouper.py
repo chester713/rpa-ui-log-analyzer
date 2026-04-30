@@ -29,15 +29,15 @@ class EventGrouper:
 
     CONTEXT_SWITCH_ATTRIBUTES = ["app", "application"]
 
-    def __init__(self, group_attributes: Optional[List[str]] = None):
-        """
-        Initialize EventGrouper.
-
-        Args:
-            group_attributes: List of attribute names to use for grouping.
-                             Defaults to common UI interaction attributes.
-        """
+    def __init__(
+        self,
+        group_attributes: Optional[List[str]] = None,
+        context_switch_attributes: Optional[List[str]] = None,
+    ):
         self.group_attributes = group_attributes or self.DEFAULT_GROUP_ATTRIBUTES
+        self.context_switch_attributes = (
+            context_switch_attributes or self.CONTEXT_SWITCH_ATTRIBUTES
+        )
 
     def group_events(self, events: List[Event]) -> List[List[Event]]:
         """
@@ -106,7 +106,7 @@ class EventGrouper:
 
     def _get_application_attribute(self, event: Event) -> Optional[str]:
         """Get application attribute from event."""
-        for attr in self.CONTEXT_SWITCH_ATTRIBUTES:
+        for attr in self.context_switch_attributes:
             if attr in event.attributes:
                 return event.attributes[attr]
         return None

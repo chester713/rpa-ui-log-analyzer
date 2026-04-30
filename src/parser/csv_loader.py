@@ -1,6 +1,7 @@
 """CSV loader for UI log files."""
 
 import csv
+import json
 import logging
 import re
 from typing import List, Dict, Any, Optional
@@ -22,6 +23,8 @@ class CSVLoader:
         self.llm_client = llm_client
         self._force_column = None
         self.detected_column = None
+        self.detected_group_columns: Optional[List[str]] = None
+        self.detected_switch_columns: Optional[List[str]] = None
 
     @staticmethod
     def _dedup_headers(raw_headers: List[str]) -> List[str]:
@@ -75,6 +78,11 @@ class CSVLoader:
             )
 
         self.detected_column = event_column
+        context_cols = self._detect_context_columns_with_llm(
+            fieldnames, sample_rows=rows[:50], exclude=event_column
+        )
+        self.detected_group_columns = context_cols.get("group_columns") or None
+        self.detected_switch_columns = context_cols.get("switch_columns") or None
 
         if event_column is None:
             raise ValueError(
@@ -166,6 +174,88 @@ Return only one exact column name from the list above. No explanation."""
             _logger.warning("LLM event column detection failed: %s", exc)
 
         return self._detect_event_column_fallback(fieldnames, sample_rows=sample_rows)
+
+    def _detect_context_columns_with_llm(
+        self,
+        fieldnames: List[str],
+        sample_rows: Optional[List[Dict[str, Any]]] = None,
+        exclude: Optional[str] = None,
+    ) -> Dict[str, List[str]]:
+        """
+        Use LLM to detect which columns carry application/context data.
+
+        Returns a dict with two keys:
+          - "switch_columns": columns whose value changing signals an app switch
+          - "group_columns": broader set used to group consecutive events
+        """
+        candidates = [f for f in (fieldnames or []) if f != exclude]
+        if not candidates:
+            return {"group_columns": [], "switch_columns": []}
+
+        if self.llm_client is None:
+            return self._detect_context_columns_fallback(candidates)
+
+        sample_by_column = []
+        for field in candidates:
+            values = []
+            for row in (sample_rows or []):
+                val = str((row or {}).get(field, "")).strip()
+                if val:
+                    values.append(val)
+                if len(values) >= 5:
+                    break
+            sample_by_column.append(f"- {field}: {values}")
+
+        sample_str = "\n".join(sample_by_column)
+        prompt = f"""You are analysing columns from a UI activity log CSV.
+
+Columns (the event/action column has already been identified and is excluded):
+{", ".join(candidates)}
+
+Sample values per column:
+{sample_str}
+
+Identify two column sets:
+1. "switch_columns": columns whose value identifies which application or process is active (e.g. app name, process, window title). A change in this value means the user switched to a different application.
+2. "group_columns": columns useful for grouping consecutive events into the same activity (includes switch_columns plus things like URL, screen name, webpage, tab, element scope).
+
+Rules:
+- Only include column names that appear exactly in the list above.
+- "switch_columns" must be a subset of "group_columns".
+- Return empty lists if no column qualifies.
+- Return only valid JSON, no explanation.
+
+Format:
+{{"switch_columns": ["col1"], "group_columns": ["col1", "col2"]}}"""
+
+        try:
+            response = self.llm_client.complete(prompt)
+            clean = (response or "").strip()
+            if clean.startswith("```"):
+                clean = re.sub(r"```[a-z]*\n?", "", clean).strip("`").strip()
+            parsed = json.loads(clean)
+            switch_cols = [c for c in parsed.get("switch_columns", []) if c in candidates]
+            group_cols = [c for c in parsed.get("group_columns", []) if c in candidates]
+            for c in switch_cols:
+                if c not in group_cols:
+                    group_cols.append(c)
+            if not group_cols and not switch_cols:
+                return self._detect_context_columns_fallback(candidates)
+            return {"group_columns": group_cols, "switch_columns": switch_cols}
+        except Exception as exc:
+            _logger.warning("LLM context column detection failed: %s", exc)
+            return self._detect_context_columns_fallback(candidates)
+
+    def _detect_context_columns_fallback(
+        self, fieldnames: List[str]
+    ) -> Dict[str, List[str]]:
+        """Fallback: match against known context column names."""
+        SWITCH = {"app", "application", "process", "executable", "activeapp"}
+        GROUP = SWITCH | {"webpage", "url", "window", "screen", "tab", "element_id", "browser"}
+        lower_map = {f.lower().replace(" ", "").replace("_", ""): f for f in fieldnames}
+        switch_cols = [lower_map[k] for k in lower_map if k in SWITCH]
+        group_cols = [lower_map[k] for k in lower_map if k in GROUP]
+        return {"group_columns": group_cols, "switch_columns": switch_cols}
 
     def _extract_detected_field(self, response: str, fieldnames: List[str]) -> str:
         detected = (response or "").strip().strip('"').strip("'").strip("`")

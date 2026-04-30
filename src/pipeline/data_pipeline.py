@@ -109,6 +109,11 @@ class DataPipeline:
         """
         events = self.loader.load(self.csv_path)
 
+        if self.loader.detected_group_columns:
+            self.grouper.group_attributes = self.loader.detected_group_columns
+        if self.loader.detected_switch_columns:
+            self.grouper.context_switch_attributes = self.loader.detected_switch_columns
+
         mappings = self.mapper.map(events)
         activities = [m.activity for m in mappings]
 
