@@ -2,10 +2,13 @@
 
 from __future__ import annotations
 
+import logging
 from datetime import datetime, timedelta
 from typing import Iterable
 
 from src.models.activity import EventActivityMapping
+
+_logger = logging.getLogger(__name__)
 
 discover_dfg = None
 
@@ -197,7 +200,8 @@ def build_dfg_payload(
                 timestamp_key="time:timestamp",
                 case_id_key="case:concept:name",
             )
-        except Exception:
+        except Exception as exc:
+            _logger.warning("pm4py DFG discovery failed, using fallback: %s", exc)
             dfg, start_activities, end_activities = _build_dfg_fallback(mapping_list)
     else:
         dfg, start_activities, end_activities = _build_dfg_fallback(mapping_list)

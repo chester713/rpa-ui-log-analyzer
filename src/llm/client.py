@@ -1,8 +1,35 @@
 """LLM client for activity inference and column detection."""
 
+import logging
 import os
 import json
+import time
 from typing import Optional, Any
+
+_logger = logging.getLogger(__name__)
+
+_TIMEOUT = 30
+_MAX_TOKENS = 500
+_MAX_RETRIES = 2
+_RETRY_BACKOFF = 1  # seconds; doubles on each retry
+
+
+def _post_with_retry(url: str, payload: dict, headers: dict) -> "requests.Response":
+    """POST with exponential backoff on timeout/connection errors."""
+    import requests
+
+    last_exc: Exception | None = None
+    for attempt in range(_MAX_RETRIES + 1):
+        try:
+            return requests.post(url, json=payload, headers=headers, timeout=_TIMEOUT)
+        except (requests.exceptions.Timeout, requests.exceptions.ConnectionError) as exc:
+            last_exc = exc
+            if attempt < _MAX_RETRIES:
+                wait = _RETRY_BACKOFF * (2 ** attempt)
+                _logger.warning("LLM request failed (attempt %d/%d), retrying in %ds: %s",
+                                attempt + 1, _MAX_RETRIES + 1, wait, exc)
+                time.sleep(wait)
+    raise last_exc
 
 
 class LLMClient:
@@ -40,32 +67,29 @@ class LLMClient:
 
     def _complete_puter(self, prompt: str) -> str:
         """Use Puter.js for free LLM."""
-        import requests
-
         url = "https://api.puter.ai/v1/chat/completions"
         headers = {"Content-Type": "application/json"}
         payload = {
             "model": "gpt-4o-mini",
             "messages": [{"role": "user", "content": prompt}],
-            "max_tokens": 500,
+            "max_tokens": _MAX_TOKENS,
         }
 
         try:
-            response = requests.post(url, json=payload, headers=headers, timeout=30)
+            response = _post_with_retry(url, payload, headers)
             if response.status_code == 200:
                 data = response.json()
                 return (
                     data.get("choices", [{}])[0].get("message", {}).get("content", "")
                 )
-        except Exception:
-            pass
+            _logger.warning("Puter LLM returned status %d", response.status_code)
+        except Exception as exc:
+            _logger.warning("Puter LLM request failed: %s", exc)
 
         return ""
 
     def _complete_custom(self, prompt: str) -> str:
         """Use custom OpenAI-compatible API."""
-        import requests
-
         if not self.api_key:
             return ""
 
@@ -78,20 +102,19 @@ class LLMClient:
         payload = {
             "model": self.model,
             "messages": [{"role": "user", "content": prompt}],
-            "max_tokens": 500,
+            "max_tokens": _MAX_TOKENS,
         }
 
         try:
-            response = requests.post(
-                endpoint, json=payload, headers=headers, timeout=30
-            )
+            response = _post_with_retry(endpoint, payload, headers)
             if response.status_code == 200:
                 data = response.json()
                 return (
                     data.get("choices", [{}])[0].get("message", {}).get("content", "")
                 )
-        except Exception:
-            pass
+            _logger.warning("Custom LLM returned status %d", response.status_code)
+        except Exception as exc:
+            _logger.warning("Custom LLM request failed: %s", exc)
 
         return ""
 

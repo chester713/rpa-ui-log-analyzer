@@ -1,12 +1,15 @@
 """LLM-powered activity inference."""
 
 import json
+import logging
 import os
 import re
 from urllib.parse import urlparse
 from typing import List, Optional, Dict, Any
 from ..models.event import Event
 from ..models.activity import Activity
+
+_logger = logging.getLogger(__name__)
 
 
 class ActivityInferrer:
@@ -65,7 +68,8 @@ class ActivityInferrer:
                 try:
                     raw = self.llm_client.complete(prompt)
                     llm_result = self._parse_response(raw)
-                except Exception:
+                except Exception as exc:
+                    _logger.warning("LLM inference failed for group %d: %s", group_idx, exc)
                     llm_result = {}
 
             # When LLM is unavailable or returns an incomplete response, fill gaps
@@ -119,7 +123,8 @@ class ActivityInferrer:
         try:
             raw = self.llm_client.complete(prompt)
             result = self._parse_response(raw)
-        except Exception:
+        except Exception as exc:
+            _logger.warning("LLM inference failed in infer_activity: %s", exc)
             result = {}
 
         name = result.get("activity_name") or self._derive_fallback_activity_name(event_group)

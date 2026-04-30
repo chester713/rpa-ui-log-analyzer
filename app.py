@@ -1,19 +1,38 @@
 """Flask web application for RPA UI Log Analyzer."""
 
+import logging
 import os
 import json
+import secrets
 import uuid
 import csv
+import warnings
 from datetime import datetime
 from flask import Flask, render_template, request, jsonify, redirect, url_for, session
 from werkzeug.utils import secure_filename
 
+logging.basicConfig(
+    level=logging.INFO,
+    format="%(asctime)s %(levelname)s %(name)s: %(message)s",
+)
+_logger = logging.getLogger(__name__)
+
 app = Flask(__name__)
 app.config["UPLOAD_FOLDER"] = "data/uploads"
 app.config["MAX_CONTENT_LENGTH"] = 16 * 1024 * 1024
-app.config["SECRET_KEY"] = os.environ.get("SECRET_KEY") or os.urandom(32).hex()
 app.config["JSON_SORT_KEYS"] = False
 app.json.sort_keys = False
+
+_secret_key = os.environ.get("SECRET_KEY")
+if not _secret_key:
+    _secret_key = secrets.token_hex(32)
+    warnings.warn(
+        "SECRET_KEY environment variable is not set. Sessions will not persist across "
+        "server restarts. Set SECRET_KEY for production deployments.",
+        RuntimeWarning,
+        stacklevel=1,
+    )
+app.config["SECRET_KEY"] = _secret_key
 
 os.makedirs(app.config["UPLOAD_FOLDER"], exist_ok=True)
 os.makedirs("config", exist_ok=True)
@@ -29,6 +48,8 @@ DEFAULT_LLM_CONFIG = {
 
 MAX_PREVIEW_ROWS = 100
 MAX_HISTORY_ENTRIES = 200
+MAX_UPLOAD_MB = 16
+LLM_DETECT_SAMPLE_ROWS = 100
 PROGRESSIVE_STAGE_KEYS = (
     "event_grouping",
     "activity_naming",
@@ -60,34 +81,17 @@ def _is_masked_api_key(value: str) -> bool:
     return bool(value) and ("..." in value or set(value) == {"*"})
 
 
-def _dedup_headers(raw_headers: list) -> list:
-    """Rename duplicate CSV column names by appending .1, .2, etc.
-
-    csv.DictReader silently overwrites earlier columns when names collide.
-    This preserves every column's data by giving each occurrence a unique key.
-    """
-    seen: dict = {}
-    result: list = []
-    for h in raw_headers:
-        if h in seen:
-            seen[h] += 1
-            result.append(f"{h}.{seen[h]}")
-        else:
-            seen[h] = 0
-            result.append(h)
-    return result
-
-
 def _read_csv_dedup(filepath: str, max_rows: int | None = None) -> tuple:
     """Open a CSV and return (unique_fieldnames, rows_as_dicts).
 
-    Uses utf-8-sig to strip an optional BOM and _dedup_headers so that
+    Uses utf-8-sig to strip an optional BOM and CSVLoader._dedup_headers so that
     files with duplicate column names are read correctly.
     """
+    from src.parser.csv_loader import CSVLoader
     with open(filepath, "r", encoding="utf-8-sig", newline="") as f:
         reader = csv.reader(f)
         raw_headers = next(reader, [])
-        headers = _dedup_headers(raw_headers)
+        headers = CSVLoader._dedup_headers(raw_headers)
         rows = []
         for i, values in enumerate(reader):
             if max_rows is not None and i >= max_rows:
@@ -111,6 +115,18 @@ def _sanitize_config_for_view(config: dict) -> dict:
     safe = dict(config or {})
     safe["api_key"] = _mask_api_key(safe.get("api_key", ""))
     return safe
+
+
+def _get_csrf_token() -> str:
+    if "csrf_token" not in session:
+        session["csrf_token"] = secrets.token_hex(32)
+    return session["csrf_token"]
+
+
+def _validate_csrf(form_token: str) -> bool:
+    return bool(form_token) and secrets.compare_digest(
+        form_token, session.get("csrf_token", "")
+    )
 
 
 def _split_action_object(activity_name: str) -> tuple[str, str]:
@@ -515,8 +531,9 @@ def select_column():
                 filename=filename,
             )
 
-        except Exception as e:
-            return jsonify({"error": str(e)}), 500
+        except Exception:
+            _logger.exception("Error during column detection in /select-column")
+            return jsonify({"error": "An internal error occurred. Please try again."}), 500
 
     return redirect("/upload")
 
@@ -539,7 +556,7 @@ def detect_column():
     file.save(filepath)
 
     try:
-        columns, preview_rows = _read_csv_dedup(filepath, max_rows=100)
+        columns, preview_rows = _read_csv_dedup(filepath, max_rows=LLM_DETECT_SAMPLE_ROWS)
 
         from src.llm.client import get_llm_client
         from src.parser.csv_loader import CSVLoader
@@ -561,8 +578,9 @@ def detect_column():
             }
         )
 
-    except Exception as e:
-        return jsonify({"error": str(e)}), 500
+    except Exception:
+        _logger.exception("Error during column detection in /detect-column")
+        return jsonify({"error": "An internal error occurred. Please try again."}), 500
 
 
 @app.route("/analyze", methods=["POST"])
@@ -765,16 +783,9 @@ def analyze():
         session_id = f"{filename}:{uuid.uuid4()}"
         try:
             dfg_payload = build_dfg_payload(mappings, session_id=session_id)
-        except Exception as dfg_error:
-            return (
-                jsonify(
-                    {
-                        "error": "DFG generation failed",
-                        "details": str(dfg_error),
-                    }
-                ),
-                500,
-            )
+        except Exception:
+            _logger.exception("DFG generation failed")
+            return jsonify({"error": "DFG generation failed. Please try again."}), 500
 
         recommendation_payload = [r.to_dict() for r in recommendations]
         enriched_activities = getattr(mapper, "enriched_activities", None)
@@ -820,8 +831,9 @@ def analyze():
             }
         )
 
-    except Exception as e:
-        return jsonify({"error": str(e)}), 500
+    except Exception:
+        _logger.exception("Error during analysis in /analyze")
+        return jsonify({"error": "An internal error occurred. Please try again."}), 500
     finally:
         if os.path.exists(filepath):
             os.remove(filepath)
@@ -955,6 +967,10 @@ def history_detail(history_id):
 @app.route("/settings", methods=["GET", "POST"])
 def settings():
     if request.method == "POST":
+        if not _validate_csrf(request.form.get("csrf_token", "")):
+            _logger.warning("CSRF validation failed for POST /settings")
+            return "Forbidden", 403
+
         existing = get_llm_config()
         submitted_api_key = (request.form.get("api_key", "") or "").strip()
         if not submitted_api_key or _is_masked_api_key(submitted_api_key):
@@ -972,7 +988,7 @@ def settings():
         return redirect(url_for("settings"))
 
     config = _sanitize_config_for_view(get_llm_config())
-    return render_template("settings.html", config=config)
+    return render_template("settings.html", config=config, csrf_token=_get_csrf_token())
 
 
 if __name__ == "__main__":

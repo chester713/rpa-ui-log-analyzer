@@ -41,6 +41,7 @@
             <div class="section-title">LLM Configuration</div>
             
             <form method="POST">
+                <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
                 <div class="form-group">
                     <label>Provider</label>
                     <select name="provider" id="providerSelect" onchange="toggleApiFields()">

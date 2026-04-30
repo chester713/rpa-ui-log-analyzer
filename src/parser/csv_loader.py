@@ -1,9 +1,12 @@
 """CSV loader for UI log files."""
 
 import csv
+import logging
 import re
 from typing import List, Dict, Any, Optional
 from ..models.event import Event
+
+_logger = logging.getLogger(__name__)
 
 
 class CSVLoader:
@@ -159,8 +162,8 @@ Return only one exact column name from the list above. No explanation."""
                             return best_field
                     return field
 
-        except Exception:
-            pass
+        except Exception as exc:
+            _logger.warning("LLM event column detection failed: %s", exc)
 
         return self._detect_event_column_fallback(fieldnames, sample_rows=sample_rows)
 
