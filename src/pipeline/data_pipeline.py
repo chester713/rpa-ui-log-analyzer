@@ -166,7 +166,7 @@ class DataPipeline:
 
             recommendation = MethodRecommendation(
                 activity_name=activity.name,
-                activity_action=action,
+                activity_action=pattern.action if pattern else action,
                 activity_object=obj,
                 events=event_indices,
                 execution_environment=context,

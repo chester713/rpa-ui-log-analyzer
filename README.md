@@ -20,16 +20,20 @@ python src_cli.py sample.csv
 
 ## Recommendation Pipeline
 
+The pipeline implements a two-stage recommendation approach: **task interpretation** followed by **method recommendation**.
+
+In task interpretation, consecutive UI events are grouped into interaction segments based on their collective intent — events that together constitute a single coherent interaction belong in the same group. The resulting group is then named as an activity using the pattern vocabulary. In method recommendation, the matched pattern and the detected execution environment together determine which automation method to recommend, following a priority order: content-level (web) → accessibility-level (desktop) → visual/hardware simulation (screen).
+
 The tool runs each log through six sequential steps:
 
 | # | Step | How |
 |---|------|-----|
-| 1 | **Event Grouping** | Consecutive events sharing `app`, `webpage`, `url`, or `element_id` are merged into one activity group. An `app` / `application` change triggers a context-switch boundary. | Rule-based |
-| 2 | **Activity Inference** | Each group is sent to an LLM (batched × 5, up to 5 parallel threads). Returns an activity name, the best-matching pattern, context-switch detection, and whether a prerequisite Find step is needed. | LLM |
-| 3 | **Action / Object Extraction** | The inferred name is parsed into Action + Object and normalised to the AOMC pattern vocabulary (e.g. click/press/tap → *Activate*; type/paste/fill → *Write*). If the LLM provided a pattern name, that is matched directly. | Hybrid |
-| 4 | **Pattern Matching** | The action/object pair is looked up in the 13-pattern library. The LLM-supplied pattern name is tried first; rule-based normalisation is the fallback. | Hybrid |
+| 1 | **Event Grouping** | Consecutive events are grouped into interaction segments by collective intent. Shared attributes (`app`, `webpage`, `url`, `element_id`) serve as supporting evidence; a change in `app` / `application` triggers a context-switch boundary. | Rule-based |
+| 2 | **Activity Naming** | Each group is sent to an LLM (batched × 5, up to 5 parallel threads) to be named as an activity. The LLM identifies the group's collective intent and assigns a name aligned with the pattern vocabulary. Also detects context switches and whether a prerequisite Find step is needed. | LLM |
+| 3 | **Action / Object Extraction** | The activity name is parsed into Action + Object and normalised to the pattern vocabulary (e.g. click/press/tap → *Activate*; type/paste/fill → *Write*). When a pattern is matched, the pattern's canonical Action and Object are used. | Hybrid |
+| 4 | **Pattern Matching** | The Action/Object pair is looked up in the 13-pattern library. The LLM-supplied pattern name is tried first; rule-based normalisation is the fallback. | Hybrid |
 | 5 | **Context Identification** | Event attributes are scanned in priority order — HTML attributes → **web**; app/workbook attributes → **desktop**; coordinate attributes → **screen**. | Rule-based |
-| 6 | **Method Recommendation** | The matched pattern's method field is sliced for the identified environment (e.g. Write Element + web → *HTML DOM manipulation*). | Rule-based |
+| 6 | **Method Recommendation** | The matched pattern's method field is resolved for the identified environment (e.g. Write Element + web → *HTML DOM manipulation*). | Rule-based |
 
 Two implicit activities are also inserted automatically:
 
@@ -100,6 +104,8 @@ python src_cli.py sample.csv --group-attr app webpage element_id
 ```
 
 ## Known Limitations
+
+- **Attribute-based grouping approximates intent-based grouping** — Ideally, events are grouped by their collective intent, with attributes serving as supporting evidence. In this prototype, grouping is driven by shared attribute values (`app`, `webpage`, `url`, `element_id`) as a tractable heuristic. This approximation works well in most logs because events sharing intent typically share attributes, but it can over-group events with different intents that happen to share an attribute, or mis-group edge cases where intent spans an attribute boundary.
 
 - **Attribute-less sandwiched events** — Some loggers do not record target-object attributes (e.g. element ID, URL) for certain events such as `Paste` or keyboard shortcuts. If such an event has *no* grouping attributes at all, the grouper treats it as a context-switch boundary and splits the group incorrectly, rather than absorbing it into the surrounding group. In practice this only affects logs where the intermediate event carries zero attributes; most loggers retain at least the application name or URL, which is sufficient for correct grouping.
 
