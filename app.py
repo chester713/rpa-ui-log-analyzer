@@ -40,6 +40,10 @@ os.makedirs(app.config["UPLOAD_FOLDER"], exist_ok=True)
 os.makedirs("config", exist_ok=True)
 os.makedirs("data", exist_ok=True)
 os.makedirs("skills", exist_ok=True)
+os.makedirs(os.path.join("data", "progressive"), exist_ok=True)
+
+from src.web.progressive import bp as _progressive_bp
+app.register_blueprint(_progressive_bp)
 
 DEFAULT_LLM_CONFIG = {
     "provider": "puter",
