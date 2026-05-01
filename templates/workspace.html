@@ -342,9 +342,20 @@
         </section>
     </div>
 
+    <!-- Progressive lazy-load overlay (only visible during per-stage computation) -->
+    <div id="progressiveLoadingOverlay" style="display:none;position:fixed;inset:0;background:rgba(249,250,251,0.95);z-index:200;flex-direction:column;align-items:center;justify-content:center;gap:16px;">
+        <div id="progressiveLoadingMsg" style="font-size:17px;color:#1f2937;font-weight:500;">Computing…</div>
+        <div style="width:320px;background:#e5e7eb;border-radius:99px;height:10px;overflow:hidden;">
+            <div id="progressiveLoadingBar" style="background:#2563eb;height:100%;border-radius:99px;width:0%;transition:width 0.3s;"></div>
+        </div>
+        <div id="progressiveLoadingCount" style="font-size:13px;color:#6b7280;"></div>
+        <div id="progressiveLoadingError" style="display:none;background:#fee2e2;color:#b91c1c;padding:10px 16px;border-radius:8px;font-size:13px;"></div>
+    </div>
+
     <script>
-        const progressiveArtifacts = {{ entry.progressive_artifacts | tojson }};
+        let progressiveArtifacts = {{ entry.progressive_artifacts | tojson }};
         const progressiveLogic = {{ entry.progressive_logic | tojson }};
+        const progressiveAid = {{ entry.get('progressive_aid', '') | tojson }};
 
         const AOMC_ACTION_MAP = {
             'find': 'Find/Identify', 'identify': 'Find/Identify',
@@ -398,19 +409,93 @@
             'method_recommendation'
         ];
 
+        function _stageHasData(stageKey) {
+            const d = progressiveArtifacts?.[stageKey];
+            if (!d) return false;
+            return Object.values(d).some(v => Array.isArray(v) && v.length > 0);
+        }
+
         function showStage(stageKey) {
             if (!stageKeys.includes(stageKey)) return;
 
+            // Progressive lazy-load: if this is a progressive analysis and the stage
+            // has no data yet, trigger computation before showing.
+            if (progressiveAid && stageKey !== 'event_grouping' && !_stageHasData(stageKey)) {
+                if (window.location.hash !== `#${stageKey}`) {
+                    history.replaceState(null, '', `#${stageKey}`);
+                }
+                _computeProgressiveStage(stageKey);
+                return;
+            }
+
+            _doShowStage(stageKey);
+        }
+
+        function _doShowStage(stageKey) {
             document.querySelectorAll('[data-stage-key]').forEach(section => {
                 section.hidden = section.getAttribute('data-stage-key') !== stageKey;
             });
             document.querySelectorAll('.workflow-step').forEach(btn => {
                 btn.classList.toggle('active', btn.getAttribute('href')?.endsWith(`#${stageKey}`));
             });
-
             if (window.location.hash !== `#${stageKey}`) {
                 history.replaceState(null, '', `#${stageKey}`);
             }
+        }
+
+        function _computeProgressiveStage(stageKey) {
+            const overlay = document.getElementById('progressiveLoadingOverlay');
+            const msg = document.getElementById('progressiveLoadingMsg');
+            const bar = document.getElementById('progressiveLoadingBar');
+            const count = document.getElementById('progressiveLoadingCount');
+            const errEl = document.getElementById('progressiveLoadingError');
+
+            errEl.style.display = 'none';
+            bar.style.width = '0%';
+            count.textContent = '';
+            overlay.style.display = 'flex';
+
+            if (stageKey === 'activity_naming') {
+                msg.textContent = 'Running activity naming (LLM)…';
+                fetch('/p/' + progressiveAid + '/compute/activity_naming/start', {method: 'POST'})
+                    .then(r => r.json())
+                    .then(d => {
+                        if (d.status === 'done') { window.location.reload(); return; }
+                        if (d.status === 'error') {
+                            errEl.textContent = d.error || 'Unknown error';
+                            errEl.style.display = 'block';
+                            return;
+                        }
+                        _pollActivityNaming();
+                    })
+                    .catch(() => { errEl.textContent = 'Network error'; errEl.style.display = 'block'; });
+            } else {
+                msg.textContent = 'Computing…';
+                // Sync stages: navigate to compute endpoint which redirects back with new data
+                window.location.href = '/p/' + progressiveAid + '/compute/' + stageKey;
+            }
+        }
+
+        function _pollActivityNaming() {
+            fetch('/p/' + progressiveAid + '/compute/activity_naming/poll')
+                .then(r => r.json())
+                .then(d => {
+                    if (d.status === 'done') { window.location.reload(); return; }
+                    if (d.status === 'error') {
+                        const errEl = document.getElementById('progressiveLoadingError');
+                        errEl.textContent = 'Error: ' + (d.error || 'unknown');
+                        errEl.style.display = 'block';
+                        return;
+                    }
+                    if (d.total > 0) {
+                        const pct = Math.round(d.completed / d.total * 100);
+                        document.getElementById('progressiveLoadingBar').style.width = pct + '%';
+                        document.getElementById('progressiveLoadingCount').textContent =
+                            d.completed + ' / ' + d.total + ' groups processed';
+                    }
+                    setTimeout(_pollActivityNaming, 1000);
+                })
+                .catch(() => setTimeout(_pollActivityNaming, 2000));
         }
 
         const stageInputKeys = {

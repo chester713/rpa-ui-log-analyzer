@@ -86,6 +86,7 @@
         
         <div class="button-bar">
             <button class="btn" id="analyzeBtn">Analyze</button>
+            <button class="btn btn-secondary" id="progressiveBtn" style="background:#eff6ff;color:#1d4ed8;border-color:#bfdbfe;">Step-by-step Analysis</button>
             <a href="/upload" class="btn btn-secondary">Cancel</a>
         </div>
         
@@ -137,6 +138,15 @@
             }
 
             window.location.href = '/analyzing?event_column=' + encodeURIComponent(selectedColumn);
+        };
+
+        document.getElementById('progressiveBtn').onclick = function() {
+            if (!selectedColumn) {
+                alert('No columns found in CSV.');
+                return;
+            }
+
+            window.location.href = '/p/start-progressive?event_column=' + encodeURIComponent(selectedColumn);
         };
     </script>
 </body>
