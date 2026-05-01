@@ -123,6 +123,24 @@ class ActivityInferrer:
                     if fallback.get("find_target"):
                         llm_result.setdefault("find_target", fallback["find_target"])
 
+            # Rule override: element-targeting actions always require Find, regardless of LLM decision.
+            # Mirrors the OR logic used for context switch — LLM provides the element name,
+            # rule ensures the prerequisite is never silently dropped.
+            _ELEMENT_TARGETING_VERBS = {
+                # Pattern vocabulary terms
+                "read", "write", "focus", "activate",
+                # Common raw synonyms the LLM may use instead of vocabulary terms
+                "click", "type", "input", "paste", "fill", "enter", "set",
+                "extract", "get", "select",
+            }
+            _act_name = llm_result.get("activity_name", "")
+            _first_verb = _act_name.split()[0].lower() if _act_name else ""
+            if _first_verb in _ELEMENT_TARGETING_VERBS:
+                llm_result["requires_find"] = True
+                if not llm_result.get("find_target"):
+                    _parts = _act_name.split()
+                    llm_result["find_target"] = " ".join(_parts[1:]) if len(_parts) > 1 else "element"
+
             # 1. Implicit context-switch activity — LLM-detected first, rule-based fallback
             cs_info = llm_result.get("context_switch") or {}
             if not isinstance(cs_info, dict):
