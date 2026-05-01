@@ -140,7 +140,7 @@
                             <span class="step-title">Action / Object Extraction</span>
                             <span class="badge badge-hybrid">Hybrid</span>
                         </div>
-                        <p class="step-desc">The LLM's activity name is parsed into an <strong>Action</strong> (first word) and an <strong>Object</strong> (remainder). A rule-based normaliser then maps both to the AOMC pattern vocabulary — for example, "click / press / tap" all normalise to <em>Activate</em>; "type / input / paste" normalise to <em>Write</em>; clicking a text-field target is reclassified as <em>Focus</em>. If the LLM provided a <code>pattern</code> field, that name is matched directly against the pattern library (bypassing normalisation). Object normalisation reduces most targets to <em>Element</em>, but detects <em>Option</em> (dropdowns) and <em>Context</em> (window/application switches) as special cases.</p>
+                        <p class="step-desc">The LLM's activity name is parsed into an <strong>Action</strong> (first word) and an <strong>Object</strong> (remainder). A rule-based normaliser then maps both to the AOMC pattern vocabulary — for example, "click / press / tap" all normalise to <em>Activate</em>; "type / input / paste" normalise to <em>Write</em>; clicking a text-field target is reclassified as <em>Focus</em>. If the LLM provided a <code>pattern</code> field, that name is matched directly against the RPA UI Interaction Pattern Library (bypassing normalisation). Object normalisation reduces most targets to <em>Element</em>, but detects <em>Option</em> (dropdowns) and <em>Context</em> (window/application switches) as special cases.</p>
                     </div>
                 </div>
 
@@ -152,7 +152,7 @@
                             <span class="step-title">Pattern Matching</span>
                             <span class="badge badge-hybrid">Hybrid</span>
                         </div>
-                        <p class="step-desc">The normalised action + object pair is looked up in the 13-pattern library. <strong>Primary path</strong>: if the LLM supplied a <code>pattern</code> name, the library is searched for an exact name match (case-insensitive) in the correct execution context. <strong>Fallback</strong>: if no LLM pattern name is present, the rule-normalised action/object pair is matched against each pattern's <code>Action</code> and <code>Object</code> fields. The first match wins. If no pattern matches, the recommendation is left without a pattern assignment.</p>
+                        <p class="step-desc">The normalised action + object pair is looked up in the RPA UI Interaction Pattern Library. <strong>Primary path</strong>: if the LLM supplied a <code>pattern</code> name, the library is searched for an exact name match (case-insensitive) in the correct execution context. <strong>Fallback</strong>: if no LLM pattern name is present, the rule-normalised action/object pair is matched against each pattern's <code>Action</code> and <code>Object</code> fields. The first match wins. If no pattern matches, the recommendation is left without a pattern assignment.</p>
                     </div>
                 </div>
 
@@ -206,8 +206,8 @@
 
         <!-- Patterns -->
         <section class="card">
-            <h2>RPA Pattern Library (13 patterns)</h2>
-            <p class="section-intro">All activities are matched against the 13 UI interaction patterns below. Each pattern has a fixed <strong>Action</strong> and <strong>Object</strong>, one or more supported execution environments, and a category.</p>
+            <h2>RPA UI Interaction Pattern Library (13 patterns)</h2>
+            <p class="section-intro">All activities are matched against the 13 RPA UI Interaction Patterns below. Each pattern has a fixed <strong>Action</strong> and <strong>Object</strong>, one or more supported execution environments, and a category.</p>
 
             <div class="pattern-category">
                 <div class="category-label cat-extraction">Extraction — read or locate data without modifying the UI</div>

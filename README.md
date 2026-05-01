@@ -31,7 +31,7 @@ The tool runs each log through six sequential steps:
 | 1 | **Event Grouping** | Consecutive events are grouped into interaction segments by collective intent. Shared attributes (`app`, `webpage`, `url`, `element_id`) serve as supporting evidence; a change in `app` / `application` triggers a context-switch boundary. | Rule-based |
 | 2 | **Activity Naming** | Each group is sent to an LLM (batched × 5, up to 5 parallel threads) to be named as an activity. The LLM identifies the group's collective intent and assigns a name aligned with the pattern vocabulary. Also detects context switches and whether a prerequisite Find step is needed. | LLM |
 | 3 | **Action / Object Extraction** | The activity name is parsed into Action + Object and normalised to the pattern vocabulary (e.g. click/press/tap → *Activate*; type/paste/fill → *Write*). When a pattern is matched, the pattern's canonical Action and Object are used. | Hybrid |
-| 4 | **Pattern Matching** | The Action/Object pair is looked up in the 13-pattern library. The LLM-supplied pattern name is tried first; rule-based normalisation is the fallback. | Hybrid |
+| 4 | **Pattern Matching** | The Action/Object pair is looked up in the RPA UI Interaction Pattern Library. The LLM-supplied pattern name is tried first; rule-based normalisation is the fallback. | Hybrid |
 | 5 | **Context Identification** | Event attributes are scanned in priority order — HTML attributes → **web**; app/workbook attributes → **desktop**; coordinate attributes → **screen**. | Rule-based |
 | 6 | **Method Recommendation** | The matched pattern's method field is resolved for the identified environment (e.g. Write Element + web → *HTML DOM manipulation*). | Rule-based |
 
@@ -40,7 +40,7 @@ Two implicit activities are also inserted automatically:
 - **Prerequisite Find Element** — inserted before any activity that targets a specific UI element, reflecting the bot's requirement to locate the element first.
 - **Context Switch** — inserted at any application boundary, explicitly representing the environment transition.
 
-## Pattern Library
+## RPA UI Interaction Pattern Library
 
 Thirteen patterns across three categories:
 
