@@ -891,6 +891,40 @@ def analyzing():
     return render_template("analyzing.html", event_column=event_column)
 
 
+def _synthesize_recommendations_from_progressive(entry):
+    """Populate entry.recommendations from progressive_artifacts when it's empty."""
+    if entry.get("recommendations"):
+        return
+    mr_recs = (
+        entry.get("progressive_artifacts", {})
+        .get("method_recommendation", {})
+        .get("recommendations", [])
+    )
+    if not mr_recs:
+        return
+    entry["recommendations"] = [
+        {
+            "inferred_activity": r.get("inferred_activity", ""),
+            "activity_action": r.get("activity_action", ""),
+            "activity_object": r.get("activity_object", ""),
+            "events": r.get("events", []),
+            "execution_environment": r.get("execution_environment", ""),
+            "pattern_matched": r.get("pattern_matched"),
+            "method": r.get("method") or r.get("recommended_method"),
+            "method_category": r.get("method_category"),
+            "confidence": r.get("confidence", 0),
+            "confidence_explanation": None,
+            "context_attributes_used": None,
+            "context_switch": r.get("context_switch", False),
+            "context_switch_from": None,
+            "context_switch_to": None,
+            "inference_evidence": [],
+            "inference_reasoning": "",
+        }
+        for r in mr_recs
+    ]
+
+
 @app.route("/results/<history_id>")
 def results(history_id):
     history = get_history()
@@ -898,6 +932,8 @@ def results(history_id):
 
     if entry is None:
         return "Analysis not found", 404
+
+    _synthesize_recommendations_from_progressive(entry)
 
     # Backward-compatible normalization for older history entries.
     if "log_columns" not in entry or not entry.get("log_columns"):
@@ -982,6 +1018,8 @@ def history_detail(history_id):
     if entry is None:
         return "Analysis not found", 404
 
+    _synthesize_recommendations_from_progressive(entry)
+
     if "log_columns" not in entry or not entry.get("log_columns"):
         preview = entry.get("log_preview", [])
         if preview and isinstance(preview[0], dict):
@@ -1035,4 +1073,4 @@ def settings():
 
 
 if __name__ == "__main__":
-    app.run(debug=True, port=5000)
+    app.run(debug=True, port=5001)

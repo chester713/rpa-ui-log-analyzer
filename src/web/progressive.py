@@ -4,6 +4,7 @@ import csv as _csv
 import json
 import os
 import shutil
+import tempfile
 import threading
 import uuid
 from datetime import datetime
@@ -114,6 +115,8 @@ _step2_lock = threading.Lock()
 _step2_progress: dict = {}
 
 # ── History helpers ───────────────────────────────────────────────────────────
+_history_lock = threading.Lock()
+
 
 def _get_history():
     path = "data/history.json"
@@ -128,17 +131,23 @@ def _get_history():
 
 
 def _save_history(history):
-    with open("data/history.json", "w", encoding="utf-8") as f:
+    path = "data/history.json"
+    dir_path = os.path.dirname(os.path.abspath(path))
+    with tempfile.NamedTemporaryFile("w", encoding="utf-8", dir=dir_path,
+                                     delete=False, suffix=".tmp") as f:
         json.dump(history, f, indent=2)
+        tmp_path = f.name
+    os.replace(tmp_path, path)
 
 
 def _update_history_stage(history_id, stage_key, workspace_data):
-    history = _get_history()
-    for entry in history:
-        if entry["id"] == history_id:
-            entry["progressive_artifacts"][stage_key] = workspace_data
-            break
-    _save_history(history)
+    with _history_lock:
+        history = _get_history()
+        for entry in history:
+            if entry["id"] == history_id:
+                entry["progressive_artifacts"][stage_key] = workspace_data
+                break
+        _save_history(history)
 
 
 # ── CSV preview helper ────────────────────────────────────────────────────────
@@ -344,10 +353,18 @@ def _ws_method_recommendation(step2, step6):
         "recommendations": [
             {
                 "inferred_activity": r["activity_name"],
-                "recommended_method": r.get("method"),
+                "recommended_method": r.get("method"),   # workspace.html key
+                "method": r.get("method"),               # results.html key
+                "activity_action": r.get("activity_action", ""),
+                "activity_object": r.get("activity_object", ""),
+                "execution_environment": r.get("execution_environment", ""),
+                "pattern_matched": r.get("pattern_matched"),
                 "method_category": r.get("method_category"),
                 "confidence": r.get("confidence"),
                 "events": r.get("events", []),
+                "context_switch": r.get("context_switch", False),
+                "activity_type": r.get("activity_type", "main"),
+                "is_implicit": r.get("is_implicit", False),
             }
             for r in step6["recommendations"]
         ]
@@ -430,6 +447,8 @@ def _run_step2_thread(aid):
         llm_client = get_llm_client()
         inferrer = ActivityInferrer(llm_client, progress_callback=_on_progress, patterns=PATTERNS)
         activities = inferrer.infer_activities(groups)
+        if not activities:
+            raise RuntimeError("Activity naming produced no results — LLM may be unavailable.")
 
         store.save_step(2, {"activities": [_serialize_activity(a) for a in activities]})
 
@@ -507,7 +526,10 @@ def _compute_step4(store):
             if group_idx < len(step1["groups"]) else []
         )
         context = ctx_by_group.get(group_idx, "unknown")
-        pattern = matcher.match(a, group_events, context)
+        # Context switches are OS-level operations; the Switch Context pattern
+        # only lists "desktop", so force that context for matching purposes.
+        match_context = "desktop" if a.activity_type == "context_switch" else context
+        pattern = matcher.match(a, group_events, match_context)
         matches.append({
             "activity_name": a.name,
             "activity_action": pattern.action if pattern else None,
@@ -541,8 +563,9 @@ def _compute_step6(store):
             if group_idx < len(step1["groups"]) else []
         )
         context = ctx_by_group.get(group_idx, "unknown")
-        pattern = matcher.match(a, group_events, context)
-        method = pattern.get_method_for_context(context) if pattern else None
+        match_context = "desktop" if a.activity_type == "context_switch" else context
+        pattern = matcher.match(a, group_events, match_context)
+        method = pattern.get_method_for_context(match_context) if pattern else None
         raw_action = a.name.split()[0] if a.name else ""
         raw_obj = " ".join(a.name.split()[1:]) if " " in a.name else ""
 
@@ -643,9 +666,10 @@ def start_progressive():
         "progressive_aid": aid,
     }
 
-    history = _get_history()
-    history.insert(0, history_entry)
-    _save_history(history)
+    with _history_lock:
+        history = _get_history()
+        history.insert(0, history_entry)
+        _save_history(history)
 
     return redirect(f"/workspace/{history_id}#event_grouping")
 
@@ -695,8 +719,13 @@ def compute_stage(aid, stage_key):
     if stage_key != "event_grouping" and not store.has_step(2):
         return redirect(f"/workspace/{history_id}#activity_naming")
 
-    _ensure_dependencies(store, stage_key)
-    ws_data = _to_workspace(store, stage_key)
-    _update_history_stage(history_id, stage_key, ws_data)
+    # Compute every stage in order from action_object_extraction up to the
+    # requested stage. This ensures no intermediate stage is skipped when the
+    # user jumps ahead in the roadmap.
+    stage_idx = PROGRESSIVE_STAGE_KEYS.index(stage_key)
+    for sk in PROGRESSIVE_STAGE_KEYS[2:stage_idx + 1]:
+        _ensure_dependencies(store, sk)
+        ws_data = _to_workspace(store, sk)
+        _update_history_stage(history_id, sk, ws_data)
 
     return redirect(f"/workspace/{history_id}#{stage_key}")
