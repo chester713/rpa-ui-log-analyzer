@@ -438,7 +438,7 @@ def _run_step2_thread(aid):
         total = len(groups)
 
         with _step2_lock:
-            _step2_progress[aid] = {"status": "computing", "completed": 0, "total": total}
+            _step2_progress[aid].update({"total": total})
 
         def _on_progress(completed, total):
             with _step2_lock:
@@ -687,6 +687,7 @@ def activity_naming_start(aid):
             return jsonify({"status": "computing",
                             "completed": state.get("completed", 0),
                             "total": state.get("total", 0)})
+        _step2_progress[aid] = {"status": "computing", "completed": 0, "total": 0}
     t = threading.Thread(target=_run_step2_thread, args=(aid,), daemon=True)
     t.start()
     return jsonify({"status": "started"})

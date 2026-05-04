@@ -27,9 +27,9 @@
         th { background: #f0f0f0; font-weight: 600; color: #333; cursor: pointer; position: sticky; top: 0; z-index: 10; }
         th:hover { background: #e0e0e0; }
         th.selected { background: #2563eb !important; color: white !important; }
-        th.llm { background: #90EE90; }
-        th.llm::after { content: " (LLM)"; color: #006400; font-size: 10px; }
-        th.llm.selected { background: #007bff !important; color: white !important; }
+        th.suggested { background: #90EE90; }
+        th.suggested::after { content: " (LLM)"; color: #006400; font-size: 10px; }
+        th.suggested.selected { background: #007bff !important; color: white !important; }
         tr:hover { background: #f5f7fb; }
         .filename { font-weight: 600; color: #333; margin-bottom: 10px; }
         .selected-info { margin-top: 15px; padding: 12px; background: #e7f0ff; border-radius: 6px; }
@@ -81,6 +81,16 @@
             
             <div class="selected-info">
                 <strong>Selected column:</strong> <span id="selectedCol">{{ detected_column }}</span>
+                <span id="selectionSource" style="margin-left: 10px; font-size: 12px; color: #6b7280;"></span>
+                <button id="heuristicsToggle" onclick="toggleHeuristics()" style="display:none; margin-left: 8px; background: none; border: none; color: #2563eb; font-size: 12px; cursor: pointer; padding: 0; text-decoration: underline;">How was this selected?</button>
+            </div>
+            <div id="heuristicsExplanation" style="display:none; margin-top: 10px; padding: 12px 16px; background: #f8f9fa; border-left: 3px solid #d1d5db; border-radius: 4px; font-size: 13px; color: #374151; line-height: 1.6;">
+                <strong>Automatic selection (heuristics)</strong> — no LLM response was available. The column was chosen by:
+                <ol style="margin: 8px 0 0 18px; padding: 0;">
+                    <li><strong>Value scoring</strong> — each column's values are checked for UI action words (e.g. <em>click</em>, <em>open</em>, <em>set</em>, <em>type</em>, <em>find</em>, <em>scroll</em>) at the start of the value. camelCase and underscore-separated values like <em>clickTextField</em> or <em>open_window</em> score highest. Timestamps, URLs, and long text score zero.</li>
+                    <li><strong>Column name bonus</strong> — columns named <em>event</em>, <em>activity</em>, <em>action</em>, <em>concept:name</em>, or <em>name</em> get a small score boost.</li>
+                    <li><strong>Name fallback</strong> — if no column scores high enough, the first column whose name matches a known list (<em>event_type</em>, <em>event</em>, <em>activity</em>, <em>action</em>…) is used.</li>
+                </ol>
             </div>
         </div>
         
@@ -94,26 +104,39 @@
     <script>
         var columns = {{ columns | tojson }};
         var detectedColumn = {{ detected_column | tojson }};
+        var llmRecommended = {{ llm_recommended | tojson }};
         var selectedColumn = detectedColumn || columns[0] || null;
-        
-        // Set initial selection
-        for (var i = 0; i < columns.length; i++) {
-            var th = document.getElementById('th' + i);
-            if (columns[i] === detectedColumn) {
-                th.className = 'llm';
-            }
-        }
-        
+
         function selectCol(idx) {
             selectedColumn = columns[idx];
             document.getElementById('selectedCol').innerText = selectedColumn;
-            
+
+            var isDetected = selectedColumn === detectedColumn;
+            var sourceEl = document.getElementById('selectionSource');
+            var toggleBtn = document.getElementById('heuristicsToggle');
+            var explanationEl = document.getElementById('heuristicsExplanation');
+            if (isDetected && llmRecommended) {
+                sourceEl.textContent = '— recommended by LLM';
+                sourceEl.style.color = '#166534';
+                toggleBtn.style.display = 'none';
+                explanationEl.style.display = 'none';
+            } else if (isDetected && detectedColumn) {
+                sourceEl.textContent = '— suggested by heuristics';
+                sourceEl.style.color = '#6b7280';
+                toggleBtn.style.display = 'inline';
+            } else {
+                sourceEl.textContent = '— manually selected';
+                sourceEl.style.color = '#6b7280';
+                toggleBtn.style.display = 'none';
+                explanationEl.style.display = 'none';
+            }
+
             for (var i = 0; i < columns.length; i++) {
                 var th = document.getElementById('th' + i);
                 if (i === idx) {
                     th.className = 'selected';
-                } else if (columns[i] === detectedColumn) {
-                    th.className = 'llm';
+                } else if (llmRecommended && columns[i] === detectedColumn) {
+                    th.className = 'suggested';
                 } else {
                     th.className = '';
                 }
@@ -130,6 +153,18 @@
             }
         }
         
+        function toggleHeuristics() {
+            var el = document.getElementById('heuristicsExplanation');
+            var btn = document.getElementById('heuristicsToggle');
+            if (el.style.display === 'none') {
+                el.style.display = 'block';
+                btn.textContent = 'Hide explanation';
+            } else {
+                el.style.display = 'none';
+                btn.textContent = 'How was this selected?';
+            }
+        }
+
         document.getElementById('progressiveBtn').onclick = function() {
             if (!selectedColumn) {
                 alert('No columns found in CSV.');

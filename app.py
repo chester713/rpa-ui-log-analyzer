@@ -13,6 +13,12 @@ from datetime import datetime
 from flask import Flask, render_template, request, jsonify, redirect, url_for, session
 from werkzeug.utils import secure_filename
 
+try:
+    from dotenv import load_dotenv
+    load_dotenv()
+except ImportError:
+    pass
+
 logging.basicConfig(
     level=logging.INFO,
     format="%(asctime)s %(levelname)s %(name)s: %(message)s",
@@ -537,6 +543,7 @@ def select_column():
                 "columns.html",
                 columns=columns,
                 detected_column=detected,
+                llm_recommended=loader.llm_recommended,
                 rows=rows,
                 filename=filename,
             )
@@ -584,6 +591,7 @@ def detect_column():
             {
                 "columns": columns,
                 "detected_column": detected,
+                "llm_recommended": loader.llm_recommended,
                 "upload_id": str(uuid.uuid4()),
             }
         )

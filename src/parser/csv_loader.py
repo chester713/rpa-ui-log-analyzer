@@ -23,6 +23,7 @@ class CSVLoader:
         self.llm_client = llm_client
         self._force_column = None
         self.detected_column = None
+        self.llm_recommended = False
         self.detected_group_columns: Optional[List[str]] = None
         self.detected_switch_columns: Optional[List[str]] = None
 
@@ -112,6 +113,7 @@ class CSVLoader:
             Name of event column, or None if detection fails
         """
         if self.llm_client is None:
+            self.llm_recommended = False
             return self._detect_event_column_fallback(fieldnames, sample_rows=sample_rows)
 
         columns_str = ", ".join(fieldnames or [])
@@ -149,6 +151,7 @@ Return only one exact column name from the list above. No explanation."""
             # Reject empty/invalid responses (e.g., unnamed index column).
             invalid = {"", "index", "row", "row_id", "#"}
             if detected.lower() in invalid:
+                self.llm_recommended = False
                 return self._detect_event_column_fallback(fieldnames, sample_rows=sample_rows)
 
             for field in fieldnames or []:
@@ -167,12 +170,15 @@ Return only one exact column name from the list above. No explanation."""
                                 best_score = score
 
                         if best_field != field and best_score >= llm_score + 0.2:
+                            self.llm_recommended = False
                             return best_field
+                    self.llm_recommended = True
                     return field
 
         except Exception as exc:
             _logger.warning("LLM event column detection failed: %s", exc)
 
+        self.llm_recommended = False
         return self._detect_event_column_fallback(fieldnames, sample_rows=sample_rows)
 
     def _detect_context_columns_with_llm(

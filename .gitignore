@@ -1,5 +1,6 @@
 data/uploads/*.csv
 data/history.json
+.env
 
 # Python cache / bytecode
 __pycache__/
