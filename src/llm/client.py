@@ -15,13 +15,20 @@ _RETRY_BACKOFF = 1  # seconds; doubles on each retry
 
 
 def _post_with_retry(url: str, payload: dict, headers: dict) -> "requests.Response":
-    """POST with exponential backoff on timeout/connection errors."""
+    """POST with exponential backoff on timeout/connection errors and 429 rate limits."""
     import requests
 
     last_exc: Exception | None = None
     for attempt in range(_MAX_RETRIES + 1):
         try:
-            return requests.post(url, json=payload, headers=headers, timeout=_TIMEOUT)
+            response = requests.post(url, json=payload, headers=headers, timeout=_TIMEOUT)
+            if response.status_code == 429 and attempt < _MAX_RETRIES:
+                wait = _RETRY_BACKOFF * (2 ** attempt)
+                _logger.warning("LLM rate limited (attempt %d/%d), retrying in %ds",
+                                attempt + 1, _MAX_RETRIES + 1, wait)
+                time.sleep(wait)
+                continue
+            return response
         except (requests.exceptions.Timeout, requests.exceptions.ConnectionError) as exc:
             last_exc = exc
             if attempt < _MAX_RETRIES:
@@ -29,7 +36,9 @@ def _post_with_retry(url: str, payload: dict, headers: dict) -> "requests.Respon
                 _logger.warning("LLM request failed (attempt %d/%d), retrying in %ds: %s",
                                 attempt + 1, _MAX_RETRIES + 1, wait, exc)
                 time.sleep(wait)
-    raise last_exc
+    if last_exc:
+        raise last_exc
+    return response
 
 
 class LLMClient:

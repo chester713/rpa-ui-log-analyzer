@@ -1,6 +1,5 @@
 """LLM-powered activity inference."""
 
-import concurrent.futures
 import json
 import logging
 import os
@@ -85,27 +84,21 @@ class ActivityInferrer:
         for i in range(1, len(normalised)):
             prev_summaries[i] = self._extract_context_summary(normalised[i - 1].events)
 
-        # Split into batches and fan out in parallel — groups within each batch share one LLM call.
+        # Process batches sequentially to stay within free-tier rate limits.
         indexed = [(i, g, prev_summaries[i]) for i, g in enumerate(normalised)]
         batches = [indexed[i:i + _BATCH_SIZE] for i in range(0, len(indexed), _BATCH_SIZE)]
-        max_workers = min(5, len(batches)) if batches else 1
         llm_results: Dict[int, dict] = {}
         completed = 0
         total = len(normalised)
         if self.progress_callback:
             self.progress_callback(0, total)
-        with concurrent.futures.ThreadPoolExecutor(max_workers=max_workers) as executor:
-            futures = {
-                executor.submit(self._call_llm_for_batch, batch): batch
-                for batch in batches
-            }
-            for future in concurrent.futures.as_completed(futures):
-                batch_results = future.result()
-                for group_idx, result in batch_results:
-                    llm_results[group_idx] = result
-                completed += len(batch_results)
-                if self.progress_callback:
-                    self.progress_callback(completed, total)
+        for batch in batches:
+            batch_results = self._call_llm_for_batch(batch)
+            for group_idx, result in batch_results:
+                llm_results[group_idx] = result
+            completed += len(batch_results)
+            if self.progress_callback:
+                self.progress_callback(completed, total)
 
         # Assemble activities in original group order.
         activities: List[Activity] = []

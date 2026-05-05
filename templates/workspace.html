@@ -444,10 +444,23 @@
         }
 
         var _computingStage = null;
+        var _computingStorageKey = progressiveAid ? 'computing_stage_' + progressiveAid : null;
+        if (_computingStorageKey && sessionStorage.getItem(_computingStorageKey)) {
+            _computingStage = sessionStorage.getItem(_computingStorageKey);
+        }
+
+        function _setComputingStage(stageKey) {
+            _computingStage = stageKey;
+            if (_computingStorageKey) sessionStorage.setItem(_computingStorageKey, stageKey || '');
+        }
+        function _clearComputingStage() {
+            _computingStage = null;
+            if (_computingStorageKey) sessionStorage.removeItem(_computingStorageKey);
+        }
 
         function _computeProgressiveStage(stageKey) {
             if (_computingStage === stageKey) return;
-            _computingStage = stageKey;
+            _setComputingStage(stageKey);
 
             const overlay = document.getElementById('progressiveLoadingOverlay');
             const msg = document.getElementById('progressiveLoadingMsg');
@@ -467,14 +480,14 @@
                     .then(d => {
                         if (d.status === 'done') { window.location.reload(); return; }
                         if (d.status === 'error') {
-                            _computingStage = null;
+                            _clearComputingStage();
                             _showComputeError(errEl, d.error || 'Unknown error', stageKey);
                             return;
                         }
                         _pollActivityNaming();
                     })
                     .catch(() => {
-                        _computingStage = null;
+                        _clearComputingStage();
                         _showComputeError(errEl, 'Network error', stageKey);
                     });
             } else {
@@ -492,7 +505,7 @@
         }
 
         function _retryStage(stageKey) {
-            _computingStage = null;
+            _clearComputingStage();
             _computeProgressiveStage(stageKey);
         }
 
@@ -500,9 +513,9 @@
             fetch('/p/' + progressiveAid + '/compute/activity_naming/poll')
                 .then(r => r.json())
                 .then(d => {
-                    if (d.status === 'done') { window.location.reload(); return; }
+                    if (d.status === 'done') { _clearComputingStage(); window.location.reload(); return; }
                     if (d.status === 'error') {
-                        _computingStage = null;
+                        _clearComputingStage();
                         const errEl = document.getElementById('progressiveLoadingError');
                         _showComputeError(errEl, 'Error: ' + (d.error || 'unknown'), 'activity_naming');
                         return;
