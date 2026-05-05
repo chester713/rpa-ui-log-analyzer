@@ -1,6 +1,7 @@
 data/uploads/*.csv
 data/history.json
 .env
+config/llm_config.json
 
 # Python cache / bytecode
 __pycache__/
