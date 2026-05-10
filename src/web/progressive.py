@@ -392,7 +392,7 @@ def _to_workspace(store, stage_key):
 
 def _compute_step1(store):
     from src.parser.csv_loader import CSVLoader
-    from src.inference.event_grouper import EventGrouper
+    from src.inference.event_grouper import EventGrouper, LLMGroupRefiner
     from src.llm.client import get_llm_client
 
     meta = store.load("meta")
@@ -410,6 +410,9 @@ def _compute_step1(store):
         grouper.context_switch_attributes = loader.detected_switch_columns
 
     groups = grouper.group_events_with_context_switches(events)
+
+    refiner = LLMGroupRefiner(llm_client)
+    groups = refiner.refine(groups)
 
     serialized = [
         {
