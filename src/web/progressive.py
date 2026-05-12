@@ -9,6 +9,8 @@ import threading
 import uuid
 from datetime import datetime
 
+from urllib.parse import quote as _urlquote
+
 from flask import Blueprint, jsonify, redirect, request, session
 
 from .step_store import StepStore
@@ -642,7 +644,11 @@ def start_progressive():
         "event_column": event_column,
     })
 
-    step1_data = _compute_step1(store)
+    try:
+        step1_data = _compute_step1(store)
+    except Exception as exc:
+        _logger.exception("Step 1 (event grouping / column detection) failed")
+        return redirect(f"/upload?llm_error={_urlquote(str(exc))}")
     store.save_step(1, step1_data)
 
     try:
@@ -726,10 +732,14 @@ def compute_stage(aid, stage_key):
     # Compute every stage in order from action_object_extraction up to the
     # requested stage. This ensures no intermediate stage is skipped when the
     # user jumps ahead in the roadmap.
-    stage_idx = PROGRESSIVE_STAGE_KEYS.index(stage_key)
-    for sk in PROGRESSIVE_STAGE_KEYS[2:stage_idx + 1]:
-        _ensure_dependencies(store, sk)
-        ws_data = _to_workspace(store, sk)
-        _update_history_stage(history_id, sk, ws_data)
+    try:
+        stage_idx = PROGRESSIVE_STAGE_KEYS.index(stage_key)
+        for sk in PROGRESSIVE_STAGE_KEYS[2:stage_idx + 1]:
+            _ensure_dependencies(store, sk)
+            ws_data = _to_workspace(store, sk)
+            _update_history_stage(history_id, sk, ws_data)
+    except Exception as exc:
+        _logger.exception("Stage %s computation failed", stage_key)
+        return redirect(f"/workspace/{history_id}?llm_error={_urlquote(str(exc))}#{stage_key}")
 
     return redirect(f"/workspace/{history_id}#{stage_key}")

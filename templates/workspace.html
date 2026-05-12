@@ -1093,6 +1093,28 @@
             });
         }
 
+        // Show LLM error popup if the server redirected back with an error parameter.
+        (function() {
+            const params = new URLSearchParams(window.location.search);
+            const llmError = params.get('llm_error');
+            if (llmError) {
+                const overlay = document.getElementById('progressiveLoadingOverlay');
+                const msg = document.getElementById('progressiveLoadingMsg');
+                const bar = document.getElementById('progressiveLoadingBar');
+                const count = document.getElementById('progressiveLoadingCount');
+                const errEl = document.getElementById('progressiveLoadingError');
+                msg.textContent = 'LLM Error';
+                bar.style.display = 'none';
+                count.textContent = '';
+                errEl.innerHTML = llmError +
+                    ' <button onclick="document.getElementById(\'progressiveLoadingOverlay\').style.display=\'none\'" ' +
+                    'style="margin-left:10px;padding:2px 10px;cursor:pointer;">Dismiss</button>';
+                errEl.style.display = 'block';
+                overlay.style.display = 'flex';
+                history.replaceState(null, '', window.location.pathname + window.location.hash);
+            }
+        })();
+
         renderStageData();
         const initialStage = stageKeys.includes(window.location.hash.replace('#', ''))
             ? window.location.hash.replace('#', '')

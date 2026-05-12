@@ -97,6 +97,17 @@
             }
         });
         
+        // Show LLM error if redirected back from a failed analysis.
+        (function() {
+            const params = new URLSearchParams(window.location.search);
+            const llmError = params.get('llm_error');
+            if (llmError) {
+                const el = document.getElementById('error');
+                if (el) { el.textContent = 'LLM error: ' + llmError; el.style.display = 'block'; }
+                history.replaceState(null, '', window.location.pathname);
+            }
+        })();
+
         document.getElementById('uploadForm').addEventListener('submit', (e) => {
             if (!selectedFile) {
                 e.preventDefault();
