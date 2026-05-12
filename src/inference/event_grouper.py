@@ -210,7 +210,10 @@ class LLMGroupRefiner:
     def _refine_batch(self, batch: List[EventGroup]) -> List[EventGroup]:
         if len(batch) == 1:
             return batch
-        response = self.llm_client.complete(self._build_prompt(batch))
+        prompt = self._build_prompt(batch)
+        _logger.debug("=== LLMGroupRefiner prompt ===\n%s\n=== end prompt ===", prompt)
+        response = self.llm_client.complete(prompt)
+        _logger.debug("=== LLMGroupRefiner response ===\n%s\n=== end response ===", response)
         merge_sets = self._parse_response(response, len(batch))
         return self._apply_merges(batch, merge_sets)
 
@@ -263,26 +266,26 @@ Return only valid JSON. No explanation.
             text = re.sub(r"```[a-z]*\n?", "", text).strip("`").strip()
         arr_match = re.search(r'\[.*\]', text, re.DOTALL)
         if not arr_match:
-            raise ValueError(f"LLM group refinement response contains no JSON array: {text[:200]}")
+            raise ValueError("The LLM did not return a valid group structure. Please try again.")
         parsed = json.loads(arr_match.group())
         if not isinstance(parsed, list):
-            raise ValueError("LLM group refinement response is not a list")
+            raise ValueError("The LLM returned an unexpected response format for group refinement. Please try again.")
 
         seen = set()
         for s in parsed:
             if not isinstance(s, list) or not s:
-                raise ValueError(f"Invalid merge set in LLM response: {s}")
+                raise ValueError("The LLM returned an invalid group structure. Please try again.")
             for idx in s:
                 if not isinstance(idx, int) or idx < 0 or idx >= n or idx in seen:
-                    raise ValueError(f"Invalid index {idx} in LLM group refinement response")
+                    raise ValueError("The LLM returned an invalid group structure. Please try again.")
                 seen.add(idx)
         if seen != set(range(n)):
-            raise ValueError("LLM group refinement response missing some group indices")
+            raise ValueError("The LLM returned an incomplete group structure. Please try again.")
 
         for s in parsed:
             sorted_s = sorted(s)
             if sorted_s != list(range(sorted_s[0], sorted_s[0] + len(sorted_s))):
-                raise ValueError(f"Non-consecutive indices in merge set: {s}")
+                raise ValueError("The LLM attempted to merge non-adjacent event groups, which is not allowed. Please try again.")
 
         return parsed
 
