@@ -32,21 +32,12 @@ class PatternMatcher:
         Returns:
             Matching Pattern or None
         """
-        # Primary path: use LLM-supplied pattern name (semantic mapping already done by LLM)
         llm_pattern_name = getattr(activity, "pattern_name", None)
         if llm_pattern_name:
             for pattern in self.patterns:
                 if pattern.name.lower() == llm_pattern_name.strip().lower():
                     if not pattern.contexts or context in pattern.contexts:
                         return pattern
-
-        # Fallback: rule-based keyword normalisation for when LLM omits the pattern field
-        action, obj = self._parse_activity_name(activity.name)
-        action, obj = self._normalize_activity(action, obj, events)
-
-        for pattern in self.patterns:
-            if pattern.matches_activity(action, obj, context):
-                return pattern
 
         return None
 
@@ -264,29 +255,6 @@ class PatternMatcher:
             or is_text_input_target
         ):
             normalized_action = "Focus"
-
-        # Heuristic fallback from event names when LLM uses free-form phrasing
-        if not normalized_action:
-            if any(k in event_text for k in ["click", "activate", "press"]):
-                normalized_action = "Activate"
-            elif any(k in event_text for k in ["open", "newworkbook", "openwindow"]):
-                normalized_action = "Open"
-            elif any(
-                k in event_text for k in ["type", "paste", "changefield", "input"]
-            ):
-                normalized_action = "Write"
-            elif any(k in event_text for k in ["getcell", "read", "extract"]):
-                normalized_action = "Read"
-            elif "select" in event_text:
-                normalized_action = "Select"
-            elif "scroll" in event_text:
-                normalized_action = "Scroll"
-            elif "focus" in event_text:
-                normalized_action = "Focus"
-            elif "refresh" in event_text:
-                normalized_action = "Refresh"
-            else:
-                normalized_action = action.title() if action else "Activate"
 
         # Object normalization — use prefix/word-boundary match so that activity
         # names like "Write Microsoft Excel window in Excel" don't accidentally

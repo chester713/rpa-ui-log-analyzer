@@ -14,12 +14,6 @@ class CSVLoader:
     """Loads CSV files and uses LLM to detect event column."""
 
     def __init__(self, llm_client=None):
-        """
-        Initialize CSVLoader.
-
-        Args:
-            llm_client: Optional LLM client for event column detection
-        """
         self.llm_client = llm_client
         self._force_column = None
         self.detected_column = None
@@ -49,9 +43,6 @@ class CSVLoader:
         """
         Load CSV file and return list of Event objects.
 
-        Uses LLM to detect which column contains event data.
-        Events should be in verb + noun format (e.g., "ClickButton", "OpenBrowser").
-
         Args:
             filepath: Path to CSV file
 
@@ -59,7 +50,7 @@ class CSVLoader:
             List of Event objects
 
         Raises:
-            ValueError: If event column cannot be detected
+            ValueError: If event column cannot be detected or LLM is unavailable
             FileNotFoundError: If file doesn't exist
         """
         with open(filepath, "r", encoding="utf-8-sig", newline="") as f:
@@ -103,18 +94,8 @@ class CSVLoader:
     def _detect_event_column_with_llm(
         self, fieldnames: List[str], sample_rows: Optional[List[Dict[str, Any]]] = None
     ) -> Optional[str]:
-        """
-        Use LLM to detect which column contains event data.
-
-        Args:
-            fieldnames: List of column names from CSV
-
-        Returns:
-            Name of event column, or None if detection fails
-        """
         if self.llm_client is None:
-            self.llm_recommended = False
-            return self._detect_event_column_fallback(fieldnames, sample_rows=sample_rows)
+            raise ValueError("LLM client required for event column detection")
 
         columns_str = ", ".join(fieldnames or [])
         sample_rows = sample_rows or []
@@ -144,42 +125,19 @@ Avoid columns that are timestamps, ids, URLs, application names, free-text descr
 
 Return only one exact column name from the list above. No explanation."""
 
-        try:
-            response = self.llm_client.complete(prompt)
-            detected = self._extract_detected_field(response, fieldnames)
+        response = self.llm_client.complete(prompt)
+        detected = self._extract_detected_field(response, fieldnames)
 
-            # Reject empty/invalid responses (e.g., unnamed index column).
-            invalid = {"", "index", "row", "row_id", "#"}
-            if detected.lower() in invalid:
-                self.llm_recommended = False
-                return self._detect_event_column_fallback(fieldnames, sample_rows=sample_rows)
-
-            for field in fieldnames or []:
-                field_name = (field or "").strip()
-                if not field_name:
-                    continue
-                if field_name.lower() == detected.lower():
-                    if sample_rows and len(sample_rows) >= 3:
-                        llm_score = self._score_column_as_event(field, sample_rows)
-                        best_field = field
-                        best_score = llm_score
-                        for candidate in fieldnames or []:
-                            score = self._score_column_as_event(candidate, sample_rows)
-                            if score > best_score:
-                                best_field = candidate
-                                best_score = score
-
-                        if best_field != field and best_score >= llm_score + 0.2:
-                            self.llm_recommended = False
-                            return best_field
-                    self.llm_recommended = True
-                    return field
-
-        except Exception as exc:
-            _logger.warning("LLM event column detection failed: %s", exc)
+        for field in fieldnames or []:
+            field_name = (field or "").strip()
+            if not field_name:
+                continue
+            if field_name.lower() == detected.lower():
+                self.llm_recommended = True
+                return field
 
         self.llm_recommended = False
-        return self._detect_event_column_fallback(fieldnames, sample_rows=sample_rows)
+        return None
 
     def _detect_context_columns_with_llm(
         self,
@@ -187,19 +145,12 @@ Return only one exact column name from the list above. No explanation."""
         sample_rows: Optional[List[Dict[str, Any]]] = None,
         exclude: Optional[str] = None,
     ) -> Dict[str, List[str]]:
-        """
-        Use LLM to detect which columns carry application/context data.
-
-        Returns a dict with two keys:
-          - "switch_columns": columns whose value changing signals an app switch
-          - "group_columns": broader set used to group consecutive events
-        """
         candidates = [f for f in (fieldnames or []) if f != exclude]
         if not candidates:
             return {"group_columns": [], "switch_columns": []}
 
         if self.llm_client is None:
-            return self._detect_context_columns_fallback(candidates)
+            raise ValueError("LLM client required for context column detection")
 
         sample_by_column = []
         for field in candidates:
@@ -234,33 +185,16 @@ Rules:
 Format:
 {{"switch_columns": ["col1"], "group_columns": ["col1", "col2"]}}"""
 
-        try:
-            response = self.llm_client.complete(prompt)
-            clean = (response or "").strip()
-            if clean.startswith("```"):
-                clean = re.sub(r"```[a-z]*\n?", "", clean).strip("`").strip()
-            parsed = json.loads(clean)
-            switch_cols = [c for c in parsed.get("switch_columns", []) if c in candidates]
-            group_cols = [c for c in parsed.get("group_columns", []) if c in candidates]
-            for c in switch_cols:
-                if c not in group_cols:
-                    group_cols.append(c)
-            if not group_cols and not switch_cols:
-                return self._detect_context_columns_fallback(candidates)
-            return {"group_columns": group_cols, "switch_columns": switch_cols}
-        except Exception as exc:
-            _logger.warning("LLM context column detection failed: %s", exc)
-            return self._detect_context_columns_fallback(candidates)
-
-    def _detect_context_columns_fallback(
-        self, fieldnames: List[str]
-    ) -> Dict[str, List[str]]:
-        """Fallback: match against known context column names."""
-        SWITCH = {"app", "application", "process", "executable", "activeapp"}
-        GROUP = SWITCH | {"webpage", "url", "window", "screen", "tab", "element_id", "browser"}
-        lower_map = {f.lower().replace(" ", "").replace("_", ""): f for f in fieldnames}
-        switch_cols = [lower_map[k] for k in lower_map if k in SWITCH]
-        group_cols = [lower_map[k] for k in lower_map if k in GROUP]
+        response = self.llm_client.complete(prompt)
+        clean = (response or "").strip()
+        if clean.startswith("```"):
+            clean = re.sub(r"```[a-z]*\n?", "", clean).strip("`").strip()
+        parsed = json.loads(clean)
+        switch_cols = [c for c in parsed.get("switch_columns", []) if c in candidates]
+        group_cols = [c for c in parsed.get("group_columns", []) if c in candidates]
+        for c in switch_cols:
+            if c not in group_cols:
+                group_cols.append(c)
         return {"group_columns": group_cols, "switch_columns": switch_cols}
 
     def _extract_detected_field(self, response: str, fieldnames: List[str]) -> str:
@@ -279,140 +213,6 @@ Format:
                 return field
 
         return detected
-
-    def _looks_like_action_event(self, value: str) -> float:
-        text = (value or "").strip()
-        if not text:
-            return 0.0
-
-        lower = text.lower()
-        if len(text) > 120:
-            return 0.0
-        if lower.startswith(("http://", "https://", "www.")):
-            return 0.0
-        if re.search(r"\d{4}-\d{2}-\d{2}|\d{1,2}:\d{2}", text):
-            return 0.0
-
-        separators = ["_", "-", " "]
-        if any(sep in text for sep in separators):
-            tokens = re.split(r"[_\-\s]+", text)
-        else:
-            tokens = re.findall(r"[A-Z]?[a-z]+|[A-Z]+(?![a-z])|\d+", text)
-
-        tokens = [t for t in tokens if t]
-        if not tokens:
-            return 0.0
-
-        action_verbs = {
-            "activate",
-            "click",
-            "open",
-            "close",
-            "set",
-            "get",
-            "read",
-            "write",
-            "type",
-            "typed",
-            "paste",
-            "copy",
-            "select",
-            "find",
-            "focus",
-            "hover",
-            "scroll",
-            "refresh",
-            "switch",
-            "input",
-            "change",
-            "extract",
-            "observe",
-            "disable",
-            "delete",
-            "new",
-            "link",
-            "reload",
-            "submit",
-            "press",
-        }
-
-        first = tokens[0].lower()
-        if first not in action_verbs:
-            return 0.0
-
-        if len(tokens) >= 2:
-            return 1.0
-        return 0.6
-
-    def _score_column_as_event(
-        self, field: str, sample_rows: Optional[List[Dict[str, Any]]]
-    ) -> float:
-        rows = sample_rows or []
-        if not rows:
-            return 0.0
-
-        non_empty = 0
-        scores = []
-        for row in rows:
-            value = str((row or {}).get(field, "")).strip()
-            if not value:
-                continue
-            non_empty += 1
-            scores.append(self._looks_like_action_event(value))
-
-        if non_empty == 0:
-            return 0.0
-
-        density = non_empty / len(rows)
-        avg = sum(scores) / non_empty
-        base_score = avg * density
-
-        field_l = (field or "").strip().lower()
-        if field_l in {
-            "concept:name",
-            "event",
-            "event_type",
-            "activity",
-            "action",
-            "events",
-            "name",
-        }:
-            base_score += 0.08
-
-        return round(base_score, 4)
-
-    def _detect_event_column_fallback(
-        self, fieldnames: List[str], sample_rows: Optional[List[Dict[str, Any]]] = None
-    ) -> Optional[str]:
-        """Fallback detection using sample values first, then common names."""
-        sample_rows = sample_rows or []
-        if sample_rows and fieldnames:
-            best_field = None
-            best_score = 0.0
-            for field in fieldnames:
-                score = self._score_column_as_event(field, sample_rows)
-                if score > best_score:
-                    best_score = score
-                    best_field = field
-
-            if best_field and best_score >= 0.45:
-                return best_field
-
-        normalized = [f for f in fieldnames if (f or "").strip()]
-        candidates = [
-            "event_type",
-            "event",
-            "activity",
-            "action",
-            "events",
-            "name",
-            "text",
-        ]
-        for candidate in candidates:
-            for field in normalized:
-                if field.lower() == candidate.lower():
-                    return field
-        return None
 
 
 def load_csv(filepath: str) -> List[Event]:

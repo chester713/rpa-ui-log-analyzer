@@ -195,9 +195,11 @@ class LLMGroupRefiner:
         self.llm_client = llm_client
 
     def refine(self, groups: List[EventGroup]) -> List[EventGroup]:
-        """Return LLM-merged groups, or original groups if LLM is unavailable."""
-        if self.llm_client is None or len(groups) <= 1:
+        """Return LLM-merged groups."""
+        if len(groups) <= 1:
             return groups
+        if self.llm_client is None:
+            raise ValueError("LLM client required for group refinement")
         result = []
         for i in range(0, len(groups), self.BATCH_SIZE):
             result.extend(self._refine_batch(groups[i:i + self.BATCH_SIZE]))
@@ -208,13 +210,9 @@ class LLMGroupRefiner:
     def _refine_batch(self, batch: List[EventGroup]) -> List[EventGroup]:
         if len(batch) == 1:
             return batch
-        try:
-            response = self.llm_client.complete(self._build_prompt(batch))
-            merge_sets = self._parse_response(response, len(batch))
-            return self._apply_merges(batch, merge_sets)
-        except Exception as exc:
-            _logger.warning("LLM group refinement failed for batch of %d: %s", len(batch), exc)
-            return batch
+        response = self.llm_client.complete(self._build_prompt(batch))
+        merge_sets = self._parse_response(response, len(batch))
+        return self._apply_merges(batch, merge_sets)
 
     def _build_prompt(self, batch: List[EventGroup]) -> str:
         sections = []
@@ -259,67 +257,50 @@ Return only valid JSON. No explanation.
 [example for 5 groups where 1+2 merge: [[0],[1,2],[3],[4]]]"""
 
     def _parse_response(self, response: str, n: int) -> List[List[int]]:
-        """Parse and validate merge sets. Returns no-merge fallback on any error."""
-        no_merge = [[i] for i in range(n)]
+        """Parse and validate merge sets from LLM response."""
         text = (response or "").strip()
         if text.startswith("```"):
             text = re.sub(r"```[a-z]*\n?", "", text).strip("`").strip()
         arr_match = re.search(r'\[.*\]', text, re.DOTALL)
         if not arr_match:
-            return no_merge
-        try:
-            parsed = json.loads(arr_match.group())
-        except json.JSONDecodeError:
-            return no_merge
+            raise ValueError(f"LLM group refinement response contains no JSON array: {text[:200]}")
+        parsed = json.loads(arr_match.group())
         if not isinstance(parsed, list):
-            return no_merge
+            raise ValueError("LLM group refinement response is not a list")
 
         seen = set()
         for s in parsed:
             if not isinstance(s, list) or not s:
-                return no_merge
+                raise ValueError(f"Invalid merge set in LLM response: {s}")
             for idx in s:
                 if not isinstance(idx, int) or idx < 0 or idx >= n or idx in seen:
-                    return no_merge
+                    raise ValueError(f"Invalid index {idx} in LLM group refinement response")
                 seen.add(idx)
         if seen != set(range(n)):
-            return no_merge
+            raise ValueError("LLM group refinement response missing some group indices")
 
-        # Indices within each set must be consecutive
         for s in parsed:
             sorted_s = sorted(s)
             if sorted_s != list(range(sorted_s[0], sorted_s[0] + len(sorted_s))):
-                return no_merge
+                raise ValueError(f"Non-consecutive indices in merge set: {s}")
 
         return parsed
 
     def _apply_merges(self, batch: List[EventGroup], merge_sets: List[List[int]]) -> List[EventGroup]:
-        """Apply merge sets, splitting any set that the LLM tried to merge across an app switch."""
+        """Apply LLM-specified merge sets."""
         result = []
         for merge_set in sorted(merge_sets, key=lambda s: s[0]):
-            # Enforce hard boundary: split at any app-switch inside the merge set
-            sub_sets: List[List[int]] = []
-            current: List[int] = [merge_set[0]]
-            for idx in merge_set[1:]:
-                if batch[idx].is_context_switch:
-                    sub_sets.append(current)
-                    current = [idx]
-                else:
-                    current.append(idx)
-            sub_sets.append(current)
-
-            for sub in sub_sets:
-                if len(sub) == 1:
-                    result.append(batch[sub[0]])
-                else:
-                    merged_events: List[Event] = []
-                    for idx in sub:
-                        merged_events.extend(batch[idx].events)
-                    first = batch[sub[0]]
-                    result.append(EventGroup(
-                        events=merged_events,
-                        is_context_switch=first.is_context_switch,
-                        previous_app=first.previous_app,
-                        current_app=first.current_app,
-                    ))
+            if len(merge_set) == 1:
+                result.append(batch[merge_set[0]])
+            else:
+                merged_events: List[Event] = []
+                for idx in merge_set:
+                    merged_events.extend(batch[idx].events)
+                first = batch[merge_set[0]]
+                result.append(EventGroup(
+                    events=merged_events,
+                    is_context_switch=first.is_context_switch,
+                    previous_app=first.previous_app,
+                    current_app=first.current_app,
+                ))
         return result
