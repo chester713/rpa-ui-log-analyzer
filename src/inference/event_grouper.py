@@ -251,13 +251,19 @@ Groups marked [APP SWITCH] are hard boundaries — never merge across them.
 
 {chr(10).join(sections)}
 
-Decide which adjacent groups belong to the same single activity and should be merged.
-Return a JSON array of arrays. Each inner array lists the group indices (0-based) to merge.
-Every index from 0 to {n - 1} must appear exactly once. Indices within each set must be consecutive.
-Never merge across [APP SWITCH] boundaries.
+Decide which groups to merge. Rules:
+1. You may only merge groups that are DIRECTLY ADJACENT (consecutive indices like [2,3] or [0,1,2]).
+   Non-adjacent indices such as [1,3] or [0,2,4] are NEVER allowed — the groups are in strict temporal order.
+2. Every index from 0 to {n - 1} must appear in exactly one set.
+3. Never merge across [APP SWITCH] boundaries.
+4. When in doubt, keep groups separate.
 
-Return only valid JSON. No explanation.
-[example for 5 groups where 1+2 merge: [[0],[1,2],[3],[4]]]"""
+Return a JSON array of arrays where each inner array is a consecutive run of indices to merge.
+
+VALID   (5 groups, merge 1+2):     [[0],[1,2],[3],[4]]
+INVALID (non-adjacent — forbidden): [[0],[1,3],[2],[4]]
+
+Return only valid JSON. No explanation."""
 
     def _parse_response(self, response: str, n: int) -> List[List[int]]:
         """Parse and validate merge sets from LLM response."""

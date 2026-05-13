@@ -2,12 +2,15 @@
 
 import csv as _csv
 import json
+import logging
 import os
 import shutil
 import tempfile
 import threading
 import uuid
 from datetime import datetime
+
+_logger = logging.getLogger(__name__)
 
 from urllib.parse import quote as _urlquote
 
@@ -470,13 +473,14 @@ def _run_step2_thread(aid):
 
 
 def _compute_step3(store):
-    from src.matching.pattern_matcher import PatternMatcher, get_context_from_events
+    from src.matching.pattern_matcher import get_context_from_events
     from src.matching import PATTERNS
 
     step1 = store.load_step(1)
     step2 = store.load_step(2)
     activities = _reconstruct_activities(step2)
-    matcher = PatternMatcher(PATTERNS)
+
+    patterns_by_name = {p.name.lower(): p for p in PATTERNS}
 
     contexts = []
     for g in step1["groups"]:
@@ -490,19 +494,12 @@ def _compute_step3(store):
     pairs = []
     for i, a in enumerate(activities):
         group_idx = a.group_index
-        group_events = (
-            _reconstruct_events(step1["groups"][group_idx]["events"])
-            if group_idx < len(step1["groups"]) else []
-        )
-        raw_action, raw_obj = (a.name.split(" ", 1) if " " in a.name else (a.name, ""))
-        norm_action, norm_obj = matcher._normalize_activity(raw_action, raw_obj, group_events)
+        pattern = patterns_by_name.get((a.pattern_name or "").strip().lower())
         pairs.append({
             "activity_index": i,
             "activity_name": a.name,
-            "raw_action": raw_action,
-            "raw_object": raw_obj,
-            "norm_action": norm_action,
-            "norm_object": norm_obj,
+            "norm_action": pattern.action if pattern else None,
+            "norm_object": pattern.object if pattern else None,
             "activity_type": a.activity_type,
             "is_implicit": a.is_implicit,
             "group_index": group_idx,
@@ -571,13 +568,11 @@ def _compute_step6(store):
         match_context = "desktop" if a.activity_type == "context_switch" else context
         pattern = matcher.match(a, group_events, match_context)
         method = pattern.get_method_for_context(match_context) if pattern else None
-        raw_action = a.name.split()[0] if a.name else ""
-        raw_obj = " ".join(a.name.split()[1:]) if " " in a.name else ""
 
         recommendations.append({
             "activity_name": a.name,
-            "activity_action": pattern.action if pattern else raw_action,
-            "activity_object": raw_obj,
+            "activity_action": pattern.action if pattern else None,
+            "activity_object": pattern.object if pattern else None,
             "pattern_matched": pattern.name if pattern else None,
             "execution_environment": context,
             "method": method,

@@ -120,18 +120,21 @@ class ActivityInferrer:
                     activity_type="context_switch",
                     is_implicit=True,
                     group_index=group_idx,
+                    pattern_name="Switch Context",
                 ))
 
-            # 2. Implicit prerequisite "Find <element>" activity
-            if llm_result.get("requires_find") and llm_result.get("find_target"):
+            # 2. Prerequisite "Find <element>" activity — identified and named by LLM
+            prereq = llm_result.get("prerequisite") or {}
+            if prereq.get("needed") and prereq.get("name"):
                 activities.append(Activity(
-                    name=f"Find {llm_result['find_target']}",
+                    name=prereq["name"],
                     confidence=1.0,
                     evidence=[],
                     source_events=source_events,
                     activity_type="prerequisite",
                     is_implicit=True,
                     group_index=group_idx,
+                    pattern_name=prereq.get("pattern", "Find Element"),
                 ))
 
             # 3. Main activity
@@ -223,17 +226,18 @@ For each group return this JSON structure:
   "activity_name": "Verb + object format aligned with the matched pattern (e.g. 'Write credentials into username field', 'Activate submit button', 'Open login page')",
   "pattern": "Exactly one pattern name from the reference above — choose based on semantic meaning of the interaction, not the exact words in the log",
   "context_switch": {{"detected": false, "from_context": null, "to_context": null}},
-  "requires_find": true,
-  "find_target": "element description when requires_find is true, omit otherwise",
+  "prerequisite": {{"needed": false}},
   "evidence": ["2-4 concise observations from events/attributes"],
   "confidence": 0.9,
   "reasoning": "One sentence summary"
 }}
 
-Context switch guide: Set "detected" to true only when the user moves to a genuinely different application, tool, or execution environment compared to the "Previous context" shown above. Examples that ARE context switches: Excel → Chrome, one web app → a different web app, desktop app → browser. Examples that are NOT: navigating to a new page within the same site, opening a modal in the same app, scrolling. When detected is true, "from_context" and "to_context" must name the environments (e.g. "Microsoft Excel", "Google Chrome").
+Field guide:
+- "context_switch": Set "detected" to true only when the user moves to a genuinely different application, tool, or execution environment compared to the "Previous context" shown above. Examples that ARE context switches: Excel → Chrome, one web app → a different web app, desktop app → browser. Examples that are NOT: navigating to a new page within the same site, opening a modal in the same app, scrolling. When detected is true, "from_context" and "to_context" must name the environments (e.g. "Microsoft Excel", "Google Chrome").
+- "prerequisite": Identify whether the bot must locate a specific UI element before performing the main action. Set "needed" to true when the activity targets a specific element (input fields, buttons, dropdowns, checkboxes, links, table cells). Set "needed" to false for page-level actions (opening a URL, scrolling, switching windows, launching an application). When needed is true, also provide "name" — the activity name for the Find step using the same verb+object format (e.g. "Find username field", "Find submit button", "Find country dropdown") — and "pattern": always "Find Element".
 
 Respond with a valid JSON array only — no other text:
-[{{"activity_name": "...", "pattern": "...", "context_switch": {{"detected": false, ...}}, ...}}, ...]"""
+[{{"activity_name": "...", "pattern": "...", "context_switch": {{"detected": false, ...}}, "prerequisite": {{"needed": false}}, ...}}, ...]"""
 
     def _parse_batch_response(self, raw: str, n: int) -> List[dict]:
         """Parse a JSON array response from a batch prompt. Returns exactly n dicts."""
@@ -328,18 +332,16 @@ Context attributes:
 Instructions:
 1. "activity_name": Name the interaction INTENT using verb + object format, aligned with the matched pattern vocabulary (e.g., "Write credentials into username field", "Activate submit button", "Open login page", "Read cell value from spreadsheet"). The verb should reflect the pattern's Action field.
 2. "pattern": The single best-matching pattern name from the reference above. Choose based on the semantic meaning of the interaction — not the exact words in the log. A log may say "enterText", "inputValue", "keystroke" — all map to Write Element because they share the same intent.
-3. "requires_find": In RPA the bot must LOCATE a UI element before interacting with it. Set true when this activity targets a specific element (input fields, buttons, dropdowns, checkboxes, links, table cells). Set false for page-level actions (opening a URL, scrolling, switching windows, launching an application).
-4. "find_target": If requires_find is true, concisely describe the element to locate (e.g., "username textfield", "login button", "country dropdown"). Omit if requires_find is false.
-5. "evidence": List of 2–4 concise observations drawn directly from the events and attributes above that justify your interpretation. Each item must name a specific event keyword or attribute value and explain what it signals.
-6. "confidence": Your confidence from 0.0 to 1.0, reflecting how strongly the evidence supports your interpretation. Use lower values when events are ambiguous or key attributes are missing.
-7. "reasoning": One sentence summarising your overall interpretation.
+3. "prerequisite": Identify whether the bot must locate a specific UI element before performing the main action. Set "needed" to true when the activity targets a specific element (input fields, buttons, dropdowns, checkboxes, links, table cells). Set "needed" to false for page-level actions (opening a URL, scrolling, switching windows, launching an application). When needed is true, also provide "name" — the activity name for the Find step using the same verb+object format (e.g. "Find username field", "Find submit button", "Find country dropdown") — and "pattern": always "Find Element".
+4. "evidence": List of 2–4 concise observations drawn directly from the events and attributes above that justify your interpretation. Each item must name a specific event keyword or attribute value and explain what it signals.
+5. "confidence": Your confidence from 0.0 to 1.0, reflecting how strongly the evidence supports your interpretation. Use lower values when events are ambiguous or key attributes are missing.
+6. "reasoning": One sentence summarising your overall interpretation.
 
 Respond with valid JSON only — no other text:
 {{
   "activity_name": "...",
   "pattern": "Write Element",
-  "requires_find": true,
-  "find_target": "...",
+  "prerequisite": {{"needed": true, "name": "Find username field", "pattern": "Find Element"}},
   "evidence": ["...", "..."],
   "confidence": 0.9,
   "reasoning": "..."
