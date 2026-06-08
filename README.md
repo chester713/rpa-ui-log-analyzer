@@ -10,6 +10,10 @@ Upload a UI event log and the tool infers what the user was doing at each step, 
 # Install dependencies
 pip install -r requirements.txt
 
+# Configure an LLM (required — see "LLM Configuration" below)
+cp config/llm_config.example.json config/llm_config.json
+# then edit config/llm_config.json and add your API key
+
 # Web app (recommended)
 python app.py
 # Open http://localhost:5000
@@ -17,6 +21,8 @@ python app.py
 # CLI mode
 python src_cli.py sample.csv
 ```
+
+> **An LLM is required.** Activity inference is performed entirely by the LLM — there is no keyword/rule-based fallback. If no key is configured, the tool surfaces an error rather than degrading to heuristics.
 
 ## Recommendation Pipeline
 
@@ -29,9 +35,9 @@ The tool runs each log through six sequential steps:
 | # | Step | How |
 |---|------|-----|
 | 1 | **Event Grouping** | Consecutive events are grouped into interaction segments by collective intent. Shared attributes (`app`, `webpage`, `url`, `element_id`) serve as supporting evidence; a change in `app` / `application` triggers a context-switch boundary. | Rule-based |
-| 2 | **Activity Naming** | Each group is sent to an LLM (batched × 5, up to 5 parallel threads) to be named as an activity. The LLM identifies the group's collective intent and assigns a name aligned with the pattern vocabulary. Also detects context switches and whether a prerequisite Find step is needed. | LLM |
-| 3 | **Action / Object Extraction** | The activity name is parsed into Action + Object and normalised to the pattern vocabulary (e.g. click/press/tap → *Activate*; type/paste/fill → *Write*). When a pattern is matched, the pattern's canonical Action and Object are used. | Hybrid |
-| 4 | **Pattern Matching** | The Action/Object pair is looked up in the RPA UI Interaction Pattern Library. The LLM-supplied pattern name is tried first; rule-based normalisation is the fallback. | Hybrid |
+| 2 | **Activity Naming** | Groups are sent to an LLM in batches of 5 (processed sequentially to respect rate limits) to be named as activities. The LLM identifies each group's collective intent and assigns a name aligned with the pattern vocabulary. It also detects context switches and whether a prerequisite Find step is needed. | LLM |
+| 3 | **Action / Object Extraction** | The Action and Object are taken from the pattern the LLM assigned in step 2 — each pattern carries a canonical Action/Object pair in the AOMC (Action-Object-Method-Context) vocabulary. Log-level verbs (click/press/tap, type/paste/fill, etc.) are resolved to that shared vocabulary by the LLM, not by a hardcoded map. | LLM |
+| 4 | **Pattern Matching** | The activity is matched to a pattern in the RPA UI Interaction Pattern Library via the LLM-assigned pattern name. | LLM |
 | 5 | **Context Identification** | Event attributes are scanned in priority order — HTML attributes → **web**; app/workbook attributes → **desktop**; coordinate attributes → **screen**. | Rule-based |
 | 6 | **Method Recommendation** | The matched pattern's method field is resolved for the identified environment (e.g. Write Element + web → *HTML DOM manipulation*). | Rule-based |
 
@@ -60,7 +66,7 @@ Each pattern defines supported execution environments and one automation method 
 
 ## Web UI
 
-The web interface (`python app.py`, port 5000) provides a guided five-page flow:
+The web interface (`python app.py`, port 5000) provides a guided six-page flow:
 
 1. **Welcome** (`/`) — overview of the recommendation approach and pipeline.
 2. **Upload** (`/upload`) — CSV file upload.
@@ -71,21 +77,27 @@ The web interface (`python app.py`, port 5000) provides a guided five-page flow:
 
 ### LLM Configuration
 
-Go to **Settings** (`/settings`) or edit `config/llm_config.json`:
+The tool needs an LLM to run. `config/llm_config.json` is **not** committed (it may hold a private key); copy the template and fill it in:
+
+```bash
+cp config/llm_config.example.json config/llm_config.json
+```
+
+Then edit it, or use **Settings** (`/settings`) in the web UI:
 
 ```json
 {
-  "provider": "puter",
-  "endpoint": "",
-  "api_key": "",
+  "provider": "custom",
+  "endpoint": "https://api.openai.com/v1/chat/completions",
+  "api_key": "YOUR_API_KEY",
   "model": "gpt-4o-mini"
 }
 ```
 
-- `provider: "puter"` — uses the [Puter.ai](https://puter.com) free tier (no API key required, `gpt-4o-mini`).
-- `provider: "custom"` — uses any OpenAI-compatible endpoint; set `endpoint`, `api_key`, and `model`.
+- `provider: "custom"` (recommended) — any OpenAI-compatible endpoint. Set `endpoint`, `api_key`, and `model`. Works with OpenAI, Groq, OpenRouter, a local server, etc.
+- `provider: "puter"` — experimental no-key path via the [Puter.ai](https://puter.com) endpoint; reliability is not guaranteed.
 
-If no config file exists the tool runs without an LLM and falls back to keyword-based rule inference.
+There is **no rule-based fallback**: if the configured LLM is missing or fails, the tool reports the error rather than producing degraded results. This is deliberate — the prototype is meant to reflect the LLM-driven approach directly.
 
 ## CLI Usage
 
@@ -111,7 +123,7 @@ python src_cli.py sample.csv --group-attr app webpage element_id
 
 - **SME task interpretation is simulated by LLM** — The recommendation approach as described requires a Subject Matter Expert (SME) to map interaction segments to meaningful business tasks. In this prototype that step is approximated by LLM inference. The LLM may misinterpret activities in unfamiliar domains or where log attributes are sparse.
 
-- **No API key = rule-based fallback** — Without a configured LLM, activity inference falls back to keyword matching, which produces lower-quality activity names and pattern assignments.
+- **LLM is mandatory; output quality depends on it** — There is no keyword/heuristic fallback. Activity naming, action/object extraction, and pattern matching are all LLM-driven, so results vary with the model chosen and the clarity of the log. Robustness is pursued by tightening the prompts rather than by adding rule-based safety nets.
 
 ## Project Structure
 
@@ -131,10 +143,16 @@ src/
 
 patterns/              # 13 pattern definition files (*.md)
 templates/             # Jinja2 HTML templates for all web pages
-config/                # llm_config.json (LLM settings), inference_rules.json
-data/                  # history.json (analysis history), uploads/ (temp files)
+config/                # llm_config.example.json (template; copy to llm_config.json),
+                       # inference_rules.json
+data/                  # runtime artifacts (git-ignored):
+                       #   history.json        — analysis history
+                       #   uploads/            — uploaded CSVs
+                       #   progressive/<id>/   — cached per-step pipeline output
 tests/                 # pytest test suite
 ```
+
+> Everything under `data/` is generated at runtime and is git-ignored; the real `config/llm_config.json` is git-ignored too. Only `config/llm_config.example.json` is committed.
 
 ## Requirements
 
@@ -142,6 +160,8 @@ tests/                 # pytest test suite
 - `flask>=2.0.0` — web application
 - `requests>=2.28.0` — LLM API client
 - `pm4py>=2.7.0` — process mining / DFG generation
+- `python-dotenv>=1.0.0` — loads environment variables from `.env`
+- An OpenAI-compatible LLM API key (see [LLM Configuration](#llm-configuration))
 
 ## License
 
