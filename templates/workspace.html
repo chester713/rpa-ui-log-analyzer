@@ -445,9 +445,11 @@
 
         var _computingStage = null;
         var _computingStorageKey = progressiveAid ? 'computing_stage_' + progressiveAid : null;
-        if (_computingStorageKey && sessionStorage.getItem(_computingStorageKey)) {
-            _computingStage = sessionStorage.getItem(_computingStorageKey);
-        }
+        // A fresh page load means nothing is computing in THIS page. Clear any
+        // stale flag so the compute guard below can never dead-end on a reload
+        // (which would leave the default event_grouping section showing while
+        // the hash has already advanced).
+        if (_computingStorageKey) sessionStorage.removeItem(_computingStorageKey);
 
         function _setComputingStage(stageKey) {
             _computingStage = stageKey;
@@ -478,7 +480,7 @@
                 fetch('/p/' + progressiveAid + '/compute/activity_naming/start', {method: 'POST'})
                     .then(r => r.json())
                     .then(d => {
-                        if (d.status === 'done') { window.location.reload(); return; }
+                        if (d.status === 'done') { _clearComputingStage(); window.location.reload(); return; }
                         if (d.status === 'error') {
                             _clearComputingStage();
                             _showComputeError(errEl, d.error || 'Unknown error', stageKey);

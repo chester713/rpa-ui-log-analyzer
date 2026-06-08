@@ -468,11 +468,17 @@ def _run_step2_thread(aid):
         if not activities:
             raise RuntimeError("Activity naming produced no results — LLM may be unavailable.")
 
-        store.save_step(2, {"activities": [_serialize_activity(a) for a in activities]})
+        step2_data = {"activities": [_serialize_activity(a) for a in activities]}
 
+        # Update the history artifact BEFORE writing the step2 file. The poller
+        # treats has_step(2) as "done", so if the file landed first a reload
+        # could race ahead of the history write and render an empty
+        # activity_naming stage. Writing the file last guarantees that once the
+        # stage reports done, its data is already in history.
         meta = store.load("meta")
         _update_history_stage(meta["history_id"], "activity_naming",
-                              _ws_activity_naming(store.load_step(2)))
+                              _ws_activity_naming(step2_data))
+        store.save_step(2, step2_data)
 
         with _step2_lock:
             _step2_progress[aid]["status"] = "done"
