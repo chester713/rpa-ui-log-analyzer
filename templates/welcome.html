@@ -25,7 +25,6 @@
         .badge { display: inline-block; font-size: 0.72rem; font-weight: 700; letter-spacing: 0.04em; padding: 2px 8px; border-radius: 20px; vertical-align: middle; }
         .badge-llm { background: #ede9fe; color: #6d28d9; }
         .badge-rule { background: #d1fae5; color: #065f46; }
-        .badge-hybrid { background: #fef3c7; color: #92400e; }
 
         /* Pipeline steps */
         .steps { display: flex; flex-direction: column; gap: 0; }
@@ -94,7 +93,7 @@
         <!-- Hero -->
         <section class="card">
             <h1>Welcome to RPA UI Log Analyzer</h1>
-            <p class="subtitle">This prototype applies RPA UI interaction patterns to help automation designers move beyond simple click/keystroke replay. Upload a UI event log (CSV) and the tool will infer human-intent activities, match them to recognised RPA patterns, and recommend the appropriate automation method for each — broken down by execution environment.</p>
+            <p class="subtitle">This prototype applies RPA UI interaction patterns to help automation designers move beyond simple click/keystroke replay. Upload a UI event log (CSV) and the tool will infer human-intent activities, match them to recognised RPA patterns, and recommend the appropriate automation method for each — broken down by execution environment. The analysis runs as a guided, step-by-step workflow and visualises the activity sequence as a directly-follows graph.</p>
             <div class="actions">
                 <a class="btn btn-primary" href="/upload">Continue to Upload</a>
                 <a class="btn btn-secondary" href="/history">View Analysis History</a>
@@ -105,7 +104,7 @@
         <section class="card">
             <h2>Recommendation Pipeline</h2>
             <p class="section-intro">The pipeline implements a two-stage recommendation approach. In <strong>task interpretation</strong> (steps 1–3), UI events are grouped into interaction segments by collective intent and each group is named as an activity using the pattern vocabulary. In <strong>method recommendation</strong> (steps 4–6), the matched pattern and execution environment determine the automation method, following a priority order: content-level (web) → accessibility-level (desktop) → visual/hardware simulation (screen).</p>
-            <p class="section-intro">Steps marked <span class="badge badge-llm">LLM</span> send data to a language model; steps marked <span class="badge badge-rule">Rule-based</span> use deterministic logic; <span class="badge badge-hybrid">Hybrid</span> steps use LLM with a rule-based fallback.</p>
+            <p class="section-intro">Steps marked <span class="badge badge-llm">LLM</span> send data to a language model; steps marked <span class="badge badge-rule">Rule-based</span> use deterministic logic. An LLM is required — the pipeline has <strong>no rule-based fallback</strong>, so if no model is configured the analysis surfaces an error rather than producing degraded results.</p>
             <div class="steps">
 
                 <div class="step">
@@ -115,8 +114,9 @@
                         <div class="step-header">
                             <span class="step-title">Event Grouping</span>
                             <span class="badge badge-rule">Rule-based</span>
+                            <span class="badge badge-llm">LLM refine</span>
                         </div>
-                        <p class="step-desc">Consecutive events are grouped into <em>interaction segments</em> based on their collective intent — events that together constitute a single coherent interaction belong in the same group. Shared attributes (<code>app</code>, <code>application</code>, <code>webpage</code>, <code>url</code>, <code>element_id</code>) serve as supporting evidence for grouping. A change in the <code>app</code> / <code>application</code> attribute triggers a <strong>context-switch boundary</strong> — the current group ends and a new one begins, flagged as a context switch. <em>Note: the current implementation approximates intent-based grouping using attribute matching as a heuristic.</em></p>
+                        <p class="step-desc">Consecutive events are grouped into <em>interaction segments</em> based on their collective intent — events that together constitute a single coherent interaction belong in the same group. Shared attributes (<code>app</code>, <code>application</code>, <code>webpage</code>, <code>url</code>, <code>element_id</code>) serve as supporting evidence for grouping. A change in the <code>app</code> / <code>application</code> attribute triggers a <strong>context-switch boundary</strong> — the current group ends and a new one begins, flagged as a context switch. An LLM second pass then <strong>refines</strong> these candidate groups, merging only directly-adjacent groups that share a single intent and never merging across application boundaries. <em>Note: the rule-based pre-segmentation approximates intent-based grouping using attribute matching as a heuristic.</em></p>
                     </div>
                 </div>
 
@@ -128,7 +128,7 @@
                             <span class="step-title">Activity Naming</span>
                             <span class="badge badge-llm">LLM</span>
                         </div>
-                        <p class="step-desc">Each interaction segment is sent to an LLM (batched in groups of 5 for efficiency, parallelised across up to 5 threads). The LLM interprets the group's collective intent and assigns an <strong>activity name</strong> using the pattern vocabulary — verb + object format aligned with the pattern action vocabulary (e.g. "Write credentials into username field"). It also returns the <strong>best-matching RPA pattern name</strong>, whether a prerequisite Find step is needed (<code>requires_find</code>), the <strong>target element</strong> to find, a <strong>context-switch detection</strong> flag with from/to context labels, supporting <strong>evidence</strong> observations, and a <strong>confidence score</strong>.</p>
+                        <p class="step-desc">Each interaction segment is sent to an LLM (batched in groups of 5, processed sequentially to respect rate limits). The LLM interprets the group's collective intent and assigns an <strong>activity name</strong> — verb + object aligned with the pattern vocabulary, named by the interaction's <strong>stable target or role</strong> (e.g. "Write First Name field") rather than transient values. This way genuinely different interactions get distinct names, while the same interaction repeated keeps the same name and surfaces as a <strong>loop</strong> in the activity graph. It also returns the <strong>best-matching RPA pattern name</strong>, whether a prerequisite Find step is needed (for element-targeting actions) and the element to find, a <strong>context-switch detection</strong> flag with from/to environment labels, supporting <strong>evidence</strong> observations, and a <strong>confidence score</strong>.</p>
                     </div>
                 </div>
 
@@ -138,9 +138,9 @@
                     <div class="step-body">
                         <div class="step-header">
                             <span class="step-title">Action / Object Extraction</span>
-                            <span class="badge badge-hybrid">Hybrid</span>
+                            <span class="badge badge-llm">LLM</span>
                         </div>
-                        <p class="step-desc">The LLM's activity name is parsed into an <strong>Action</strong> (first word) and an <strong>Object</strong> (remainder). A rule-based normaliser then maps both to the AOMC pattern vocabulary — for example, "click / press / tap" all normalise to <em>Activate</em>; "type / input / paste" normalise to <em>Write</em>; clicking a text-field target is reclassified as <em>Focus</em>. If the LLM provided a <code>pattern</code> field, that name is matched directly against the RPA UI Interaction Pattern Library (bypassing normalisation). Object normalisation reduces most targets to <em>Element</em>, but detects <em>Option</em> (dropdowns) and <em>Context</em> (window/application switches) as special cases.</p>
+                        <p class="step-desc">The <strong>Action</strong> and <strong>Object</strong> are taken directly from the RPA pattern the LLM assigned in the previous step — every pattern carries a canonical Action/Object pair in the AOMC (Action-Object-Method-Context) vocabulary (e.g. <em>Activate / Element</em>, <em>Write / Element</em>). Application-specific log verbs ("click / press / tap", "type / paste / fill", "getCell", …) are resolved to that shared vocabulary by the LLM as part of naming, not by a hardcoded keyword map.</p>
                     </div>
                 </div>
 
@@ -150,9 +150,9 @@
                     <div class="step-body">
                         <div class="step-header">
                             <span class="step-title">Pattern Matching</span>
-                            <span class="badge badge-hybrid">Hybrid</span>
+                            <span class="badge badge-llm">LLM</span>
                         </div>
-                        <p class="step-desc">The normalised action + object pair is looked up in the RPA UI Interaction Pattern Library. <strong>Primary path</strong>: if the LLM supplied a <code>pattern</code> name, the library is searched for an exact name match (case-insensitive) in the correct execution context. <strong>Fallback</strong>: if no LLM pattern name is present, the rule-normalised action/object pair is matched against each pattern's <code>Action</code> and <code>Object</code> fields. The first match wins. If no pattern matches, the recommendation is left without a pattern assignment.</p>
+                        <p class="step-desc">The activity is matched to a pattern in the RPA UI Interaction Pattern Library using the <strong>pattern name the LLM assigned</strong>, requiring a name match (case-insensitive) that also supports the identified execution context. There is <strong>no rule-based fallback</strong>: if the LLM did not supply a usable pattern, the recommendation is left without a pattern assignment rather than guessed from keywords.</p>
                     </div>
                 </div>
 
@@ -194,12 +194,12 @@
             <p class="section-intro">Two types of activity are automatically inserted into the sequence — they are not directly observed in the log but are necessary for a realistic RPA bot design.</p>
             <div class="implicit-grid">
                 <div class="implicit-item">
-                    <h3>Prerequisite Find Element <span class="badge badge-hybrid">Hybrid</span></h3>
-                    <p>When an activity targets a specific UI element (button, input, dropdown, etc.) the bot must <em>locate</em> that element before it can interact with it. A "Find [element]" step is automatically inserted immediately before any such activity. The LLM decides whether a Find is needed (<code>requires_find</code>) and names the element (<code>find_target</code>). A keyword-based rule provides the fallback.</p>
+                    <h3>Prerequisite Find Element <span class="badge badge-llm">LLM</span></h3>
+                    <p>When an activity targets a specific UI element (button, input, dropdown, etc.) the bot must <em>locate</em> that element before it can interact with it. A "Find [element]" step is automatically inserted immediately before any such activity. The LLM flags this for element-targeting actions (read, write, focus, activate) and names the element to find. Page-level actions (open a URL, scroll, refresh) get no Find step.</p>
                 </div>
                 <div class="implicit-item">
-                    <h3>Context Switch <span class="badge badge-hybrid">Hybrid</span></h3>
-                    <p>When the active application changes between consecutive groups, a "Switch context from A to B" step is inserted at the boundary. The LLM detects the switch and names the from/to environments. A rule-based fallback checks the <code>app</code> / <code>application</code> attribute directly. Page navigation within the same site is <em>not</em> treated as a context switch.</p>
+                    <h3>Context Switch <span class="badge badge-llm">LLM</span></h3>
+                    <p>When the user moves to a different application or execution environment (e.g. Excel → browser) between consecutive groups, a "Switch context from A to B" step is inserted at the boundary. The LLM detects the switch — including a change of environment between web, desktop, and screen — and names the from/to environments. Navigating to a new page within the same site is <em>not</em> treated as a context switch.</p>
                 </div>
             </div>
         </section>
