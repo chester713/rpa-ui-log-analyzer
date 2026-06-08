@@ -5,6 +5,7 @@ import json
 import sys
 from pathlib import Path
 from src.pipeline.data_pipeline import DataPipeline
+from src.llm.client import get_llm_client
 
 
 def main():
@@ -35,9 +36,22 @@ Examples:
         print(f"Error: File not found: {csv_path}", file=sys.stderr)
         sys.exit(1)
 
+    # An LLM is required — the pipeline has no rule-based fallback. Load the
+    # same client the web app uses (config/llm_config.json).
+    llm_client = get_llm_client()
+    if llm_client is None:
+        print(
+            "Error: No LLM configured. Copy config/llm_config.example.json to "
+            "config/llm_config.json and add your API key.",
+            file=sys.stderr,
+        )
+        sys.exit(1)
+
     try:
         pipeline = DataPipeline(
-            csv_path=str(csv_path), group_attributes=args.group_attr
+            csv_path=str(csv_path),
+            llm_client=llm_client,
+            group_attributes=args.group_attr,
         )
         result = pipeline.run()
 

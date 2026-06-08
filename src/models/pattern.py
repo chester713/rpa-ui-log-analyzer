@@ -70,8 +70,8 @@ class MethodRecommendation:
     """Recommendation result from pattern matching."""
 
     activity_name: str
-    activity_action: str
-    activity_object: str
+    activity_action: Optional[str]
+    activity_object: Optional[str]
     events: List[int]  # Source event row indices
     execution_environment: str
     pattern: Optional[Pattern]

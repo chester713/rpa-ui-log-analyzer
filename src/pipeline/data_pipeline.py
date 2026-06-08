@@ -162,12 +162,13 @@ class DataPipeline:
             context_switch_from = mapping.attribute_breakdown.get("previous_app")
             context_switch_to = mapping.attribute_breakdown.get("current_app")
 
-            action, obj = self._parse_activity_name(activity.name)
-
+            # Action and Object come from the canonical Pattern matched via the
+            # LLM-assigned pattern name — mirrors the web pipeline (step 3/6).
+            # No pattern match means no action/object, rather than a heuristic guess.
             recommendation = MethodRecommendation(
                 activity_name=activity.name,
-                activity_action=pattern.action if pattern else action,
-                activity_object=obj,
+                activity_action=pattern.action if pattern else None,
+                activity_object=pattern.object if pattern else None,
                 events=event_indices,
                 execution_environment=context,
                 pattern=pattern,
@@ -181,14 +182,3 @@ class DataPipeline:
             recommendations.append(recommendation)
 
         return recommendations
-
-    def _parse_activity_name(self, activity_name: str) -> tuple:
-        """Parse activity name into action and object."""
-        parts = activity_name.split()
-        if len(parts) >= 2:
-            action = parts[0]
-            obj = " ".join(parts[1:])
-        else:
-            action = activity_name
-            obj = ""
-        return action, obj
