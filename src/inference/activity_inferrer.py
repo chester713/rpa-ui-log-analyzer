@@ -223,7 +223,7 @@ Analyze the following {n} event group(s). Return a JSON ARRAY with exactly {n} o
 
 For each group return this JSON structure:
 {{
-  "activity_name": "Verb + object format aligned with the matched pattern (e.g. 'Write credentials into username field', 'Activate submit button', 'Open login page')",
+  "activity_name": "Verb + object naming the interaction's INTENT at a consistent semantic level, aligned with the matched pattern. Identify the activity by its stable target or role — the field's label, the button's purpose, the cell/column role — NOT by transient instance data such as the exact value typed, the row number, or a timestamp (e.g. 'Write First Name field', 'Activate Submit button', 'Read unit price cell'). Naming by stable role means genuinely different interactions get different names, while the same interaction performed again gets the same name.",
   "pattern": "Exactly one pattern name from the reference above — choose based on semantic meaning of the interaction, not the exact words in the log",
   "context_switch": {{"detected": false, "from_context": null, "to_context": null}},
   "prerequisite": {{"needed": false}},
@@ -239,7 +239,11 @@ Field guide:
 CRITICAL OUTPUT RULES:
 1. Return a valid JSON ARRAY with EXACTLY {n} object(s) — one per group, in the same order.
 2. "activity_name" is MANDATORY in every object. Never omit it. If the events are ambiguous or repetitive, still provide a best-guess name using verb+object format (e.g. "Read cell value from spreadsheet", "Interact with page element").
-3. Output raw JSON only — no markdown fences, no explanation text before or after the array.
+3. Name by SEMANTIC IDENTITY, not by occurrence:
+   - Genuinely DIFFERENT interactions must get DIFFERENT names — distinguish them by their target/role (e.g. "Write First Name field" vs "Write Last Name field"), never by a counter.
+   - The SAME interaction performed again must get the SAME name (e.g. the same button clicked repeatedly, or one step of a repeated cycle), so that real repetition is modelled as a loop in the process graph rather than a flat chain.
+   - Do NOT inject transient details (the typed value, a row index, "(2)") just to force names apart — that would hide genuine loops.
+4. Output raw JSON only — no markdown fences, no explanation text before or after the array.
 
 [{{"activity_name": "...", "pattern": "...", "context_switch": {{"detected": false, ...}}, "prerequisite": {{"needed": false}}, ...}}, ...]"""
 
