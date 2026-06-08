@@ -212,25 +212,3 @@ class TestActivityInferrer:
             activity.name
             == "Write textarea 'notes' on example.com/cases/42 in Edge"
         )
-
-    def test_post_process_enriches_generic_write_web_label(self):
-        """Generic rule-style web label should be enriched to unique readable name."""
-        events = [
-            Event(
-                "paste",
-                {
-                    "application": "Chrome",
-                    "tag_name": "textfield",
-                    "element_id": "username",
-                    "webpage": "https://example.com/login",
-                },
-                1,
-            )
-        ]
-
-        inferrer = ActivityInferrer()
-        enriched = inferrer._post_process_inferred_name(
-            "Write HTML element on webpage", events
-        )
-
-        assert enriched == "Write textfield 'username' on example.com/login in Chrome"

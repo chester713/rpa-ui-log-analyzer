@@ -143,8 +143,7 @@ src/
 
 patterns/              # 13 pattern definition files (*.md)
 templates/             # Jinja2 HTML templates for all web pages
-config/                # llm_config.example.json (template; copy to llm_config.json),
-                       # inference_rules.json
+config/                # llm_config.example.json (template; copy to llm_config.json)
 data/                  # runtime artifacts (git-ignored):
                        #   history.json        — analysis history
                        #   uploads/            — uploaded CSVs

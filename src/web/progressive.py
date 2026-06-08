@@ -155,6 +155,16 @@ def _update_history_stage(history_id, stage_key, workspace_data):
         _save_history(history)
 
 
+def _update_history_dfg(history_id, dfg):
+    with _history_lock:
+        history = _get_history()
+        for entry in history:
+            if entry["id"] == history_id:
+                entry["dfg"] = dfg
+                break
+        _save_history(history)
+
+
 # ── CSV preview helper ────────────────────────────────────────────────────────
 
 def _read_csv_preview(filepath, max_rows=100):
@@ -587,6 +597,31 @@ def _compute_step6(store):
     return {"recommendations": recommendations}
 
 
+def _compute_dfg(store):
+    """Build the Directly-Follows Graph from the inferred activity sequence.
+
+    Mirrors the activity sequence the workspace shows (step 2 activities,
+    including implicit Find/Switch steps), in temporal order.
+    """
+    from src.process_mining import build_dfg_payload
+
+    meta = store.load("meta")
+    activities = _reconstruct_activities(store.load_step(2))
+
+    class _EvShim:
+        def __init__(self, row_index):
+            self.row_index = row_index
+            self.attributes = {}
+
+    class _MapShim:
+        def __init__(self, activity):
+            self.activity = activity
+            self.events = [_EvShim(r) for r in (activity.source_events or [])]
+
+    mappings = [_MapShim(a) for a in activities]
+    return build_dfg_payload(mappings, session_id=meta.get("history_id") or meta["aid"])
+
+
 _STAGE_TO_STEP = {
     "action_object_extraction": 3,
     "pattern_matching": 4,
@@ -729,10 +764,15 @@ def compute_stage(aid, stage_key):
     # user jumps ahead in the roadmap.
     try:
         stage_idx = PROGRESSIVE_STAGE_KEYS.index(stage_key)
-        for sk in PROGRESSIVE_STAGE_KEYS[2:stage_idx + 1]:
+        computed = PROGRESSIVE_STAGE_KEYS[2:stage_idx + 1]
+        for sk in computed:
             _ensure_dependencies(store, sk)
             ws_data = _to_workspace(store, sk)
             _update_history_stage(history_id, sk, ws_data)
+        # The DFG reflects the full activity sequence, so build it once the
+        # final method_recommendation stage has been computed.
+        if "method_recommendation" in computed:
+            _update_history_dfg(history_id, _compute_dfg(store))
     except Exception as exc:
         _logger.exception("Stage %s computation failed", stage_key)
         return redirect(f"/workspace/{history_id}?llm_error={_urlquote(str(exc))}#{stage_key}")
