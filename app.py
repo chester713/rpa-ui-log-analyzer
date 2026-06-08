@@ -19,10 +19,15 @@ try:
 except ImportError:
     pass
 
+# Keep the root logger at INFO so third-party libraries (urllib3, matplotlib,
+# graphviz, pm4py) don't flood the console, but keep this app's own loggers
+# verbose for debugging the pipeline.
 logging.basicConfig(
-    level=logging.DEBUG,
+    level=logging.INFO,
     format="%(asctime)s %(levelname)s %(name)s: %(message)s",
 )
+logging.getLogger("src").setLevel(logging.DEBUG)
+logging.getLogger(__name__).setLevel(logging.DEBUG)
 _logger = logging.getLogger(__name__)
 
 app = Flask(__name__)

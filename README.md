@@ -16,7 +16,7 @@ cp config/llm_config.example.json config/llm_config.json
 
 # Web app (recommended)
 python app.py
-# Open http://localhost:5000
+# Open http://localhost:5001
 
 # CLI mode
 python src_cli.py sample.csv
@@ -66,7 +66,7 @@ Each pattern defines supported execution environments and one automation method 
 
 ## Web UI
 
-The web interface (`python app.py`, port 5000) provides a guided six-page flow:
+The web interface (`python app.py`, port 5001) provides a guided six-page flow:
 
 1. **Welcome** (`/`) — overview of the recommendation approach and pipeline.
 2. **Upload** (`/upload`) — CSV file upload.
