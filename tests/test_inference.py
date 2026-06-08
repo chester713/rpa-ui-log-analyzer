@@ -67,35 +67,26 @@ class TestEventGrouper:
         assert len(groups[0]) == 1
 
 
+class _FakeLLM:
+    """Returns a fixed batch JSON array, mimicking the activity-naming LLM."""
+
+    def __init__(self, activity_name="Activate login button", pattern="Activate"):
+        self.activity_name = activity_name
+        self.pattern = pattern
+
+    def complete(self, _prompt):
+        return (
+            '[{"activity_name": "%s", "pattern": "%s", '
+            '"context_switch": {"detected": false, "from_context": null, "to_context": null}, '
+            '"prerequisite": {"needed": false}, '
+            '"evidence": ["clicked the button"], "confidence": 0.9, '
+            '"reasoning": "user activated the button"}]'
+            % (self.activity_name, self.pattern)
+        )
+
+
 class TestActivityInferrer:
-    """Test cases for ActivityInferrer."""
-
-    def test_infer_activity_returns_activity(self):
-        """Test that infer_activity returns Activity object."""
-        events = [
-            Event("click", {"app": "Chrome", "element": "button"}, 0),
-            Event("type", {"app": "Chrome", "element": "input"}, 1),
-        ]
-
-        inferrer = ActivityInferrer()
-        activity = inferrer.infer_activity(events)
-
-        assert activity.name is not None
-        assert 0.0 <= activity.confidence <= 1.0
-        assert isinstance(activity.evidence, list)
-
-    def test_infer_activities_multiple_groups(self):
-        """Test inferring activities for multiple groups."""
-        groups = [
-            [Event("click", {"app": "Chrome"}, 0)],
-            [Event("type", {"app": "Excel"}, 1)],
-        ]
-
-        inferrer = ActivityInferrer()
-        activities = inferrer.infer_activities(groups)
-
-        # Each group produces at least one activity; implicit prerequisites may add more.
-        assert len(activities) >= 2
+    """Test cases for ActivityInferrer (LLM-driven; no heuristic fallback)."""
 
     def test_empty_group_returns_empty_activity(self):
         """Test empty event group returns empty activity."""
@@ -105,110 +96,22 @@ class TestActivityInferrer:
         assert activity.name == "Empty"
         assert activity.confidence == 0.0
 
-    def test_mock_infer_web_name_uses_action_target_context(self):
-        """Web naming should use Action + Target + Context with readable details."""
-        events = [
-            Event(
-                "click",
-                {
-                    "application": "Chrome",
-                    "tag_name": "button",
-                    "element_id": "login-button",
-                    "url": "https://example.com/login",
-                },
-                0,
-            )
-        ]
+    def test_infer_activities_requires_llm(self):
+        """Without an LLM there is no fallback — inference must raise."""
+        groups = [[Event("click", {"app": "Chrome"}, 0)]]
 
-        inferrer = ActivityInferrer()
-        activity = inferrer.infer_activity(events)
+        inferrer = ActivityInferrer()  # no llm_client
+        with pytest.raises(ValueError, match="LLM client required"):
+            inferrer.infer_activities(groups)
 
-        assert activity.name == "Click button 'login-button' on example.com/login in Chrome"
+    def test_infer_activities_uses_llm_supplied_name_and_pattern(self):
+        """Activity name and pattern come straight from the LLM response."""
+        groups = [[Event("click", {"app": "Chrome", "element": "login"}, 0)]]
 
-    def test_mock_infer_desktop_name_uses_spreadsheet_context(self):
-        """Desktop naming should include workbook/worksheet/cell_range context when present."""
-        events = [
-            Event(
-                "changeField",
-                {
-                    "application": "Excel",
-                    "workbook": "Q1-Forecast.xlsx",
-                    "worksheet": "Inputs",
-                    "cell_range": "B2:B4",
-                },
-                2,
-            )
-        ]
+        inferrer = ActivityInferrer(llm_client=_FakeLLM())
+        activities = inferrer.infer_activities(groups)
 
-        inferrer = ActivityInferrer()
-        activity = inferrer.infer_activity(events)
-
-        assert (
-            activity.name
-            == "Write cell range B2:B4 in Excel / workbook Q1-Forecast.xlsx / sheet Inputs"
-        )
-
-    def test_parse_response_fallback_avoids_opaque_element_id(self):
-        """Opaque IDs should be avoided in inferred names for readability."""
-        events = [
-            Event(
-                "click",
-                {
-                    "tag_name": "button",
-                    "element_id": "6f1f5d9e-b768-4da4-a7f5-cc1c67a8bbaf",
-                    "browser_url": "https://portal.example.org/home",
-                },
-                10,
-            )
-        ]
-
-        inferrer = ActivityInferrer(llm_client=object())
-        activity = inferrer._parse_response("Activity: Unknown activity", events)
-
-        assert activity.name == "Click button element (event row 10) on portal.example.org/home"
-
-    def test_parse_response_fallback_opaque_id_uses_xpath_locator_hint(self):
-        """Opaque IDs should include readable xpath-derived hint when available."""
-        events = [
-            Event(
-                "click",
-                {
-                    "tag_name": "input",
-                    "element_id": "b80f58dd-9559-4a90-aaf4-81c001ea6ce2",
-                    "xpath": "//table/tbody/tr[3]/td[2]/input[@type='text'][1]",
-                    "webpage": "https://portal.example.org/orders",
-                },
-                99,
-            )
-        ]
-
-        inferrer = ActivityInferrer(llm_client=object())
-        activity = inferrer._parse_response("Activity: Unknown activity", events)
-
-        assert (
-            activity.name
-            == "Click input 'input type=text #1' (input type=text #1, row 3) on portal.example.org/orders"
-        )
-
-    def test_mock_infer_web_name_prefers_url_and_application_context(self):
-        """Web names should include readable URL context and browser application."""
-        events = [
-            Event(
-                "write",
-                {
-                    "tag_type": "textarea",
-                    "element_id": "notes",
-                    "browser_url": "https://example.com/cases/42",
-                    "application": "Edge",
-                },
-                7,
-            )
-        ]
-
-        inferrer = ActivityInferrer()
-        activity = inferrer.infer_activity(events)
-
-        assert (
-            activity.name
-            == "Write textarea 'notes' on example.com/cases/42 in Edge"
-        )
+        assert len(activities) >= 1
+        main = activities[-1]
+        assert main.name == "Activate login button"
+        assert main.pattern_name == "Activate"

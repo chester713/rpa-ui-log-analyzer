@@ -103,7 +103,7 @@ def test_workspace_template_contains_six_progressive_sections_and_logic_areas() 
 
     for stage in REQUIRED_STAGES:
         assert f'data-stage-key="{stage}"' in template
-    assert "const progressiveArtifacts = {{ entry.progressive_artifacts | tojson }};" in template
+    assert "let progressiveArtifacts = {{ entry.progressive_artifacts | tojson }};" in template
     assert "const progressiveLogic = {{ entry.progressive_logic | tojson }};" in template
     assert "textContent" in template
 

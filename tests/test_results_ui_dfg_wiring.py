@@ -23,33 +23,34 @@ def test_results_template_contains_full_width_dfg_section() -> None:
 def test_results_template_wires_node_click_to_event_row_highlight() -> None:
     template = _template_text()
 
-    assert "function findRowsForActivity(activityName)" in template
+    # A DFG node click routes through the cross-panel coordinator, which
+    # highlights the matching recommendation's log rows and detail panel.
+    assert "function activateDfgNode(activityName)" in template
     assert "function findRecommendationByActivity(activityName)" in template
-    assert "currentRow = null;" in template
-    assert "applyRowHighlights(preserveActiveRow ? currentRow : null, relatedRows);" in template
-    assert "if (opts.syncDetails !== false)" in template
+    assert "function applyRowHighlights(" in template
+    assert "circle.addEventListener('click', () => {" in template
+    assert "selectActivity(actIdx, activityKey, { source: 'dfg' });" in template
     assert "renderDetails(rec);" in template
-    assert "tr.classList.add('row-related')" in template
-    assert "tr.classList.remove('row-active', 'row-related')" in template
-    assert "circle.addEventListener('click', () => activateDfgNode(" in template
 
 
 def test_results_template_wires_event_row_click_to_node_highlight() -> None:
     template = _template_text()
 
-    assert "function activateDfgNode(activityName, opts = {})" in template
+    # A log-row click selects the matching activity and syncs the DFG node.
+    assert "function activateDfgNode(activityName)" in template
     assert "node.classList.add('dfg-node-active')" in template
-    assert "const activityName = rec?.inferred_activity || null;" in template
-    assert "if (activityName) activateDfgNode(activityName, { preserveActiveRow: true, syncDetails: false });" in template
+    assert "document.querySelectorAll('tr.row-clickable').forEach(tr => {" in template
+    assert "selectActivity(actIdx, activityName, { source: 'log', activeLogRow: idx });" in template
+    assert "if (activityName) activateDfgNode(activityName);" in template
 
 
 def test_results_template_keeps_single_active_focus_state() -> None:
     template = _template_text()
 
     assert "let activeDfgActivity = null;" in template
-    assert "if (activeDfgActivity === activityKey && !opts.force)" in template
+    assert "activeDfgActivity = activityKey;" in template
     assert "node.classList.remove('dfg-node-active', 'dfg-node-related')" in template
-    assert "node.classList.add(isActive ? 'dfg-node-active' : 'dfg-node-related')" in template
+    assert "node.classList.add('dfg-node-active')" in template
 
 
 def test_results_template_includes_dfg_zoom_controls() -> None:
