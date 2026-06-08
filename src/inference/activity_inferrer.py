@@ -236,7 +236,11 @@ Field guide:
 - "context_switch": Set "detected" to true only when the user moves to a genuinely different application, tool, or execution environment compared to the "Previous context" shown above. Examples that ARE context switches: Excel → Chrome, one web app → a different web app, desktop app → browser. Examples that are NOT: navigating to a new page within the same site, opening a modal in the same app, scrolling. When detected is true, "from_context" and "to_context" must name the environments (e.g. "Microsoft Excel", "Google Chrome").
 - "prerequisite": Identify whether the bot must locate a specific UI element before performing the main action. Set "needed" to true when the activity targets a specific element (input fields, buttons, dropdowns, checkboxes, links, table cells). Set "needed" to false for page-level actions (opening a URL, scrolling, switching windows, launching an application). When needed is true, also provide "name" — the activity name for the Find step using the same verb+object format (e.g. "Find username field", "Find submit button", "Find country dropdown") — and "pattern": always "Find Element".
 
-Respond with a valid JSON array only — no other text:
+CRITICAL OUTPUT RULES:
+1. Return a valid JSON ARRAY with EXACTLY {n} object(s) — one per group, in the same order.
+2. "activity_name" is MANDATORY in every object. Never omit it. If the events are ambiguous or repetitive, still provide a best-guess name using verb+object format (e.g. "Read cell value from spreadsheet", "Interact with page element").
+3. Output raw JSON only — no markdown fences, no explanation text before or after the array.
+
 [{{"activity_name": "...", "pattern": "...", "context_switch": {{"detected": false, ...}}, "prerequisite": {{"needed": false}}, ...}}, ...]"""
 
     def _parse_batch_response(self, raw: str, n: int) -> List[dict]:
