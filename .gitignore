@@ -1,7 +1,12 @@
 data/uploads/*.csv
 data/history.json
+data/progressive/
+data/*.log
 .env
 config/llm_config.json
+
+# Local Claude Code harness settings
+.claude/settings.local.json
 
 # Python cache / bytecode
 __pycache__/
