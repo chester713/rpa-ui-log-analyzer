@@ -349,21 +349,103 @@
                 updateDfgZoomUi();
                 return;
             }
-            const width = Math.max(svg.clientWidth || 800, nodes.length * 160);
-            const height = 260;
-            dfgGraphWidth = width;
-            dfgGraphHeight = height;
-            svg.setAttribute('viewBox', `0 0 ${width} ${height}`);
+            const nodeRadius = 24;
+            const lineHeight = 14;          // matches .dfg-node-label (12px font)
+            const maxLines = 2;             // wrap each label to at most 2 lines
+            const maxLineW = 140;           // wrap target width (px)
+            const labelTopGap = 14;         // node bottom -> first label line
+            const labelBlock = maxLines * lineHeight;
+            const nodeY = 56;
+            const height = nodeY + nodeRadius + labelTopGap + labelBlock + 12;
+
             const graphLayer = createSvgNode('g');
             dfgViewportGroup = graphLayer;
             svg.appendChild(graphLayer);
-            const nodeSpacing = width / (nodes.length + 1);
-            const nodeY = height / 2;
-            const nodeRadius = 24;
+
+            // Hidden probe used to measure text so labels can be wrapped and nodes
+            // spaced by their actual rendered width.
+            const probe = createSvgNode('text');
+            probe.setAttribute('class', 'dfg-node-label');
+            probe.setAttribute('visibility', 'hidden');
+            graphLayer.appendChild(probe);
+            const measure = (s) => {
+                probe.textContent = String(s);
+                let w = 0;
+                try { w = probe.getComputedTextLength(); } catch (e) { w = 0; }
+                return w || String(s).length * 7;
+            };
+
+            // Greedy word-wrap into at most maxLines lines (last line ellipsised if
+            // it still overflows). Returns { lines, width }.
+            const wrapLabel = (text) => {
+                const words = String(text).split(/\s+/).filter(Boolean);
+                const lines = [];
+                let cur = '';
+                for (const word of words) {
+                    const trial = cur ? cur + ' ' + word : word;
+                    if (!cur || measure(trial) <= maxLineW) {
+                        cur = trial;
+                    } else {
+                        lines.push(cur);
+                        cur = word;
+                    }
+                }
+                if (cur) lines.push(cur);
+                if (lines.length > maxLines) {
+                    const kept = lines.slice(0, maxLines);
+                    let last = kept[maxLines - 1] + ' ' + lines.slice(maxLines).join(' ');
+                    while (last.length > 1 && measure(last + '…') > maxLineW) {
+                        last = last.slice(0, -1);
+                    }
+                    kept[maxLines - 1] = last.replace(/\s+$/, '') + '…';
+                    lines.length = 0;
+                    kept.forEach((l) => lines.push(l));
+                }
+                const width = lines.reduce((m, l) => Math.max(m, measure(l)), 0);
+                return { lines, width };
+            };
+
+            const labelMeta = new Map();   // nodeName -> { lines, width }
+            nodes.forEach((n) => labelMeta.set(String(n), wrapLabel(n)));
+            graphLayer.removeChild(probe);
+
+            const half = (name) => Math.max(nodeRadius, (labelMeta.get(String(name))?.width || 0) / 2);
+
+            // Lay out left-to-right. Labels share one row beneath the nodes, so the
+            // gap between two nodes covers half of each adjacent (wrapped) label
+            // plus a fixed clearance — no two labels overlap.
+            const sideMargin = 40;
+            const labelGap = 26;
+            const minStep = 2 * nodeRadius + 18;   // also keep circles from touching
+            const xs = [];
+            for (let i = 0; i < nodes.length; i++) {
+                if (i === 0) {
+                    xs[i] = sideMargin + half(nodes[0]);
+                } else {
+                    const labelNeed = xs[i - 1] + half(nodes[i - 1]) + labelGap + half(nodes[i]);
+                    xs[i] = Math.max(xs[i - 1] + minStep, labelNeed);
+                }
+            }
+
             const nodePositions = new Map();
             nodes.forEach((nodeName, index) => {
-                nodePositions.set(String(nodeName), { x: Math.round(nodeSpacing * (index + 1)), y: nodeY });
+                nodePositions.set(String(nodeName), { x: Math.round(xs[index]), y: nodeY });
             });
+
+            const contentWidth = Math.round(xs[xs.length - 1] + half(nodes[nodes.length - 1]) + sideMargin);
+            const width = Math.max(contentWidth, svg.clientWidth || 800);
+            // When the sequence is narrower than the panel, spread the slack evenly
+            // so the graph fills the width instead of bunching on the left.
+            if (nodes.length > 1 && contentWidth < width) {
+                const slack = (width - contentWidth) / (nodes.length - 1);
+                nodes.forEach((nodeName, index) => {
+                    const p = nodePositions.get(String(nodeName));
+                    if (p) p.x = Math.round(p.x + slack * index);
+                });
+            }
+            dfgGraphWidth = width;
+            dfgGraphHeight = height;
+            svg.setAttribute('viewBox', `0 0 ${width} ${height}`);
             edges.forEach((edge) => {
                 const sourceName = String(edge.source || '');
                 const targetName = String(edge.target || '');
@@ -407,12 +489,21 @@
                     selectActivity(actIdx, activityKey, { source: 'dfg' });
                 });
                 graphLayer.appendChild(circle);
+                const wrapped = labelMeta.get(String(nodeName)) || { lines: [String(nodeName)] };
                 const label = createSvgNode('text');
                 label.setAttribute('class', 'dfg-node-label');
-                label.setAttribute('x', String(pos.x));
-                label.setAttribute('y', String(pos.y + 42));
                 label.setAttribute('text-anchor', 'middle');
-                label.textContent = String(nodeName);
+                const laneTop = pos.y + nodeRadius + labelTopGap;
+                wrapped.lines.forEach((ln, li) => {
+                    const tspan = createSvgNode('tspan');
+                    tspan.setAttribute('x', String(pos.x));
+                    tspan.setAttribute('y', String(laneTop + 11 + li * lineHeight));
+                    tspan.textContent = ln;
+                    label.appendChild(tspan);
+                });
+                const fullTitle = createSvgNode('title');
+                fullTitle.textContent = String(nodeName);
+                label.appendChild(fullTitle);
                 graphLayer.appendChild(label);
             });
             applyDfgZoom();
