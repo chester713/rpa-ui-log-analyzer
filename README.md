@@ -34,7 +34,7 @@ The tool runs each log through six sequential steps:
 
 | # | Step | How |
 |---|------|-----|
-| 1 | **Event Grouping** | Consecutive events are grouped into interaction segments by collective intent. Shared attributes (`app`, `webpage`, `url`, `element_id`) serve as supporting evidence; a change in `app` / `application` triggers a context-switch boundary. | Rule-based |
+| 1 | **Event Grouping** | Consecutive events are pre-segmented into interaction segments using shared attributes (`app`, `webpage`, `url`, `element_id`) as supporting evidence; a change in `app` / `application` triggers a context-switch boundary. An LLM second pass then refines the candidate groups — merging only directly-adjacent groups that share one intent, never across application boundaries. | Rule-based + LLM |
 | 2 | **Activity Naming** | Groups are sent to an LLM in batches of 5 (processed sequentially to respect rate limits) to be named as activities. The LLM identifies each group's collective intent and assigns a name aligned with the pattern vocabulary. It also detects context switches and whether a prerequisite Find step is needed. | LLM |
 | 3 | **Action / Object Extraction** | The Action and Object are taken from the pattern the LLM assigned in step 2 — each pattern carries a canonical Action/Object pair in the AOMC (Action-Object-Method-Context) vocabulary. Log-level verbs (click/press/tap, type/paste/fill, etc.) are resolved to that shared vocabulary by the LLM, not by a hardcoded map. | LLM |
 | 4 | **Pattern Matching** | The activity is matched to a pattern in the RPA UI Interaction Pattern Library via the LLM-assigned pattern name. | LLM |
@@ -133,7 +133,7 @@ src_cli.py             # CLI entry point
 src/
 ├── parser/            # CSV loading, BOM handling, LLM-powered column detection
 ├── models/            # Event, Activity, Pattern, MethodRecommendation data classes
-├── inference/         # EventGrouper (rule-based), ActivityInferrer (LLM)
+├── inference/         # EventGrouper + LLMGroupRefiner (grouping), ActivityInferrer (LLM)
 ├── mapping/           # EventActivityMapper — wires grouper and inferrer together
 ├── matching/          # PatternLoader, PatternMatcher, pattern library wiring
 ├── process_mining/    # Directly-Follows Graph (DFG) builder

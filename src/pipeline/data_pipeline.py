@@ -7,7 +7,7 @@ from ..parser.csv_loader import CSVLoader
 from ..models.event import Event
 from ..models.activity import Activity, EventActivityMapping
 from ..models.pattern import MethodRecommendation
-from ..inference.event_grouper import EventGrouper
+from ..inference.event_grouper import EventGrouper, LLMGroupRefiner
 from ..inference.activity_inferrer import ActivityInferrer
 from ..mapping.event_activity_mapper import EventActivityMapper
 from ..matching.pattern_matcher import get_context_from_events
@@ -96,6 +96,7 @@ class DataPipeline:
 
         self.loader = CSVLoader(llm_client)
         self.grouper = EventGrouper(group_attributes)
+        self.refiner = LLMGroupRefiner(llm_client)
         self.inferrer = ActivityInferrer(llm_client, patterns=PATTERNS)
         self.mapper = EventActivityMapper(self.grouper, self.inferrer)
         self.formatter = RecommendationFormatter()
@@ -114,13 +115,20 @@ class DataPipeline:
         if self.loader.detected_switch_columns:
             self.grouper.context_switch_attributes = self.loader.detected_switch_columns
 
-        mappings = self.mapper.map(events)
+        # Rule-based pre-segmentation, then an LLM refinement pass that merges
+        # over-segmented adjacent groups sharing one intent. This mirrors the web
+        # pipeline (progressive step 1). The refine call is non-deterministic, so
+        # it runs once and the resulting groups are reused for inference,
+        # recommendations, and statistics to keep group indices aligned.
+        groups = self.grouper.group_events_with_context_switches(events)
+        groups = self.refiner.refine(groups)
+
+        mappings = self.mapper.map_groups(groups)
         activities = [m.activity for m in mappings]
 
         # Recommend for the full enriched activity sequence — including the
         # implicit "Find <element>" and "Switch Context" activities — so the CLI
         # matches the web pipeline rather than emitting main activities only.
-        groups = self.grouper.group_events_with_context_switches(events)
         enriched = getattr(self.mapper, "enriched_activities", activities)
         recommendations = self._create_recommendations(enriched, groups)
 
@@ -132,7 +140,7 @@ class DataPipeline:
             if mappings
             else 0,
             "grouper_stats": self.grouper.get_group_summary(
-                self.grouper.group_events(events)
+                [g.events for g in groups]
             ),
             "mapping_stats": self.mapper.get_mapping_summary(mappings),
         }

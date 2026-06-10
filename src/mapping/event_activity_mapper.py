@@ -38,6 +38,26 @@ class EventActivityMapper:
             return []
 
         groups = self.grouper.group_events_with_context_switches(events)
+        return self.map_groups(groups)
+
+    def map_groups(self, groups: List[EventGroup]) -> List[EventActivityMapping]:
+        """
+        Map pre-computed event groups to activities.
+
+        Accepts groups that may already have been refined (e.g. by the LLM
+        group-refinement pass) so callers can share one grouping between
+        inference and downstream recommendation, keeping group indices aligned.
+
+        Args:
+            groups: List of EventGroup objects in temporal order
+
+        Returns:
+            List of EventActivityMapping objects (main activities only, one per
+            group). The full enriched list is stored on self.enriched_activities.
+        """
+        if not groups:
+            self.enriched_activities = []
+            return []
 
         # Pass EventGroup objects so the inferrer can read context-switch metadata
         all_activities = self.inferrer.infer_activities(groups)
