@@ -42,51 +42,27 @@
             
             <form method="POST">
                 <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
-                <div class="form-group">
-                    <label>Provider</label>
-                    <select name="provider" id="providerSelect" onchange="toggleApiFields()">
-                        <option value="puter" {% if config.provider == 'puter' %}selected{% endif %}>
-                            Puter.js (Free, no API key needed)
-                        </option>
-                        <option value="custom" {% if config.provider == 'custom' %}selected{% endif %}>
-                            Custom API Key
-                        </option>
-                    </select>
-                    <p class="help">Select Puter.js for free access, or enter your own API key</p>
-                </div>
-                
-                <div class="form-group {% if config.provider != 'custom' %}hidden{% endif %}" id="apiKeyGroup">
+                <div class="form-group" id="apiKeyGroup">
                     <label>API Key</label>
                     <input type="password" name="api_key" value="{{ config.api_key }}" placeholder="Enter your API key">
-                    <p class="help">Supports OpenAI, Anthropic, MiniMax, OpenRouter, Gemini, and other OpenAI-compatible APIs</p>
+                    <p class="help">Supports OpenAI, Anthropic, MiniMax, OpenRouter, Gemini, Groq, and other OpenAI-compatible APIs</p>
                 </div>
-                
-                <div class="form-group {% if config.provider != 'custom' %}hidden{% endif %}" id="endpointGroup">
+
+                <div class="form-group" id="endpointGroup">
                     <label>API Endpoint (Optional)</label>
                     <input type="text" name="endpoint" value="{{ config.endpoint }}" placeholder="https://api.openai.com/v1">
                     <p class="help">Leave empty for default OpenAI endpoint</p>
                 </div>
-                
-                <div class="form-group {% if config.provider != 'custom' %}hidden{% endif %}" id="modelGroup">
+
+                <div class="form-group" id="modelGroup">
                     <label>Model</label>
                     <input type="text" name="model" value="{{ config.model }}" placeholder="gpt-4o-mini">
                     <p class="help">Model name (e.g., gpt-4o-mini, claude-3-haiku, glm-4-flash)</p>
                 </div>
-                
+
                 <button type="submit" class="btn">Save Settings</button>
             </form>
         </div>
     </div>
-    
-    <script>
-        function toggleApiFields() {
-            const provider = document.getElementById('providerSelect').value;
-            const groups = ['apiKeyGroup', 'endpointGroup', 'modelGroup'];
-            
-            groups.forEach(id => {
-                document.getElementById(id).classList.toggle('hidden', provider !== 'custom');
-            });
-        }
-    </script>
 </body>
 </html>

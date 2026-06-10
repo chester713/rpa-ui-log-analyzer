@@ -13,7 +13,7 @@ class Pattern:
     action: str
     object: str
     method: str
-    category: str  # "Extraction" or "Modification"
+    category: str  # "Extraction", "Modification", or "Control"
     contexts: List[str] = field(default_factory=list)
     description: str = ""
 

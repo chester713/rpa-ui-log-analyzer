@@ -88,14 +88,6 @@ class _FakeLLM:
 class TestActivityInferrer:
     """Test cases for ActivityInferrer (LLM-driven; no heuristic fallback)."""
 
-    def test_empty_group_returns_empty_activity(self):
-        """Test empty event group returns empty activity."""
-        inferrer = ActivityInferrer()
-        activity = inferrer.infer_activity([])
-
-        assert activity.name == "Empty"
-        assert activity.confidence == 0.0
-
     def test_infer_activities_requires_llm(self):
         """Without an LLM there is no fallback — inference must raise."""
         groups = [[Event("click", {"app": "Chrome"}, 0)]]

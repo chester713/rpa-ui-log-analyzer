@@ -6,6 +6,7 @@ import re
 from typing import List, Optional, Dict, Any
 from ..models.event import Event
 from ..models.activity import Activity
+from ..llm.client import LLMError
 
 _logger = logging.getLogger(__name__)
 
@@ -138,8 +139,14 @@ class ActivityInferrer:
                 ))
 
             # 3. Main activity
+            activity_name = llm_result.get("activity_name")
+            if not activity_name or not str(activity_name).strip():
+                raise LLMError(
+                    f"LLM did not return an activity name for group {group_idx}. "
+                    "No fallback is applied — re-run once the LLM is available."
+                )
             activities.append(Activity(
-                name=llm_result["activity_name"],
+                name=activity_name,
                 confidence=llm_result.get("confidence", 0.3),
                 evidence=llm_result.get("evidence", []),
                 reasoning=llm_result.get("reasoning", ""),
@@ -248,122 +255,27 @@ CRITICAL OUTPUT RULES:
 [{{"activity_name": "...", "pattern": "...", "context_switch": {{"detected": false, ...}}, "prerequisite": {{"needed": false}}, ...}}, ...]"""
 
     def _parse_batch_response(self, raw: str, n: int) -> List[dict]:
-        """Parse a JSON array response from a batch prompt. Returns exactly n dicts."""
-        if not raw:
-            return [{} for _ in range(n)]
+        """Parse a JSON array response from a batch prompt. Returns exactly n dicts.
+
+        Raises LLMError if the response is missing, unparseable, or the wrong
+        length. The pipeline has no fallback, so a malformed batch response is
+        surfaced rather than silently padded with empty activities (which would
+        yield false-positive results).
+        """
+        if not raw or not raw.strip():
+            raise LLMError("LLM returned an empty response during activity naming.")
         text = raw.strip()
         arr_match = re.search(r'\[.*\]', text, re.DOTALL)
-        if arr_match:
-            try:
-                results = json.loads(arr_match.group())
-                if isinstance(results, list):
-                    while len(results) < n:
-                        results.append({})
-                    return results[:n]
-            except json.JSONDecodeError:
-                pass
-        return [{} for _ in range(n)]
-
-    def infer_activity(self, event_group: List[Event]) -> Activity:
-        """Infer a single main activity (no implicit activities). Used for legacy callers."""
-        if not event_group:
-            return Activity(name="Empty", confidence=0.0, evidence=[], source_events=[])
-
-        if self.llm_client is None:
-            raise ValueError("LLM client required for activity inference")
-
-        from ..inference.event_grouper import EventGroup
-        group = EventGroup(events=event_group)
-        prompt = self._build_prompt(group)
-        raw = self.llm_client.complete(prompt)
-        result = self._parse_response(raw)
-
-        source_events = [e.row_index for e in event_group if e.row_index is not None]
-        return Activity(
-            name=result.get("activity_name", ""),
-            confidence=result.get("confidence", 0.3),
-            evidence=result.get("evidence", []),
-            reasoning=result.get("reasoning", ""),
-            source_events=source_events,
-            pattern_name=result.get("pattern"),
-        )
-
-    def _build_prompt(self, group) -> str:
-        """Build LLM prompt requesting a JSON response."""
-        events = group.events
-
-        event_lines = []
-        for e in events:
-            parts = [e.event]
-            tag = (
-                e.attributes.get("tag_name")
-                or e.attributes.get("tag_type")
-                or e.attributes.get("element_id")
+        if not arr_match:
+            raise LLMError("LLM did not return a JSON array during activity naming.")
+        try:
+            results = json.loads(arr_match.group())
+        except json.JSONDecodeError as exc:
+            raise LLMError(f"LLM returned invalid JSON during activity naming: {exc}")
+        if not isinstance(results, list):
+            raise LLMError("LLM did not return a JSON array during activity naming.")
+        if len(results) != n:
+            raise LLMError(
+                f"LLM returned {len(results)} activity result(s) but {n} were expected."
             )
-            if tag:
-                parts.append(f"(element: {tag})")
-            event_lines.append("- " + " ".join(parts))
-
-        priority_keys = [
-            "application", "app", "webpage", "url", "browser_url",
-            "tag_name", "tag_type", "element_id", "id",
-            "workbook", "worksheet", "window",
-        ]
-        attr_summary: Dict[str, set] = {}
-        for e in events:
-            for k, v in e.attributes.items():
-                if v and str(v).strip() and str(v).lower() not in {"none", "null"}:
-                    attr_summary.setdefault(k, set()).add(str(v))
-
-        attr_lines = []
-        for k in priority_keys:
-            if k in attr_summary:
-                vals = sorted(attr_summary[k])[:3]
-                attr_lines.append(f"- {k}: {', '.join(vals)}")
-
-        events_text = "\n".join(event_lines) or "- (none)"
-        attrs_text = "\n".join(attr_lines) or "- (none available)"
-
-        pattern_reference = self._build_pattern_reference()
-        return f"""You are an RPA (Robotic Process Automation) designer analyzing UI event logs.
-
-{pattern_reference}
-
-Analyze the following UI events and return structured JSON for RPA design.
-
-Events (temporal order):
-{events_text}
-
-Context attributes:
-{attrs_text}
-
-Instructions:
-1. "activity_name": Name the interaction INTENT using verb + object format, aligned with the matched pattern vocabulary (e.g., "Write credentials into username field", "Activate submit button", "Open login page", "Read cell value from spreadsheet"). The verb should reflect the pattern's Action field.
-2. "pattern": The single best-matching pattern name from the reference above. Choose based on the semantic meaning of the interaction — not the exact words in the log. A log may say "enterText", "inputValue", "keystroke" — all map to Write Element because they share the same intent.
-3. "prerequisite": Identify whether the bot must locate a specific UI element before performing the main action. Set "needed" to true when the activity targets a specific element (input fields, buttons, dropdowns, checkboxes, links, table cells). Set "needed" to false for page-level actions (opening a URL, scrolling, switching windows, launching an application). When needed is true, also provide "name" — the activity name for the Find step using the same verb+object format (e.g. "Find username field", "Find submit button", "Find country dropdown") — and "pattern": always "Find Element".
-4. "evidence": List of 2–4 concise observations drawn directly from the events and attributes above that justify your interpretation. Each item must name a specific event keyword or attribute value and explain what it signals.
-5. "confidence": Your confidence from 0.0 to 1.0, reflecting how strongly the evidence supports your interpretation. Use lower values when events are ambiguous or key attributes are missing.
-6. "reasoning": One sentence summarising your overall interpretation.
-
-Respond with valid JSON only — no other text:
-{{
-  "activity_name": "...",
-  "pattern": "Write Element",
-  "prerequisite": {{"needed": true, "name": "Find username field", "pattern": "Find Element"}},
-  "evidence": ["...", "..."],
-  "confidence": 0.9,
-  "reasoning": "..."
-}}"""
-
-    def _parse_response(self, response: str) -> dict:
-        """Parse JSON response from LLM."""
-        result: dict = {}
-        if response:
-            text = response.strip()
-            json_match = re.search(r'\{.*\}', text, re.DOTALL)
-            if json_match:
-                try:
-                    result = json.loads(json_match.group())
-                except json.JSONDecodeError:
-                    pass
-        return result
+        return results

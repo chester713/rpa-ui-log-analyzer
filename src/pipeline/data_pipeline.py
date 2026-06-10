@@ -117,7 +117,12 @@ class DataPipeline:
         mappings = self.mapper.map(events)
         activities = [m.activity for m in mappings]
 
-        recommendations = self._create_recommendations(mappings)
+        # Recommend for the full enriched activity sequence — including the
+        # implicit "Find <element>" and "Switch Context" activities — so the CLI
+        # matches the web pipeline rather than emitting main activities only.
+        groups = self.grouper.group_events_with_context_switches(events)
+        enriched = getattr(self.mapper, "enriched_activities", activities)
+        recommendations = self._create_recommendations(enriched, groups)
 
         statistics = {
             "total_events": len(events),
@@ -140,27 +145,38 @@ class DataPipeline:
         )
 
     def _create_recommendations(
-        self, mappings: List[EventActivityMapping]
+        self, activities: List[Activity], groups: List[Any]
     ) -> List[MethodRecommendation]:
-        """Create method recommendations from activity mappings."""
+        """Create one method recommendation per inferred activity.
+
+        Operates on the full enriched activity sequence (main + implicit Find /
+        Switch-Context activities), looking up each activity's source group by
+        ``group_index``. Mirrors the web pipeline's step 4/6 logic.
+        """
         from ..matching import PATTERNS, PatternMatcher
 
         recommendations = []
         matcher = PatternMatcher(PATTERNS)
 
-        for mapping in mappings:
-            activity = mapping.activity
-            events = mapping.events
+        for activity in activities:
+            group_idx = activity.group_index
+            group = groups[group_idx] if 0 <= group_idx < len(groups) else None
+            events = group.events if group else []
             context = get_context_from_events(events)
 
-            pattern = matcher.match(activity, events, context)
-            method = pattern.get_method_for_context(context) if pattern else None
+            # Context switches are OS-level operations; the Switch Context pattern
+            # only lists "desktop", so force that context for matching purposes
+            # while still reporting the activity's real execution environment.
+            is_context_switch = activity.activity_type == "context_switch"
+            match_context = "desktop" if is_context_switch else context
+
+            pattern = matcher.match(activity, events, match_context)
+            method = pattern.get_method_for_context(match_context) if pattern else None
 
             event_indices = [e.row_index for e in events if e.row_index is not None]
 
-            context_switch = mapping.attribute_breakdown.get("context_switch", False)
-            context_switch_from = mapping.attribute_breakdown.get("previous_app")
-            context_switch_to = mapping.attribute_breakdown.get("current_app")
+            context_switch_from = group.previous_app if (is_context_switch and group) else None
+            context_switch_to = group.current_app if (is_context_switch and group) else None
 
             # Action and Object come from the canonical Pattern matched via the
             # LLM-assigned pattern name — mirrors the web pipeline (step 3/6).
@@ -175,7 +191,7 @@ class DataPipeline:
                 method=method,
                 method_category=pattern.category if pattern else None,
                 confidence=activity.confidence,
-                context_switch=context_switch,
+                context_switch=is_context_switch,
                 context_switch_from=context_switch_from,
                 context_switch_to=context_switch_to,
             )

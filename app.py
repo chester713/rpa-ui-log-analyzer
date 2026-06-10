@@ -57,7 +57,7 @@ from src.web.progressive import bp as _progressive_bp
 app.register_blueprint(_progressive_bp)
 
 DEFAULT_LLM_CONFIG = {
-    "provider": "puter",
+    "provider": "custom",
     "endpoint": "",
     "api_key": "",
     "model": "gpt-4o-mini",
@@ -482,7 +482,7 @@ def settings():
             api_key = submitted_api_key
 
         config = {
-            "provider": request.form.get("provider", "puter"),
+            "provider": "custom",
             "endpoint": request.form.get("endpoint", ""),
             "api_key": api_key,
             "model": request.form.get("model", "gpt-4o-mini"),

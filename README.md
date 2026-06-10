@@ -94,8 +94,7 @@ Then edit it, or use **Settings** (`/settings`) in the web UI:
 }
 ```
 
-- `provider: "custom"` (recommended) — any OpenAI-compatible endpoint. Set `endpoint`, `api_key`, and `model`. Works with OpenAI, Groq, OpenRouter, a local server, etc.
-- `provider: "puter"` — experimental no-key path via the [Puter.ai](https://puter.com) endpoint; reliability is not guaranteed.
+The tool uses any OpenAI-compatible endpoint. Set `endpoint`, `api_key`, and `model`. Works with OpenAI, Groq, OpenRouter, a local server, etc. (The `provider` field is retained as `"custom"` for backward compatibility.)
 
 There is **no rule-based fallback**: if the configured LLM is missing or fails, the tool reports the error rather than producing degraded results. This is deliberate — the prototype is meant to reflect the LLM-driven approach directly.
 
@@ -139,7 +138,7 @@ src/
 ├── matching/          # PatternLoader, PatternMatcher, pattern library wiring
 ├── process_mining/    # Directly-Follows Graph (DFG) builder
 ├── pipeline/          # DataPipeline — end-to-end orchestrator used by CLI
-└── llm/               # LLMClient supporting Puter and OpenAI-compatible providers
+└── llm/               # LLMClient for OpenAI-compatible providers
 
 patterns/              # 13 pattern definition files (*.md)
 templates/             # Jinja2 HTML templates for all web pages
