@@ -190,7 +190,7 @@ class ActivityInferrer:
             priority_keys = [
                 "application", "app", "webpage", "url", "browser_url",
                 "tag_name", "tag_type", "element_id", "id",
-                "workbook", "worksheet", "window",
+                "workbook", "worksheet", "cell_range", "cell_range_number", "window",
             ]
             attr_summary: Dict[str, set] = {}
             for e in events:
@@ -230,7 +230,7 @@ Analyze the following {n} event group(s). Return a JSON ARRAY with exactly {n} o
 
 For each group return this JSON structure:
 {{
-  "activity_name": "Verb + object naming the interaction's INTENT at a consistent semantic level, aligned with the matched pattern. Identify the activity by its stable target or role — the field's label, the button's purpose, the cell/column role — NOT by transient instance data such as the exact value typed, the row number, or a timestamp (e.g. 'Write First Name field', 'Activate Submit button', 'Read unit price cell'). Naming by stable role means genuinely different interactions get different names, while the same interaction performed again gets the same name.",
+  "activity_name": "Verb + object in a UNIQUE, context-specific phrasing aligned with the matched pattern. Include the concrete detail that sets this interaction apart from similar ones — the specific field/element label, cell reference, value entered, URL, or page (e.g. 'Write \"John\" into First Name field', 'Activate Submit button on registration form', 'Read cell B2 from Forecast sheet')",
   "pattern": "Exactly one pattern name from the reference above — choose based on semantic meaning of the interaction, not the exact words in the log",
   "context_switch": {{"detected": false, "from_context": null, "to_context": null}},
   "prerequisite": {{"needed": false}},
@@ -241,15 +241,12 @@ For each group return this JSON structure:
 
 Field guide:
 - "context_switch": Set "detected" to true only when the user moves to a genuinely different application, tool, or execution environment compared to the "Previous context" shown above. A change in execution environment — web (browser/HTML), desktop (native application, spreadsheet), or screen (raw coordinates) — is always a context switch, as is moving between two different applications in the same environment. Examples that ARE context switches: Excel → Chrome, one web app → a different web app, desktop app → browser. Examples that are NOT: navigating to a new page within the same site, opening a modal in the same app, scrolling. When detected is true, "from_context" and "to_context" must name the environments (e.g. "Microsoft Excel", "Google Chrome").
-- "prerequisite": Identify whether the bot must locate a specific UI element before performing the main action. Set "needed" to true whenever the activity reads from, writes to, focuses, or activates a specific element (input fields, buttons, dropdowns, checkboxes, links, table cells) — these element-targeting actions all require the element to be found first. Set "needed" to false for page-level actions that have no specific target element (opening a URL, scrolling, switching windows/context, refreshing, launching an application, passive observation). When needed is true, also provide "name" — the activity name for the Find step using the same verb+object format (e.g. "Find username field", "Find submit button", "Find country dropdown") — and "pattern": always "Find Element".
+- "prerequisite": Identify whether the bot must locate a specific UI element before performing the main action. Set "needed" to true whenever the activity reads from, writes to, focuses, or activates a specific element (input fields, buttons, dropdowns, checkboxes, links, table cells) — these element-targeting actions all require the element to be found first. Set "needed" to false for page-level actions that have no specific target element (opening a URL, scrolling, switching windows/context, refreshing, launching an application, passive observation). When needed is true, also provide "name" — the activity name for the Find step using the same UNIQUE, context-specific verb+object phrasing as "activity_name" above. Include the concrete detail that identifies the target — the specific field/element label, cell reference, sheet, page, or URL — so the Find name is never bare (e.g. "Find First Name field on registration form", "Find Submit button on registration form", "Find cell B2 in Forecast sheet"), and "pattern": always "Find Element".
 
 CRITICAL OUTPUT RULES:
 1. Return a valid JSON ARRAY with EXACTLY {n} object(s) — one per group, in the same order.
 2. "activity_name" is MANDATORY in every object. Never omit it. If the events are ambiguous or repetitive, still provide a best-guess name using verb+object format (e.g. "Read cell value from spreadsheet", "Interact with page element").
-3. Name by SEMANTIC IDENTITY, not by occurrence:
-   - Genuinely DIFFERENT interactions must get DIFFERENT names — distinguish them by their target/role (e.g. "Write First Name field" vs "Write Last Name field"), never by a counter.
-   - The SAME interaction performed again must get the SAME name (e.g. the same button clicked repeatedly, or one step of a repeated cycle), so that real repetition is modelled as a loop in the process graph rather than a flat chain.
-   - Do NOT inject transient details (the typed value, a row index, "(2)") just to force names apart — that would hide genuine loops.
+3. Every "activity_name" MUST be UNIQUE across the array. When groups perform the same kind of action, tell them apart using concrete context from their own events/attributes — the specific field or element label, cell reference, value, URL, page, or step — so that no two names are identical (e.g. "Write \"John\" into First Name field" vs "Write \"Smith\" into Last Name field"; "Read cell A2 from Sheet1" vs "Read cell A3 from Sheet1"). Never disambiguate with bare counters like "(2)".
 4. Output raw JSON only — no markdown fences, no explanation text before or after the array.
 
 [{{"activity_name": "...", "pattern": "...", "context_switch": {{"detected": false, ...}}, "prerequisite": {{"needed": false}}, ...}}, ...]"""
