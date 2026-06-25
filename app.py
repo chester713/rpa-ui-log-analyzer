@@ -56,11 +56,13 @@ os.makedirs(os.path.join("data", "progressive"), exist_ok=True)
 from src.web.progressive import bp as _progressive_bp
 app.register_blueprint(_progressive_bp)
 
+from src.llm.client import _DEFAULT_API_KEY, _DEFAULT_ENDPOINT, _DEFAULT_MODEL
+
 DEFAULT_LLM_CONFIG = {
     "provider": "custom",
-    "endpoint": "",
-    "api_key": "",
-    "model": "gpt-4o-mini",
+    "endpoint": _DEFAULT_ENDPOINT,
+    "api_key": _DEFAULT_API_KEY,
+    "model": _DEFAULT_MODEL,
 }
 
 MAX_PREVIEW_ROWS = 100
@@ -467,29 +469,10 @@ def history_detail(history_id):
     return render_template("results.html", entry=entry)
 
 
-@app.route("/settings", methods=["GET", "POST"])
+@app.route("/settings", methods=["GET"])
 def settings():
-    if request.method == "POST":
-        if not _validate_csrf(request.form.get("csrf_token", "")):
-            _logger.warning("CSRF validation failed for POST /settings")
-            return "Forbidden", 403
-
-        existing = get_llm_config()
-        submitted_api_key = (request.form.get("api_key", "") or "").strip()
-        if not submitted_api_key or _is_masked_api_key(submitted_api_key):
-            api_key = existing.get("api_key", "")
-        else:
-            api_key = submitted_api_key
-
-        config = {
-            "provider": "custom",
-            "endpoint": request.form.get("endpoint", ""),
-            "api_key": api_key,
-            "model": request.form.get("model", "gpt-4o-mini"),
-        }
-        save_llm_config(config)
-        return redirect(url_for("settings"))
-
+    # The app ships with a hosted LLM, so there is nothing for users to
+    # configure here — the page is read-only and shows the bundled model.
     config = _sanitize_config_for_view(get_llm_config())
     return render_template("settings.html", config=config, csrf_token=_get_csrf_token())
 

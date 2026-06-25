@@ -39,29 +39,12 @@
         
         <div class="card">
             <div class="section-title">LLM Configuration</div>
-            
-            <form method="POST">
-                <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
-                <div class="form-group" id="apiKeyGroup">
-                    <label>API Key</label>
-                    <input type="password" name="api_key" value="{{ config.api_key }}" placeholder="Enter your API key">
-                    <p class="help">Supports OpenAI, Anthropic, MiniMax, OpenRouter, Gemini, Groq, and other OpenAI-compatible APIs</p>
-                </div>
 
-                <div class="form-group" id="endpointGroup">
-                    <label>API Endpoint (Optional)</label>
-                    <input type="text" name="endpoint" value="{{ config.endpoint }}" placeholder="https://api.openai.com/v1">
-                    <p class="help">Leave empty for default OpenAI endpoint</p>
-                </div>
-
-                <div class="form-group" id="modelGroup">
-                    <label>Model</label>
-                    <input type="text" name="model" value="{{ config.model }}" placeholder="gpt-4o-mini">
-                    <p class="help">Model name (e.g., gpt-4o-mini, claude-3-haiku, glm-4-flash)</p>
-                </div>
-
-                <button type="submit" class="btn">Save Settings</button>
-            </form>
+            <div class="form-group">
+                <label>Model</label>
+                <input type="text" value="{{ config.model }}" disabled>
+                <p class="help">The analyzer uses a hosted LLM provided for you — no API key required.</p>
+            </div>
         </div>
     </div>
 </body>
