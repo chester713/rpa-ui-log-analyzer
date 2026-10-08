@@ -110,13 +110,14 @@ class CSVLoader:
                     break
             sample_by_column.append(f"- {field}: {values}")
 
+        sample_str = "\n".join(sample_by_column)
         prompt = f"""You are selecting the event/action column from a UI log CSV.
 
 Columns:
 {columns_str}
 
 Sample values per column:
-{"\n".join(sample_by_column)}
+{sample_str}
 
 Choose the column whose values generally look like UI actions, usually verb+noun style labels.
 Examples: activateWorkbook, openWindow, clickTextField, setValue, findElement.
