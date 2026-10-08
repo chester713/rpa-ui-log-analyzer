@@ -77,24 +77,39 @@ The web interface (`python app.py`, port 5001) provides a guided six-page flow:
 
 ### LLM Configuration
 
-The tool needs an LLM to run. `config/llm_config.json` is **not** committed (it may hold a private key); copy the template and fill it in:
+#### LLM used
+
+All LLM-driven stages (column detection, group refinement, activity naming, action/object extraction, and pattern matching) use this model by default:
+
+| Setting | Value |
+|---------|-------|
+| **Model** | `gemini-3.1-flash-lite` (Google Gemini) |
+| **Endpoint** | `https://generativelanguage.googleapis.com/v1beta/openai/chat/completions` (Gemini's OpenAI-compatible API) |
+| **API key** | `GEMINI_API_KEY` environment variable, or `api_key` in `config/llm_config.json` |
+| **Temperature** | `0` |
+| **Max output tokens** | `2000` per request |
+| **Timeout / retries** | 30 s per request; up to 2 retries with exponential backoff on timeouts, connection errors, and HTTP 429 |
+
+These defaults are defined in `src/llm/client.py` and mirrored in `config/llm_config.example.json`. Results from this prototype should be attributed to this model unless the configuration was overridden.
+
+#### Configuration
+
+No key is stored in the repository. Provide your own, either by setting `GEMINI_API_KEY` in the environment (the web app also reads it from a git-ignored `.env` file; the CLI does not load `.env`, so export the variable in your shell), or by creating a git-ignored config file. Copy the template and edit it, or use **Settings** (`/settings`) in the web UI:
 
 ```bash
 cp config/llm_config.example.json config/llm_config.json
 ```
 
-Then edit it, or use **Settings** (`/settings`) in the web UI:
-
 ```json
 {
   "provider": "custom",
-  "endpoint": "https://api.openai.com/v1/chat/completions",
+  "endpoint": "https://generativelanguage.googleapis.com/v1beta/openai/chat/completions",
   "api_key": "YOUR_API_KEY",
-  "model": "gpt-4o-mini"
+  "model": "gemini-3.1-flash-lite"
 }
 ```
 
-The tool uses any OpenAI-compatible endpoint. Set `endpoint`, `api_key`, and `model`. Works with OpenAI, Groq, OpenRouter, a local server, etc. (The `provider` field is retained as `"custom"` for backward compatibility.)
+Any field left empty falls back to the default above. The client speaks the OpenAI chat-completions protocol, so `endpoint`, `api_key`, and `model` can be pointed at another compatible provider (OpenAI, Groq, OpenRouter, a local server), but `gemini-3.1-flash-lite` is the documented default. (The `provider` field is retained as `"custom"` for backward compatibility.)
 
 There is **no rule-based fallback**: if the configured LLM is missing or fails, the tool reports the error rather than producing degraded results. This is deliberate — the prototype is meant to reflect the LLM-driven approach directly.
 
@@ -159,7 +174,7 @@ tests/                 # pytest test suite
 - `requests>=2.28.0` — LLM API client
 - `pm4py>=2.7.0` — process mining / DFG generation
 - `python-dotenv>=1.0.0` — loads environment variables from `.env`
-- An OpenAI-compatible LLM API key (see [LLM Configuration](#llm-configuration))
+- A Gemini API key for the default model `gemini-3.1-flash-lite`, or a key for another OpenAI-compatible endpoint (see [LLM Configuration](#llm-configuration))
 
 ## License
 
