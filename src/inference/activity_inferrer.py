@@ -16,25 +16,50 @@ _BATCH_SIZE = 5
 class ActivityInferrer:
     """Uses LLM to infer activities from event groups."""
 
-    def __init__(self, llm_client=None, progress_callback=None, patterns=None):
+    _DEFAULT_APPLICATION_KEYS = ["application", "app"]
+    _DEFAULT_CONTEXT_KEYS = ["browser_url", "url", "webpage", "window_title", "window", "workbook"]
+
+    def __init__(
+        self,
+        llm_client=None,
+        progress_callback=None,
+        patterns=None,
+        application_attributes: Optional[List[str]] = None,
+        context_attributes: Optional[List[str]] = None,
+    ):
+        """
+        Args:
+            application_attributes: Columns that identify the active application, as
+                identified by the LLM when the log was loaded (defaults to common names).
+            context_attributes: Other columns that locate an event, e.g. URL or window.
+        """
         self.llm_client = llm_client
         self.progress_callback = progress_callback
         self.patterns = patterns or []
+        self.application_attributes = list(application_attributes or self._DEFAULT_APPLICATION_KEYS)
+        self.context_attributes = list(context_attributes or [])
 
-    def _extract_context_summary(self, events: List[Event]) -> Optional[Dict[str, str]]:
-        """Extract a brief app/URL/window summary from a group's events for cross-group comparison."""
-        context_keys = [
-            "application", "app", "browser_url", "url", "webpage",
-            "window_title", "window", "workbook",
-        ]
-        summary: Dict[str, str] = {}
-        for key in context_keys:
-            for e in events:
-                val = e.attributes.get(key)
-                if val and str(val).strip().lower() not in {"none", "null", ""}:
-                    summary[key] = str(val).strip()
+    def _context_keys(self) -> List[str]:
+        """Attributes compared between groups, application-related ones first."""
+        keys: List[str] = []
+        for key in (
+            self.application_attributes + self._DEFAULT_APPLICATION_KEYS
+            + self.context_attributes + self._DEFAULT_CONTEXT_KEYS
+        ):
+            if key not in keys:
+                keys.append(key)
+        return keys
+
+    def _latest_context(self, events: List[Event]) -> Dict[str, str]:
+        """The most recently recorded value of each application/URL/window attribute in a group."""
+        latest: Dict[str, str] = {}
+        for key in self._context_keys():
+            for e in reversed(events):
+                value = e.recorded(key)
+                if value is not None:
+                    latest[key] = value
                     break
-        return summary if summary else None
+        return latest
 
     def _build_pattern_reference(self) -> str:
         """Build a compact pattern reference block from loaded Pattern objects."""
@@ -76,11 +101,17 @@ class ActivityInferrer:
             else:
                 normalised.append(EG(events=g))
 
-        # Precompute previous-group context summary for each group so the LLM can detect
-        # context switches without relying on hardcoded attribute names.
-        prev_summaries = [None] * len(normalised)
-        for i in range(1, len(normalised)):
-            prev_summaries[i] = self._extract_context_summary(normalised[i - 1].events)
+        # Precompute the "previous context" for each group so the LLM can judge context
+        # switches against log data. It is the most recently recorded value of each
+        # application/URL/window attribute over ALL earlier groups, so a group that did
+        # not record the application does not erase what is known about it. None marks
+        # the first group; an empty dict means earlier groups recorded none of these.
+        prev_summaries: List[Optional[Dict[str, str]]] = [None] * len(normalised)
+        running: Dict[str, str] = {}
+        for i, group in enumerate(normalised):
+            if i > 0:
+                prev_summaries[i] = dict(running)
+            running.update(self._latest_context(group.events))
 
         # Process batches sequentially to stay within free-tier rate limits.
         indexed = [(i, g, prev_summaries[i]) for i, g in enumerate(normalised)]
@@ -187,16 +218,22 @@ class ActivityInferrer:
                     parts.append(f"(element: {tag})")
                 event_lines.append("- " + " ".join(parts))
 
-            priority_keys = [
-                "application", "app", "webpage", "url", "browser_url",
-                "tag_name", "tag_type", "element_id", "id",
-                "workbook", "worksheet", "cell_range", "cell_range_number", "window",
-            ]
+            priority_keys: List[str] = []
+            for key in (
+                self.application_attributes + self._DEFAULT_APPLICATION_KEYS + [
+                    "webpage", "url", "browser_url",
+                    "tag_name", "tag_type", "element_id", "id",
+                    "workbook", "worksheet", "cell_range", "cell_range_number", "window",
+                ]
+            ):
+                if key not in priority_keys:
+                    priority_keys.append(key)
             attr_summary: Dict[str, set] = {}
             for e in events:
-                for k, v in e.attributes.items():
-                    if v and str(v).strip() and str(v).lower() not in {"none", "null"}:
-                        attr_summary.setdefault(k, set()).add(str(v))
+                for k in e.attributes:
+                    v = e.recorded(k)
+                    if v is not None:
+                        attr_summary.setdefault(k, set()).add(v)
 
             attr_lines = []
             for k in priority_keys:
@@ -204,10 +241,12 @@ class ActivityInferrer:
                     vals = sorted(attr_summary[k])[:3]
                     attr_lines.append(f"  {k}: {', '.join(vals)}")
 
-            if prev_ctx:
-                prev_ctx_text = ", ".join(f"{k}={v}" for k, v in prev_ctx.items())
-            else:
+            if prev_ctx is None:
                 prev_ctx_text = "(first activity — no previous context)"
+            elif not prev_ctx:
+                prev_ctx_text = "(no application, URL or window was recorded in earlier groups)"
+            else:
+                prev_ctx_text = ", ".join(f"{k}={v}" for k, v in prev_ctx.items())
 
             events_text = "\n".join(event_lines) or "- (none)"
             attrs_text = "\n".join(attr_lines) or "  (none available)"
@@ -220,6 +259,7 @@ class ActivityInferrer:
 
         groups_block = "\n\n".join(sections)
         pattern_reference = self._build_pattern_reference()
+        application_columns = ", ".join(self.application_attributes)
         return f"""You are an RPA (Robotic Process Automation) designer analyzing UI event logs.
 
 {pattern_reference}
@@ -240,7 +280,7 @@ For each group return this JSON structure:
 }}
 
 Field guide:
-- "context_switch": Set "detected" to true only when the user moves to a genuinely different application, tool, or execution environment compared to the "Previous context" shown above. A change in execution environment — web (browser/HTML), desktop (native application, spreadsheet), or screen (raw coordinates) — is always a context switch, as is moving between two different applications in the same environment. Examples that ARE context switches: Excel → Chrome, one web app → a different web app, desktop app → browser. Examples that are NOT: navigating to a new page within the same site, opening a modal in the same app, scrolling. When detected is true, "from_context" and "to_context" must name the environments (e.g. "Microsoft Excel", "Google Chrome").
+- "context_switch": "Previous context" is the most recently recorded value of each application/URL/window attribute from earlier groups, carried forward over groups that did not record it. Base the decision on the application-related attributes ({application_columns}) and the other recorded attributes: a recorded application that differs from the previous one is evidence of a switch, while an application that is simply NOT RECORDED in this group is no evidence either way. When you flag a switch, name the changed attribute values in "evidence". Set "detected" to true only when the user moves to a genuinely different application, tool, or execution environment compared to the "Previous context" shown above. A change in execution environment — web (browser/HTML), desktop (native application, spreadsheet), or screen (raw coordinates) — is always a context switch, as is moving between two different applications in the same environment. Examples that ARE context switches: Excel → Chrome, one web app → a different web app, desktop app → browser. Examples that are NOT: navigating to a new page within the same site, opening a modal in the same app, scrolling. When detected is true, "from_context" and "to_context" must name the environments (e.g. "Microsoft Excel", "Google Chrome").
 - "prerequisite": Identify whether the bot must locate a specific UI element before performing the main action. Set "needed" to true whenever the activity reads from, writes to, focuses, or activates a specific element (input fields, buttons, dropdowns, checkboxes, links, table cells) — these element-targeting actions all require the element to be found first. Set "needed" to false for page-level actions that have no specific target element (opening a URL, scrolling, switching windows/context, refreshing, launching an application, passive observation). When needed is true, also provide "name" — the activity name for the Find step using the same UNIQUE, context-specific verb+object phrasing as "activity_name" above. Include the concrete detail that identifies the target — the specific field/element label, cell reference, sheet, page, or URL — so the Find name is never bare (e.g. "Find First Name field on registration form", "Find Submit button on registration form", "Find cell B2 in Forecast sheet"), and "pattern": always "Find Element".
 
 CRITICAL OUTPUT RULES:

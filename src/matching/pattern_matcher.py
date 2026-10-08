@@ -18,26 +18,27 @@ class PatternMatcher:
         """
         self.patterns = patterns
 
-    def match(
-        self, activity: Activity, events: List[Event], context: str
-    ) -> Optional[Pattern]:
+    def match(self, activity: Activity) -> Optional[Pattern]:
         """
-        Find matching pattern for activity in given context.
+        Resolve the pattern the LLM assigned to ``activity``.
+
+        Matching is by name only (case-insensitive). Whether the pattern has a
+        variant for the activity's execution environment is decided later, when
+        the method is chosen (see ``Pattern.get_method_for_context`` and
+        ``explain_missing_method``), so an activity keeps its pattern even when
+        that pattern cannot be carried out in the detected environment.
 
         Args:
             activity: Inferred Activity
-            events: Source events for the activity
-            context: Execution context (web, desktop, screen, unknown)
 
         Returns:
-            Matching Pattern or None
+            Matching Pattern or None when the name is missing or unknown
         """
         llm_pattern_name = getattr(activity, "pattern_name", None)
         if llm_pattern_name:
             for pattern in self.patterns:
                 if pattern.name.lower() == llm_pattern_name.strip().lower():
-                    if not pattern.contexts or context in pattern.contexts:
-                        return pattern
+                    return pattern
 
         return None
 

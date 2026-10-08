@@ -32,3 +32,6 @@ Note: This pattern does NOT apply to visual/screen environments.
 
 ## Operation
 Once the target UI element is identified, the bot uses the corresponding method to remove the element from the DOM or UI hierarchy, ensuring subsequent actions operate on a clean interface.
+
+## Unsupported Environments
+- screen: an element cannot be deleted from an image

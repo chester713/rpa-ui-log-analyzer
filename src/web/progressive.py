@@ -33,14 +33,20 @@ PROGRESSIVE_LOGIC = {
     "event_grouping": (
         "• Rule-Based Pre-Segmentation: Consecutive events are placed in the same candidate group when they "
         "share at least one context attribute — such as the active application name, webpage URL, or element "
-        "identifier — indicating they belong to the same interaction unit within the log.\n"
-        "• Context Switch Detection: When the application attribute changes between two consecutive events, the "
-        "current group closes and a new group begins. This boundary marks an environment transition in the log "
-        "and is later surfaced as an explicit Switch Context activity during activity inference.\n"
+        "identifier — indicating they belong to the same interaction unit within the log. Which columns carry "
+        "this context is identified by the LLM from the CSV header and sample rows.\n"
+        "• Candidate Application Boundaries: When a recorded application value differs from the last recorded "
+        "application, the current group closes and a new group begins. An event that has no application value is "
+        "not treated as a change — a missing value is no evidence of a switch — and later events are compared "
+        "with the last recorded application. These boundaries are candidates only; whether a Switch Context "
+        "activity is inserted is decided by the LLM during activity inference.\n"
         "• LLM Group Refinement: Rule-based pre-segmentation tends to over-split a single user intention across "
-        "several adjacent groups. A second pass sends the candidate groups to an LLM, which merges directly-"
-        "adjacent groups that share one intention into a single activity group. Application-switch boundaries "
-        "are preserved as hard constraints and are never merged across.\n"
+        "several adjacent groups. A second pass sends the candidate groups to an LLM together with evidence from "
+        "the log between every pair of adjacent groups: the application-related attributes first (carrying the "
+        "last recorded application across a group that recorded none), then URL, window and element values. "
+        "The LLM makes the final decision to merge directly-adjacent groups that "
+        "share one intention; a changed application counts strongly against merging, and a missing one is no "
+        "evidence either way. The code only checks that merged groups are adjacent.\n"
         "• Group Scope: Each final group represents one contiguous interaction unit. Its size (number of events) "
         "reflects the complexity of that interaction. Groups are the primary input to activity inference: "
         "one group produces one inferred activity name."
@@ -50,8 +56,11 @@ PROGRESSIVE_LOGIC = {
         "(e.g., 'Write data into a textfield') rather than describing low-level events.\n"
         "• Prerequisite Activities: When an activity targets a specific UI element, an implicit 'Find <element>' activity is inserted before it, "
         "reflecting the RPA requirement to locate an element before interacting with it.\n"
-        "• Context Switches: When the application context changes between groups (e.g., from Excel to a browser), an implicit "
-        "'Switch context from X to Y' activity is inserted to explicitly represent the environment transition."
+        "• Context Switches: The LLM compares each group's application, URL, window and workbook with the most "
+        "recently recorded values from earlier groups (carried forward over groups that did not record them). When "
+        "it judges that the user moved to a different application or execution environment (e.g., from Excel to a "
+        "browser), an implicit 'Switch context from X to Y' activity is inserted to explicitly represent the "
+        "transition. A missing application value alone is not treated as a switch."
     ),
     "action_object_extraction": (
         "• Canonical Action — Carried from the Matched Pattern: During activity naming, the LLM interpreted "
@@ -76,10 +85,11 @@ PROGRESSIVE_LOGIC = {
         "Interaction patterns by name for each activity. This stage resolves that name against the pattern "
         "catalogue to retrieve the full pattern definition — its canonical action, object, method category, "
         "supported execution contexts, and context-to-method mapping.\n"
-        "• Context Validation: The resolved pattern is accepted only if its set of supported execution "
-        "environments includes the activity's determined environment (web, desktop, or screen), or if the "
-        "pattern declares no context restriction. If the pattern's contexts do not cover the activity's "
-        "environment, no pattern is matched.\n"
+        "• Name Match Only: A pattern is matched on its name alone — no LLM call is made and no keyword guess "
+        "is applied. Whether the pattern can be carried out in the activity's execution environment is not "
+        "decided here; it is checked when the method is chosen in the Method Recommendation stage. An activity "
+        "therefore keeps its pattern even when that pattern has no variant for the detected environment "
+        "(for example Delete Element on screen).\n"
         "• Single Matched Pattern: Resolution yields at most one pattern per activity — the one named by the "
         "LLM. The matched pattern constrains the automation method: only the methods defined within that "
         "pattern's context-method mapping are valid recommendations for the activity."
@@ -102,6 +112,10 @@ PROGRESSIVE_LOGIC = {
         "per supported context (e.g., Write Element in web → DOM Manipulation; in desktop → UI Automation "
         "Manipulation; in screen → Hardware Simulation); the method text for the activity's environment is "
         "extracted directly from that mapping.\n"
+        "• No Method for This Environment: When the matched pattern defines no variant for the determined "
+        "environment (for example Delete Element on screen, because an element cannot be deleted from an "
+        "image), no method is recommended and the stage states why instead of guessing. The same applies "
+        "when the environment itself could not be determined from the log attributes.\n"
         "• Fidelity Hierarchy (by construction): The patterns are authored so that richer environments map to "
         "higher-fidelity methods — DOM-level methods (content-level) for web, UI Automation methods "
         "(accessibility-level) for desktop, and visual recognition or hardware simulation (input-level) for "
@@ -368,6 +382,7 @@ def _ws_method_recommendation(step2, step6):
                 "inferred_activity": r["activity_name"],
                 "recommended_method": r.get("method"),   # workspace.html key
                 "method": r.get("method"),               # results.html key
+                "method_note": r.get("method_note"),     # why there is no method, if there is none
                 "activity_action": r.get("activity_action", ""),
                 "activity_object": r.get("activity_object", ""),
                 "execution_environment": r.get("execution_environment", ""),
@@ -424,7 +439,16 @@ def _compute_step1(store):
 
     groups = grouper.group_events_with_context_switches(events)
 
-    refiner = LLMGroupRefiner(llm_client)
+    # The LLM that refines the groups (and later names the activities) is shown the
+    # same application and context columns the grouper used, so its decisions rest
+    # on log data. They are stored with step 1 because step 2 runs separately.
+    application_attributes = list(grouper.context_switch_attributes)
+    context_attributes = [c for c in grouper.group_attributes if c not in application_attributes]
+    refiner = LLMGroupRefiner(
+        llm_client,
+        application_attributes=application_attributes,
+        context_attributes=context_attributes,
+    )
     groups = refiner.refine(groups)
 
     serialized = [
@@ -439,7 +463,9 @@ def _compute_step1(store):
         for i, g in enumerate(groups)
     ]
     return {"groups": serialized, "group_count": len(groups),
-            "event_count": sum(len(g.events) for g in groups)}
+            "event_count": sum(len(g.events) for g in groups),
+            "application_attributes": application_attributes,
+            "context_attributes": context_attributes}
 
 
 def _run_step2_thread(aid):
@@ -461,7 +487,13 @@ def _run_step2_thread(aid):
                 _step2_progress[aid].update({"completed": completed, "total": total})
 
         llm_client = get_llm_client()
-        inferrer = ActivityInferrer(llm_client, progress_callback=_on_progress, patterns=PATTERNS)
+        inferrer = ActivityInferrer(
+            llm_client,
+            progress_callback=_on_progress,
+            patterns=PATTERNS,
+            application_attributes=step1.get("application_attributes"),
+            context_attributes=step1.get("context_attributes"),
+        )
         activities = inferrer.infer_activities(groups)
         if not activities:
             raise RuntimeError("Activity naming produced no results — LLM may be unavailable.")
@@ -527,25 +559,15 @@ def _compute_step4(store):
     from src.matching.pattern_matcher import PatternMatcher
     from src.matching import PATTERNS
 
-    step1 = store.load_step(1)
     step2 = store.load_step(2)
-    step3 = store.load_step(3)
     activities = _reconstruct_activities(step2)
-    ctx_by_group = {c["group_index"]: c["environment"] for c in step3["contexts"]}
     matcher = PatternMatcher(PATTERNS)
 
     matches = []
     for a in activities:
-        group_idx = a.group_index
-        group_events = (
-            _reconstruct_events(step1["groups"][group_idx]["events"])
-            if group_idx < len(step1["groups"]) else []
-        )
-        context = ctx_by_group.get(group_idx, "unknown")
-        # Context switches are OS-level operations; the Switch Context pattern
-        # only lists "desktop", so force that context for matching purposes.
-        match_context = "desktop" if a.activity_type == "context_switch" else context
-        pattern = matcher.match(a, group_events, match_context)
+        # Matched by name only: whether the pattern has a variant for the
+        # activity's environment is reported by step 6, not decided here.
+        pattern = matcher.match(a)
         matches.append({
             "activity_name": a.name,
             "activity_action": pattern.action if pattern else None,
@@ -553,7 +575,7 @@ def _compute_step4(store):
             "method_category": pattern.category if pattern else None,
             "activity_type": a.activity_type,
             "is_implicit": a.is_implicit,
-            "group_index": group_idx,
+            "group_index": a.group_index,
             "source_events": a.source_events,
         })
 
@@ -563,8 +585,8 @@ def _compute_step4(store):
 def _compute_step6(store):
     from src.matching.pattern_matcher import PatternMatcher
     from src.matching import PATTERNS
+    from src.models.pattern import explain_missing_method
 
-    step1 = store.load_step(1)
     step2 = store.load_step(2)
     step3 = store.load_step(3)
     activities = _reconstruct_activities(step2)
@@ -573,15 +595,12 @@ def _compute_step6(store):
 
     recommendations = []
     for a in activities:
-        group_idx = a.group_index
-        group_events = (
-            _reconstruct_events(step1["groups"][group_idx]["events"])
-            if group_idx < len(step1["groups"]) else []
-        )
-        context = ctx_by_group.get(group_idx, "unknown")
-        match_context = "desktop" if a.activity_type == "context_switch" else context
-        pattern = matcher.match(a, group_events, match_context)
-        method = pattern.get_method_for_context(match_context) if pattern else None
+        context = ctx_by_group.get(a.group_index, "unknown")
+        # Context switches are OS-level operations; the Switch Context pattern
+        # only lists "desktop", so look its method up in that environment.
+        method_environment = "desktop" if a.activity_type == "context_switch" else context
+        pattern = matcher.match(a)
+        method = pattern.get_method_for_context(method_environment) if pattern else None
 
         recommendations.append({
             "activity_name": a.name,
@@ -590,6 +609,7 @@ def _compute_step6(store):
             "pattern_matched": pattern.name if pattern else None,
             "execution_environment": context,
             "method": method,
+            "method_note": explain_missing_method(pattern, method_environment),
             "method_category": pattern.category if pattern else None,
             "confidence": a.confidence,
             "events": a.source_events,

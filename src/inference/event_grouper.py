@@ -3,7 +3,7 @@
 import json
 import logging
 import re
-from typing import List, Optional, Tuple
+from typing import Dict, List, Optional, Tuple
 from dataclasses import dataclass
 from ..models.event import Event
 
@@ -64,17 +64,20 @@ class EventGrouper:
         self, events: List[Event]
     ) -> List[EventGroup]:
         """
-        Group events and detect context switches.
+        Group events and propose application-switch boundaries.
 
-        When consecutive events have different application attributes, this
-        indicates a context switch (focus shifted from one application to another).
-        This is important for bot design as it represents implicit user behavior.
+        When a recorded application value differs from the last recorded one, the
+        current group closes and a new one starts: a *candidate* switch for the
+        LLM refinement pass and activity naming to confirm or reject. An event
+        with no application value is never treated as a switch (a missing value
+        is no evidence either way); the next recorded value is compared with the
+        last recorded application instead.
 
         Args:
             events: List of Event objects in temporal order
 
         Returns:
-            List of EventGroup objects with context switch detection
+            List of EventGroup objects with candidate switch boundaries
         """
         return self._group_events_with_context(events)
 
@@ -85,18 +88,19 @@ class EventGrouper:
 
         groups = []
         current_group = EventGroup(events=[events[0]])
+        last_app = self._get_application_attribute(events[0])
 
         for event in events[1:]:
-            app_attr = self._get_application_attribute(event)
-            prev_app = self._get_application_attribute(current_group.events[-1])
+            app = self._get_application_attribute(event)
+            application_changed = (
+                app is not None and last_app is not None and app != last_app
+            )
 
-            is_context_switch = self._is_context_switch(current_group.events[-1], event)
-
-            if is_context_switch:
+            if application_changed:
                 current_group.is_context_switch = True
                 groups.append(current_group)
                 current_group = EventGroup(
-                    events=[event], previous_app=prev_app, current_app=app_attr
+                    events=[event], previous_app=last_app, current_app=app
                 )
             elif self._events_share_attribute(current_group.events[-1], event):
                 current_group.events.append(event)
@@ -104,40 +108,21 @@ class EventGrouper:
                 groups.append(current_group)
                 current_group = EventGroup(events=[event])
 
+            if app is not None:
+                last_app = app
+
         if current_group.events:
             groups.append(current_group)
 
         return groups
 
     def _get_application_attribute(self, event: Event) -> Optional[str]:
-        """Get application attribute from event."""
+        """The application recorded for an event, or None when the log has none."""
         for attr in self.context_switch_attributes:
-            if attr in event.attributes:
-                return event.attributes[attr]
+            value = event.recorded(attr)
+            if value is not None:
+                return value
         return None
-
-    def _is_context_switch(self, event1: Event, event2: Event) -> bool:
-        """
-        Check if there's a context switch between two events.
-
-        A context switch occurs when the application attribute changes,
-        indicating focus shifted from one application to another.
-
-        Args:
-            event1: First event
-            event2: Second event
-
-        Returns:
-            True if events have different application attributes
-        """
-        app1 = self._get_application_attribute(event1)
-        app2 = self._get_application_attribute(event2)
-
-        if app1 is None and app2 is None:
-            return False
-        if app1 is None or app2 is None:
-            return True
-        return app1 != app2
 
     def _events_share_attribute(self, event1: Event, event2: Event) -> bool:
         """
@@ -148,13 +133,13 @@ class EventGrouper:
             event2: Second event
 
         Returns:
-            True if events share at least one non-empty attribute value
+            True if events share at least one recorded attribute value
         """
         for attr in self.group_attributes:
-            val1 = event1.attributes.get(attr)
-            val2 = event2.attributes.get(attr)
+            val1 = event1.recorded(attr)
+            val2 = event2.recorded(attr)
 
-            if val1 and val2 and val1 == val2:
+            if val1 is not None and val1 == val2:
                 return True
 
         return False
@@ -180,19 +165,45 @@ class EventGrouper:
 
 
 class LLMGroupRefiner:
-    """Second-pass refinement: asks LLM to merge over-segmented candidate groups
+    """Second-pass refinement: asks the LLM to merge over-segmented candidate groups
     that share the same user intent into single activity groups.
 
-    App-switch boundaries from Pass 1 are always preserved as hard constraints.
-    Falls back to the candidate groups unchanged if the LLM is unavailable or fails.
+    The LLM makes the final decision. For every pair of adjacent groups it is shown
+    evidence from the log itself — the application-related attributes first, then
+    URL, window and element values — and is told that a changed application counts
+    strongly against merging while a missing one is no evidence either way. The code
+    does not override its answer; it only validates that merged groups are adjacent.
+    There is no fallback: a missing LLM or an invalid response raises instead of
+    returning the candidate groups unchanged.
     """
 
     BATCH_SIZE = 10
-    _CONTEXT_APP_KEYS = ("application", "app", "process")
-    _CONTEXT_EXTRA_KEYS = ("url", "browser_url", "webpage", "window")
+    _DEFAULT_APPLICATION_KEYS = ("application", "app", "process")
+    _DEFAULT_CONTEXT_KEYS = ("url", "browser_url", "webpage", "window", "window_title")
+    _MAX_CONTEXT_COLUMNS = 4
+    _MAX_VALUE_CHARS = 60
 
-    def __init__(self, llm_client=None):
+    def __init__(
+        self,
+        llm_client=None,
+        application_attributes: Optional[List[str]] = None,
+        context_attributes: Optional[List[str]] = None,
+    ):
+        """
+        Args:
+            llm_client: LLM used to decide the merges.
+            application_attributes: Columns that identify the active application, as
+                identified by the LLM when the log was loaded. Defaults to common names.
+            context_attributes: Other columns that locate an event (URL, window,
+                element, ...). Defaults to common names.
+        """
         self.llm_client = llm_client
+        self.application_attributes = list(application_attributes or self._DEFAULT_APPLICATION_KEYS)
+        self.context_attributes = [
+            key
+            for key in (context_attributes or self._DEFAULT_CONTEXT_KEYS)
+            if key not in self.application_attributes
+        ]
 
     def refine(self, groups: List[EventGroup]) -> List[EventGroup]:
         """Return LLM-merged groups."""
@@ -219,44 +230,42 @@ class LLMGroupRefiner:
 
     def _build_prompt(self, batch: List[EventGroup]) -> str:
         sections = []
+        last_recorded: Dict[str, Tuple[str, int]] = {}  # attribute -> (value, group index)
         for i, group in enumerate(batch):
-            header = f"GROUP {i}"
-            if group.is_context_switch:
-                header += " [APP SWITCH]"
-
-            first = group.events[0] if group.events else None
-            ctx_parts = []
-            if first:
-                for key in self._CONTEXT_APP_KEYS:
-                    val = (first.attributes.get(key) or "").strip()
-                    if val:
-                        ctx_parts.append(f"{key}: {val}")
-                        break
-                for key in self._CONTEXT_EXTRA_KEYS:
-                    val = (first.attributes.get(key) or "").strip()
-                    if val:
-                        ctx_parts.append(f"{key}: {val}")
-                        break
-
-            ctx_str = ", ".join(ctx_parts) if ctx_parts else "no context"
-            event_lines = "\n".join(f"  - {e.event}" for e in group.events) or "  - (none)"
-            sections.append(f"{header} [{ctx_str}]\nEvents:\n{event_lines}")
+            sections.append(self._group_section(i, group))
+            if i + 1 < len(batch):
+                sections.append(self._boundary_evidence(i, group, batch[i + 1], last_recorded))
+            for key in self.application_attributes:
+                value = self._edge_value(group, key, last=True)
+                if value is not None:
+                    last_recorded[key] = (value, i)
 
         n = len(batch)
+        application_columns = ", ".join(self.application_attributes)
         return f"""You are grouping UI events into discrete tasks for RPA design.
 Each task must correspond to exactly one user intention — one atomic action a bot would automate.
 
 Below are {n} candidate event groups from rule-based pre-segmentation, in temporal order.
-Groups marked [APP SWITCH] are hard boundaries — never merge across them.
+Between every two adjacent groups you are given evidence taken from the log's own attributes.
+Application-related attributes in this log: {application_columns}.
 
 {chr(10).join(sections)}
 
-Decide which groups to merge. Rules:
+Whether two adjacent groups belong to the same task is your decision; base it on that evidence:
+- A recorded application that CHANGED between two groups means the user switched application.
+  Do not merge across it unless the two values clearly name the same application
+  (for example "Chrome" and "chrome.exe").
+- An application that is NOT RECORDED on one side is not evidence of a switch. Decide from the
+  other attributes and from the events themselves.
+- A changed URL, window or element also counts against merging, but less strongly than a changed
+  application.
+- When the evidence does not show that two groups serve one intention, keep them separate.
+
+Rules:
 1. You may only merge groups that are DIRECTLY ADJACENT (consecutive indices like [2,3] or [0,1,2]).
    Non-adjacent indices such as [1,3] or [0,2,4] are NEVER allowed — the groups are in strict temporal order.
 2. Every index from 0 to {n - 1} must appear in exactly one set.
-3. Never merge across [APP SWITCH] boundaries.
-4. When in doubt, keep groups separate.
+3. When in doubt, keep groups separate.
 
 Return a JSON array of arrays where each inner array is a consecutive run of indices to merge.
 
@@ -264,6 +273,112 @@ VALID   (5 groups, merge 1+2):     [[0],[1,2],[3],[4]]
 INVALID (non-adjacent — forbidden): [[0],[1,3],[2],[4]]
 
 Return only valid JSON. No explanation."""
+
+    # ── evidence shown to the LLM ────────────────────────────────────────────
+
+    def _clip(self, text: str) -> str:
+        if len(text) <= self._MAX_VALUE_CHARS:
+            return text
+        return text[: self._MAX_VALUE_CHARS - 3] + "..."
+
+    @staticmethod
+    def _edge_value(group: EventGroup, key: str, last: bool) -> Optional[str]:
+        """The first (or last) recorded value of an attribute within a group."""
+        events = reversed(group.events) if last else group.events
+        for event in events:
+            value = event.recorded(key)
+            if value is not None:
+                return value
+        return None
+
+    @staticmethod
+    def _distinct_values(group: EventGroup, key: str) -> List[str]:
+        values: List[str] = []
+        for event in group.events:
+            value = event.recorded(key)
+            if value is not None and value not in values:
+                values.append(value)
+        return values
+
+    def _context_columns_in(self, *groups: EventGroup) -> List[str]:
+        """Context columns recorded in at least one of the groups (capped)."""
+        found = [
+            key
+            for key in self.context_attributes
+            if any(self._distinct_values(group, key) for group in groups)
+        ]
+        return found[: self._MAX_CONTEXT_COLUMNS]
+
+    def _group_section(self, index: int, group: EventGroup) -> str:
+        parts = []
+        for key in self.application_attributes:
+            values = self._distinct_values(group, key)
+            if values:
+                parts.append(f"{key}: " + " / ".join(self._clip(v) for v in values[:3]))
+        if not parts:
+            parts.append("application: not recorded")
+        for key in self._context_columns_in(group):
+            values = self._distinct_values(group, key)
+            parts.append(f"{key}: " + " / ".join(self._clip(v) for v in values[:3]))
+
+        event_lines = "\n".join(f"  - {e.event}" for e in group.events) or "  - (none)"
+        return f"GROUP {index} [{' | '.join(parts)}]\nEvents:\n{event_lines}"
+
+    def _boundary_evidence(
+        self,
+        index: int,
+        left: EventGroup,
+        right: EventGroup,
+        last_recorded: Dict[str, Tuple[str, int]],
+    ) -> str:
+        """One line comparing the end of ``left`` with the start of ``right``.
+
+        ``last_recorded`` holds, per application attribute, the latest value recorded
+        in the groups *before* ``left``; it is used when ``left`` recorded none, so a
+        group without an application value does not hide what the application was.
+        """
+        checks = [
+            self._compare(key, left, right, index, last_recorded.get(key))
+            for key in self.application_attributes
+        ]
+        if all(check is None for check in checks):
+            checks = ["application NOT RECORDED in either group"]
+        else:
+            checks = [check for check in checks if check is not None]
+        for key in self._context_columns_in(left, right):
+            check = self._compare(key, left, right, index)
+            if check is not None:
+                checks.append(check)
+        return f"  >> between GROUP {index} and GROUP {index + 1}: " + "; ".join(checks)
+
+    def _compare(
+        self,
+        key: str,
+        left: EventGroup,
+        right: EventGroup,
+        index: int,
+        earlier: Optional[Tuple[str, int]] = None,
+    ) -> Optional[str]:
+        """Describe how ``key`` differs across a boundary, or None if neither side records it."""
+        before = self._edge_value(left, key, last=True)
+        after = self._edge_value(right, key, last=False)
+        if before is None and after is None:
+            return None
+        if after is None:
+            return f"{key} NOT RECORDED in GROUP {index + 1} (no evidence either way)"
+        if before is not None:
+            if before == after:
+                return f"{key} same ({self._clip(before)})"
+            return f"{key} CHANGED {self._clip(before)} -> {self._clip(after)}"
+        # Nothing recorded in ``left``: fall back to the last value recorded before it.
+        if earlier is None:
+            return f"{key} NOT RECORDED in GROUP {index} (no earlier value to compare with)"
+        value, source = earlier
+        verdict = "same as" if value == after else "CHANGED from"
+        return (
+            f"{key} NOT RECORDED in GROUP {index}; last recorded {self._clip(value)} in GROUP {source}, "
+            f"GROUP {index + 1} has {self._clip(after)} ({verdict} that)"
+        )
 
     def _parse_response(self, response: str, n: int) -> List[List[int]]:
         """Parse and validate merge sets from LLM response."""

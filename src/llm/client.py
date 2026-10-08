@@ -4,7 +4,6 @@ import logging
 import os
 import json
 import time
-from typing import Optional
 
 _logger = logging.getLogger(__name__)
 
@@ -92,7 +91,8 @@ class LLMClient:
         """
         if not self.api_key:
             raise LLMError(
-                "No API key configured. Add one in Settings or config/llm_config.json."
+                "No API key configured. Set the GEMINI_API_KEY environment variable "
+                "(or api_key in config/llm_config.json)."
             )
 
         endpoint = self.endpoint or _DEFAULT_ENDPOINT
@@ -125,7 +125,7 @@ class LLMClient:
         return content
 
 
-def get_llm_client(config_path: str = "config/llm_config.json") -> Optional[LLMClient]:
+def get_llm_client(config_path: str = "config/llm_config.json") -> LLMClient:
     """
     Load LLM client from config file.
 

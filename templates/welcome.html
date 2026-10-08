@@ -25,6 +25,7 @@
         .badge { display: inline-block; font-size: 0.72rem; font-weight: 700; letter-spacing: 0.04em; padding: 2px 8px; border-radius: 20px; vertical-align: middle; }
         .badge-llm { background: #ede9fe; color: #6d28d9; }
         .badge-rule { background: #d1fae5; color: #065f46; }
+        .badge-lookup { background: #e0f2fe; color: #075985; }
 
         /* Pipeline steps */
         .steps { display: flex; flex-direction: column; gap: 0; }
@@ -104,7 +105,7 @@
         <section class="card">
             <h2>Recommendation Pipeline</h2>
             <p class="section-intro">The pipeline implements a two-stage recommendation approach. In <strong>task interpretation</strong> (steps 1–3), UI events are grouped into interaction segments by collective intent and each group is named as an activity using the pattern vocabulary. In <strong>method recommendation</strong> (steps 4–6), the matched pattern and execution environment determine the automation method, following a priority order: content-level (web) → accessibility-level (desktop) → visual/hardware simulation (screen).</p>
-            <p class="section-intro">Steps marked <span class="badge badge-llm">LLM</span> send data to a language model; steps marked <span class="badge badge-rule">Rule-based</span> use deterministic logic. An LLM is required — the pipeline has <strong>no rule-based fallback</strong>, so if no model is configured the analysis surfaces an error rather than producing degraded results.</p>
+            <p class="section-intro">Steps marked <span class="badge badge-llm">LLM</span> send data to a language model; steps marked <span class="badge badge-rule">Rule-based</span> use deterministic logic; steps marked <span class="badge badge-lookup">Lookup</span> make no model call — they read what the LLM already decided in step 2. An LLM is required — the pipeline has <strong>no rule-based fallback</strong>, so if the model is unavailable the analysis surfaces an error rather than producing degraded results.</p>
             <div class="steps">
 
                 <div class="step">
@@ -116,7 +117,7 @@
                             <span class="badge badge-rule">Rule-based</span>
                             <span class="badge badge-llm">LLM refine</span>
                         </div>
-                        <p class="step-desc">Consecutive events are grouped into <em>interaction segments</em> based on their collective intent — events that together constitute a single coherent interaction belong in the same group. Shared attributes (<code>app</code>, <code>application</code>, <code>webpage</code>, <code>url</code>, <code>element_id</code>) serve as supporting evidence for grouping. A change in the <code>app</code> / <code>application</code> attribute triggers a <strong>context-switch boundary</strong> — the current group ends and a new one begins, flagged as a context switch. An LLM second pass then <strong>refines</strong> these candidate groups, merging only directly-adjacent groups that share a single intent and never merging across application boundaries. <em>Note: the rule-based pre-segmentation approximates intent-based grouping using attribute matching as a heuristic.</em></p>
+                        <p class="step-desc">Consecutive events are grouped into <em>interaction segments</em> based on their collective intent — events that together constitute a single coherent interaction belong in the same group. The LLM first reads the CSV header and sample rows to identify which columns carry context (for example the application, webpage, URL, or element — column names differ between loggers). A shared value in one of these columns serves as supporting evidence for grouping, and a change of the recorded application value closes the current group and starts a new one — a <strong>candidate application boundary</strong> (an event with no application value is not treated as a change). An LLM second pass then <strong>refines</strong> these candidate groups: it is shown the application-related attributes (then URL, window and element values) on both sides of every boundary (carrying the last recorded application across a group that recorded none) and makes the final decision to merge directly-adjacent groups that share a single intent; a changed application counts strongly against merging. <em>Note: the rule-based pre-segmentation approximates intent-based grouping using attribute matching as a heuristic.</em></p>
                     </div>
                 </div>
 
@@ -128,7 +129,7 @@
                             <span class="step-title">Activity Naming</span>
                             <span class="badge badge-llm">LLM</span>
                         </div>
-                        <p class="step-desc">Each interaction segment is sent to an LLM (batched in groups of 5, processed sequentially to respect rate limits). The LLM interprets the group's collective intent and assigns an <strong>activity name</strong> — verb + object aligned with the pattern vocabulary, named by the interaction's <strong>stable target or role</strong> (e.g. "Write First Name field") rather than transient values. This way genuinely different interactions get distinct names, while the same interaction repeated keeps the same name and surfaces as a <strong>loop</strong> in the activity graph. It also returns the <strong>best-matching RPA pattern name</strong>, whether a prerequisite Find step is needed (for element-targeting actions) and the element to find, a <strong>context-switch detection</strong> flag with from/to environment labels, supporting <strong>evidence</strong> observations, and a <strong>confidence score</strong>.</p>
+                        <p class="step-desc">Each interaction segment is sent to an LLM (batched in groups of 5, processed sequentially to respect rate limits). The LLM interprets the group's collective intent and assigns an <strong>activity name</strong> — verb + object aligned with the pattern vocabulary, made <strong>unique and context-specific</strong> by including the concrete detail that sets the interaction apart (e.g. 'Write "John" into First Name field' versus 'Write "Smith" into Last Name field'), so no two activities share a name. It also returns the <strong>best-matching RPA pattern name</strong>, whether a prerequisite Find step is needed (for element-targeting actions) and the element to find, a <strong>context-switch detection</strong> flag with from/to environment labels (judged against the most recently recorded application, URL and window, so a group that did not record the application is not mistaken for a switch), supporting <strong>evidence</strong> observations, and a <strong>confidence score</strong>.</p>
                     </div>
                 </div>
 
@@ -138,9 +139,9 @@
                     <div class="step-body">
                         <div class="step-header">
                             <span class="step-title">Action / Object Extraction</span>
-                            <span class="badge badge-llm">LLM</span>
+                            <span class="badge badge-lookup">Lookup</span>
                         </div>
-                        <p class="step-desc">The <strong>Action</strong> and <strong>Object</strong> are taken directly from the RPA pattern the LLM assigned in the previous step — every pattern carries a canonical Action/Object pair in the AOMC (Action-Object-Method-Context) vocabulary (e.g. <em>Activate / Element</em>, <em>Write / Element</em>). Application-specific log verbs ("click / press / tap", "type / paste / fill", "getCell", …) are resolved to that shared vocabulary by the LLM as part of naming, not by a hardcoded keyword map.</p>
+                        <p class="step-desc">The <strong>Action</strong> and <strong>Object</strong> are taken directly from the RPA pattern the LLM assigned in the previous step — every pattern carries a canonical Action/Object pair in the AOMC (Action-Object-Method-Context) vocabulary (e.g. <em>Activate / Element</em>, <em>Write / Element</em>). Application-specific log verbs ("click / press / tap", "type / paste / fill", "getCell", …) were already resolved to that shared vocabulary by the LLM when it chose the pattern in step 2, so this step makes no model call and uses no hardcoded keyword map.</p>
                     </div>
                 </div>
 
@@ -150,9 +151,9 @@
                     <div class="step-body">
                         <div class="step-header">
                             <span class="step-title">Pattern Matching</span>
-                            <span class="badge badge-llm">LLM</span>
+                            <span class="badge badge-lookup">Lookup</span>
                         </div>
-                        <p class="step-desc">The activity is matched to a pattern in the RPA UI Interaction Pattern Library using the <strong>pattern name the LLM assigned</strong>, requiring a name match (case-insensitive) that also supports the identified execution context. There is <strong>no rule-based fallback</strong>: if the LLM did not supply a usable pattern, the recommendation is left without a pattern assignment rather than guessed from keywords.</p>
+                        <p class="step-desc">The activity is matched to a pattern in the RPA UI Interaction Pattern Library using the <strong>pattern name the LLM assigned</strong> in step 2, by a case-insensitive name match only. Whether the pattern can be carried out in the identified execution environment is checked in step 6, so an activity keeps its pattern even when that pattern has no variant for the environment. This step makes no model call and has <strong>no rule-based fallback</strong>: if the LLM did not supply a usable pattern, the recommendation is left without a pattern assignment rather than guessed from keywords.</p>
                     </div>
                 </div>
 
@@ -181,7 +182,7 @@
                             <span class="step-title">Method Recommendation</span>
                             <span class="badge badge-rule">Rule-based</span>
                         </div>
-                        <p class="step-desc">The matched pattern carries a <code>Method</code> field listing one implementation approach per execution environment, separated by " / " (e.g. "HTML DOM manipulation (Web) / UI Automation manipulation (Desktop) / Hardware simulation (Visual)"). The tool selects the slice whose context label matches the identified environment and strips the label, returning just the technique name. This is the final <strong>method recommendation</strong>.</p>
+                        <p class="step-desc">The matched pattern carries a <code>Method</code> field listing one implementation approach per execution environment, separated by " / " (e.g. "HTML DOM manipulation (Web) / UI Automation manipulation (Desktop) / Hardware simulation (Visual)"). The tool selects the slice whose context label matches the identified environment and strips the label, returning just the technique name. This is the final <strong>method recommendation</strong>. If the pattern defines no variant for the identified environment (for example <em>Delete Element</em> on screen — an element cannot be deleted from an image), no method is recommended and the reason is shown instead.</p>
                     </div>
                 </div>
 

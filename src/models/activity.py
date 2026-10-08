@@ -28,7 +28,7 @@ class Activity:
         self.activity_type = activity_type  # "main", "prerequisite", "context_switch"
         self.is_implicit = is_implicit
         self.group_index = group_index
-        self.pattern_name = pattern_name  # LLM-supplied pattern, bypasses rule-based keyword map
+        self.pattern_name = pattern_name  # LLM-assigned pattern name; resolved against the pattern library
 
     def __repr__(self) -> str:
         return f"Activity(name='{self.name}', type='{self.activity_type}', confidence={self.confidence})"

@@ -56,15 +56,6 @@ os.makedirs(os.path.join("data", "progressive"), exist_ok=True)
 from src.web.progressive import bp as _progressive_bp
 app.register_blueprint(_progressive_bp)
 
-from src.llm.client import _DEFAULT_API_KEY, _DEFAULT_ENDPOINT, _DEFAULT_MODEL
-
-DEFAULT_LLM_CONFIG = {
-    "provider": "custom",
-    "endpoint": _DEFAULT_ENDPOINT,
-    "api_key": _DEFAULT_API_KEY,
-    "model": _DEFAULT_MODEL,
-}
-
 MAX_PREVIEW_ROWS = 100
 MAX_HISTORY_ENTRIES = 200
 MAX_UPLOAD_MB = 16
@@ -90,18 +81,6 @@ SENSITIVE_FIELD_TOKENS = (
     "apikey",
     "authorization",
 )
-
-
-def _mask_api_key(api_key: str) -> str:
-    if not api_key:
-        return ""
-    if len(api_key) <= 8:
-        return "*" * len(api_key)
-    return f"{api_key[:4]}...{api_key[-4:]}"
-
-
-def _is_masked_api_key(value: str) -> bool:
-    return bool(value) and ("..." in value or set(value) == {"*"})
 
 
 def _read_csv_dedup(filepath: str, max_rows: int | None = None) -> tuple:
@@ -132,38 +111,6 @@ def _redact_row(row: dict) -> dict:
         else:
             redacted[key] = value
     return redacted
-
-
-def _sanitize_config_for_view(config: dict) -> dict:
-    safe = dict(config or {})
-    safe["api_key"] = _mask_api_key(safe.get("api_key", ""))
-    return safe
-
-
-def _get_csrf_token() -> str:
-    if "csrf_token" not in session:
-        session["csrf_token"] = secrets.token_hex(32)
-    return session["csrf_token"]
-
-
-def _validate_csrf(form_token: str) -> bool:
-    return bool(form_token) and secrets.compare_digest(
-        form_token, session.get("csrf_token", "")
-    )
-
-
-def get_llm_config():
-    config_path = "config/llm_config.json"
-    if os.path.exists(config_path):
-        with open(config_path, "r") as f:
-            return json.load(f)
-    return DEFAULT_LLM_CONFIG.copy()
-
-
-def save_llm_config(config):
-    config_path = "config/llm_config.json"
-    with open(config_path, "w", encoding="utf-8") as f:
-        json.dump(config, f, indent=2)
 
 
 def get_history():
@@ -335,6 +282,7 @@ def _synthesize_recommendations_from_progressive(entry):
             "execution_environment": r.get("execution_environment", ""),
             "pattern_matched": r.get("pattern_matched"),
             "method": r.get("method") or r.get("recommended_method"),
+            "method_note": r.get("method_note"),
             "method_category": r.get("method_category"),
             "confidence": r.get("confidence", 0),
             "confidence_explanation": None,
@@ -467,14 +415,6 @@ def history_detail(history_id):
 
     entry["log_preview"] = _load_full_log(entry)
     return render_template("results.html", entry=entry)
-
-
-@app.route("/settings", methods=["GET"])
-def settings():
-    # The app ships with a hosted LLM, so there is nothing for users to
-    # configure here — the page is read-only and shows the bundled model.
-    config = _sanitize_config_for_view(get_llm_config())
-    return render_template("settings.html", config=config, csrf_token=_get_csrf_token())
 
 
 if __name__ == "__main__":

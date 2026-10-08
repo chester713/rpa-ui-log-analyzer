@@ -25,9 +25,6 @@ Examples:
     parser.add_argument(
         "--verbose", "-v", action="store_true", help="Show detailed output"
     )
-    parser.add_argument(
-        "--group-attr", nargs="+", help="Custom attributes for event grouping"
-    )
 
     args = parser.parse_args()
 
@@ -37,22 +34,12 @@ Examples:
         sys.exit(1)
 
     # An LLM is required — the pipeline has no rule-based fallback. Load the
-    # same client the web app uses (config/llm_config.json).
+    # same client the web app uses; a missing API key is reported by the first
+    # LLM call (see LLMError in src/llm/client.py).
     llm_client = get_llm_client()
-    if llm_client is None:
-        print(
-            "Error: No LLM configured. Copy config/llm_config.example.json to "
-            "config/llm_config.json and add your API key.",
-            file=sys.stderr,
-        )
-        sys.exit(1)
 
     try:
-        pipeline = DataPipeline(
-            csv_path=str(csv_path),
-            llm_client=llm_client,
-            group_attributes=args.group_attr,
-        )
+        pipeline = DataPipeline(csv_path=str(csv_path), llm_client=llm_client)
         result = pipeline.run()
 
         if args.output:
@@ -81,6 +68,8 @@ Examples:
                 print(f"  Environment: {rec.execution_environment}")
                 print(f"  Pattern: {rec.pattern.name if rec.pattern else 'None'}")
                 print(f"  Method: {rec.method or 'None'}")
+                if rec.method_note:
+                    print(f"  Method note: {rec.method_note}")
                 print(f"  Category: {rec.method_category or 'None'}")
                 if rec.context_switch:
                     print(

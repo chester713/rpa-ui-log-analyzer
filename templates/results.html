@@ -171,6 +171,14 @@
                         <div class="k">Context Attributes</div>
                         <div id="dContextAttrs"></div>
                     </div>
+                    <div class="kv">
+                        <div class="k">LLM Confidence</div>
+                        <div class="v" id="dConfidence"></div>
+                    </div>
+                    <div class="kv">
+                        <div class="k">LLM Evidence</div>
+                        <div id="dEvidence"></div>
+                    </div>
                 </div>
             </div>
 
@@ -709,6 +717,47 @@
             const ctxWrap = document.getElementById('dContextAttrs');
             ctxWrap.textContent = '—';
             ctxWrap.className = 'muted';
+            renderConfidenceEvidence(null, null);
+        }
+
+        /* Confidence + evidence are the LLM's own output from activity naming (the same
+           values the CLI prints with --verbose). Implicit Find / Switch steps are inserted
+           from the LLM's flags, so they have no confidence or evidence of their own. */
+        function renderConfidenceEvidence(namingEntry, rec) {
+            const confEl = document.getElementById('dConfidence');
+            const evWrap = document.getElementById('dEvidence');
+            evWrap.innerHTML = '';
+            evWrap.className = 'muted';
+
+            if (!namingEntry && !rec) {
+                confEl.textContent = '—';
+                evWrap.textContent = '—';
+                return;
+            }
+            const implicit = Boolean((namingEntry && namingEntry.is_implicit) || (rec && rec.is_implicit));
+            if (implicit) {
+                confEl.textContent = 'n/a (implicit step)';
+                evWrap.textContent = 'n/a (implicit step)';
+                return;
+            }
+
+            const conf = namingEntry && typeof namingEntry.confidence === 'number'
+                ? namingEntry.confidence
+                : (rec && typeof rec.confidence === 'number' ? rec.confidence : null);
+            confEl.textContent = conf === null ? '—' : conf.toFixed(2);
+
+            const evidence = (namingEntry && Array.isArray(namingEntry.evidence)) ? namingEntry.evidence : [];
+            if (!evidence.length) {
+                evWrap.textContent = 'None recorded';
+                return;
+            }
+            evWrap.className = '';
+            evidence.forEach(text => {
+                const row = document.createElement('div');
+                row.style.cssText = 'margin-bottom:4px; font-size:12px; line-height:1.5; word-break:break-word;';
+                row.textContent = '• ' + String(text);
+                evWrap.appendChild(row);
+            });
         }
 
         function renderDetails(rec) {
@@ -727,10 +776,13 @@
             const recommended = normalizeMethodName(recommendedOriginal);
             const recKey = recommendationKey(rec);
 
+            // When there is no default, say why (e.g. the pattern has no variant for this environment).
+            const noDefaultNote = rec.method_note || 'No default recommendation available for this activity.';
+
             if (!recommended) {
                 const placeholder = document.createElement('option');
                 placeholder.value = '';
-                placeholder.textContent = 'No method matched (choose one)';
+                placeholder.textContent = 'No method recommended (choose one)';
                 methodSelect.appendChild(placeholder);
             }
 
@@ -760,17 +812,17 @@
             }
 
             methodHint.textContent = existingOverride
-                ? `Override applied: ${existingOverride}${recommended ? ` (was ${recommended})` : ''}`
+                ? `Override applied: ${existingOverride}${recommended ? ` (was ${recommended})` : ` — ${noDefaultNote}`}`
                 : recommended
                     ? `Default: ${recommended}${recommendedOriginal && recommendedOriginal !== recommended ? ` (normalized from: ${recommendedOriginal})` : ''}`
-                    : 'No default recommendation available for this activity.';
+                    : noDefaultNote;
 
             methodSelect.onchange = () => {
                 const sel = methodSelect.value || 'N/A';
                 methodOverrides[recKey] = sel;
                 methodHint.textContent = recommended && sel !== recommended
                     ? `Override applied: ${sel} (was ${recommended})`
-                    : recommended ? `Default: ${recommended}` : `Selected: ${sel}`;
+                    : recommended ? `Default: ${recommended}` : `Selected: ${sel} — ${noDefaultNote}`;
             };
 
             // Context attributes with values — sourced from context_determination, matching workspace style
@@ -796,6 +848,9 @@
                 });
             }
 
+            const namingEntry = (progressiveArtifacts?.activity_naming?.activities || [])
+                .find(a => String(a.activity_name || '') === String(rec.inferred_activity || ''));
+            renderConfidenceEvidence(namingEntry || null, rec);
         }
 
         /* ── Export CSV ── */

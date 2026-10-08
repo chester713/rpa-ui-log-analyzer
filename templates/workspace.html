@@ -43,6 +43,8 @@
         .two-col-desc .pane { display: grid; grid-row: span 3; grid-template-rows: subgrid; }
         .three-col-desc .pane { display: grid; grid-row: span 3; grid-template-rows: subgrid; }
         .pane { border: 1px solid #e5e7eb; border-radius: 10px; padding: 12px; }
+        .no-method { color: #92400e; font-weight: 500; }
+        .mr-notes { margin: 0; padding-left: 18px; font-size: 13px; line-height: 1.55; color: #374151; }
         .pane h3 { color: #4b5563; font-size: 13px; margin-bottom: 8px; }
         .artifact-json { white-space: pre-wrap; word-break: break-word; font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 12px; color: #111827; }
         .logic-text { color: #111827; font-size: 14px; line-height: 1.45; }
@@ -334,6 +336,10 @@
                         </table>
                     </div>
                 </div>
+            </div>
+            <div class="pane" id="mrNotesPane" style="margin-top: 12px;" hidden>
+                <h3>Method Notes</h3>
+                <ul class="mr-notes" id="mrNotes"></ul>
             </div>
             <div class="pane" style="margin-top: 12px;">
                 <h3>Method Recommendation Logic</h3>
@@ -759,6 +765,7 @@
                     type: nameToType[n] || 'main',
                     env: c.execution_environment || '—',
                     method: rec.recommended_method || '—',
+                    note: rec.method_note || '',
                     category: rec.method_category || '—',
                 };
             });
@@ -788,12 +795,30 @@
             if (methodTbody) {
                 methodTbody.innerHTML = rows.map((r, i) => {
                     const catClass = r.category.toLowerCase();
+                    // No method: say so here; the full reason is listed under "Method Notes" below.
+                    const methodCell = r.note && r.method === '—'
+                        ? '<span class="no-method">No method</span>'
+                        : r.method;
                     return `<tr data-mr-index="${i}">
                         <td>${i + 1}</td>
-                        <td>${r.method}</td>
+                        <td>${methodCell}</td>
                         <td><span class="aomc-cat aomc-cat-${catClass}">${r.category}</span></td>
                     </tr>`;
                 }).join('');
+            }
+
+            // Full explanation for every activity that has no method (text only, never HTML).
+            const notesPane = document.getElementById('mrNotesPane');
+            const notesList = document.getElementById('mrNotes');
+            if (notesPane && notesList) {
+                notesList.innerHTML = '';
+                rows.forEach((r, i) => {
+                    if (!r.note) return;
+                    const li = document.createElement('li');
+                    li.textContent = `${i + 1}. ${r.activity}: ${r.note}`;
+                    notesList.appendChild(li);
+                });
+                notesPane.hidden = notesList.children.length === 0;
             }
 
             const allBodies = [activitiesTbody, contextTbody, methodTbody];

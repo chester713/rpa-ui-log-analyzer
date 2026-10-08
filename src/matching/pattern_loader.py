@@ -2,7 +2,7 @@
 
 import os
 import re
-from typing import List
+from typing import Dict, List
 from ..models.pattern import Pattern
 
 
@@ -77,7 +77,28 @@ class PatternLoader:
             category=category.strip() if category else "Extraction",
             contexts=contexts,
             description=description.strip(),
+            unsupported_reasons=self._parse_unsupported_environments(content),
         )
+
+    def _parse_unsupported_environments(self, content: str) -> Dict[str, str]:
+        """Read the optional '## Unsupported Environments' section.
+
+        Each line has the form '- <environment>: <reason>' (environment is web,
+        desktop or screen) and explains why the pattern has no variant there.
+        """
+        section = re.search(
+            r"^##[ \t]*Unsupported Environments[ \t]*\n(.*?)(?=^##|\Z)",
+            content,
+            re.DOTALL | re.IGNORECASE | re.MULTILINE,
+        )
+        reasons: Dict[str, str] = {}
+        if section is None:
+            return reasons
+        for line in section.group(1).splitlines():
+            entry = re.match(r"\s*[-*]\s*(web|desktop|screen)\s*:\s*(.+?)\s*$", line, re.IGNORECASE)
+            if entry:
+                reasons[entry.group(1).lower()] = entry.group(2).rstrip(".")
+        return reasons
 
     def _extract_section(self, content: str, section_name: str) -> str:
         """Extract content after a section header."""

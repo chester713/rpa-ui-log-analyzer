@@ -2,11 +2,11 @@
 
 import json
 from dataclasses import dataclass
-from typing import List, Dict, Any, Optional
+from typing import List, Dict, Any
 from ..parser.csv_loader import CSVLoader
 from ..models.event import Event
 from ..models.activity import Activity, EventActivityMapping
-from ..models.pattern import MethodRecommendation
+from ..models.pattern import MethodRecommendation, explain_missing_method
 from ..inference.event_grouper import EventGrouper, LLMGroupRefiner
 from ..inference.activity_inferrer import ActivityInferrer
 from ..mapping.event_activity_mapper import EventActivityMapper
@@ -66,8 +66,10 @@ class PipelineResult:
         lines.append("Recommendations:")
         for i, rec in enumerate(self.recommendations, 1):
             lines.append(
-                f"  {i}. {rec.activity_name} -> {rec.method} ({rec.execution_environment})"
+                f"  {i}. {rec.activity_name} -> {rec.method or 'no method'} ({rec.execution_environment})"
             )
+            if rec.method_note:
+                lines.append(f"       {rec.method_note}")
 
         return "\n".join(lines)
 
@@ -75,19 +77,18 @@ class PipelineResult:
 class DataPipeline:
     """Main orchestrator for the UI log analysis pipeline with pattern matching."""
 
-    def __init__(
-        self,
-        csv_path: str,
-        llm_client=None,
-        group_attributes: Optional[List[str]] = None,
-    ):
+    def __init__(self, csv_path: str, llm_client=None):
         """
         Initialize DataPipeline.
 
+        The columns used for grouping and for detecting application switches are
+        identified by the LLM when the log is loaded (see ``run``), exactly as in
+        the web app, so there is no option to set them by hand.
+
         Args:
             csv_path: Path to CSV UI log file
-            llm_client: Optional LLM client for activity inference
-            group_attributes: Optional list of attributes for event grouping
+            llm_client: LLM client used for column detection, group refinement
+                and activity inference
         """
         self.csv_path = csv_path
         self.llm_client = llm_client
@@ -95,7 +96,7 @@ class DataPipeline:
         from ..matching import PATTERNS
 
         self.loader = CSVLoader(llm_client)
-        self.grouper = EventGrouper(group_attributes)
+        self.grouper = EventGrouper()
         self.refiner = LLMGroupRefiner(llm_client)
         self.inferrer = ActivityInferrer(llm_client, patterns=PATTERNS)
         self.mapper = EventActivityMapper(self.grouper, self.inferrer)
@@ -114,6 +115,17 @@ class DataPipeline:
             self.grouper.group_attributes = self.loader.detected_group_columns
         if self.loader.detected_switch_columns:
             self.grouper.context_switch_attributes = self.loader.detected_switch_columns
+
+        # The refinement and naming prompts show the LLM the same application and
+        # context columns the grouper used, so their decisions rest on log data.
+        application_attributes = list(self.grouper.context_switch_attributes)
+        context_attributes = [
+            c for c in self.grouper.group_attributes if c not in application_attributes
+        ]
+        self.refiner.application_attributes = application_attributes
+        self.refiner.context_attributes = context_attributes
+        self.inferrer.application_attributes = application_attributes
+        self.inferrer.context_attributes = context_attributes
 
         # Rule-based pre-segmentation, then an LLM refinement pass that merges
         # over-segmented adjacent groups sharing one intent. This mirrors the web
@@ -173,13 +185,15 @@ class DataPipeline:
             context = get_context_from_events(events)
 
             # Context switches are OS-level operations; the Switch Context pattern
-            # only lists "desktop", so force that context for matching purposes
+            # only lists "desktop", so look its method up in that environment
             # while still reporting the activity's real execution environment.
             is_context_switch = activity.activity_type == "context_switch"
-            match_context = "desktop" if is_context_switch else context
+            method_environment = "desktop" if is_context_switch else context
 
-            pattern = matcher.match(activity, events, match_context)
-            method = pattern.get_method_for_context(match_context) if pattern else None
+            # The pattern is matched by name only. If it has no variant for the
+            # environment, the pattern is kept and the method note says why.
+            pattern = matcher.match(activity)
+            method = pattern.get_method_for_context(method_environment) if pattern else None
 
             event_indices = [e.row_index for e in events if e.row_index is not None]
 
@@ -202,6 +216,7 @@ class DataPipeline:
                 context_switch=is_context_switch,
                 context_switch_from=context_switch_from,
                 context_switch_to=context_switch_to,
+                method_note=explain_missing_method(pattern, method_environment),
             )
             recommendations.append(recommendation)
 
