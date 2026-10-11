@@ -1,6 +1,6 @@
 """Pattern matcher for matching activities to patterns."""
 
-from typing import List, Optional
+from typing import Dict, List, Optional, Tuple
 from ..models.event import Event
 from ..models.activity import Activity
 from ..models.pattern import Pattern
@@ -43,60 +43,75 @@ class PatternMatcher:
         return None
 
 
-def get_context_from_events(events: List[Event]) -> str:
-    """
-    Extract execution context from event attributes using priority-based rules.
+# Attribute names a hand-written log usually uses for each environment. Used only when
+# a caller supplies no environment columns (older stored analyses, direct callers);
+# the pipelines always pass the columns the LLM identified when the log was loaded,
+# because column names differ between loggers.
+DEFAULT_ENVIRONMENT_COLUMNS: Dict[str, List[str]] = {
+    "web": [
+        "xpath", "xpath_full", "html_id", "tag_name", "tag_type",
+        "tag_html", "tag_href", "browser_url", "webpage", "url",
+    ],
+    "desktop": [
+        "application", "app", "window_title", "workbook", "worksheet",
+        "cell_range", "cell_range_number", "control_type", "ui_path",
+    ],
+    "screen": [
+        "x", "y", "mouse_x", "mouse_y", "coordinates", "coordinate",
+        "click_x", "click_y",
+    ],
+}
 
-    Priority order:
-      1. Web   — HTML-property attributes present (XPath, tag, HTML id, browser URL)
-      2. Desktop — application/UI-hierarchy attributes present, no HTML properties
-      3. Screen  — coordinate attributes present, no HTML or app/hierarchy attributes
-      4. Unknown — no distinguishing attributes found
+# Richest interface information first: the priority order of the environments.
+ENVIRONMENT_PRIORITY = ("web", "desktop", "screen")
+
+
+def determine_environment(
+    events: List[Event],
+    environment_columns: Optional[Dict[str, List[str]]] = None,
+) -> Tuple[str, Dict[str, str]]:
+    """
+    Determine the execution environment of a UI activity from its events.
+
+    ``environment_columns`` maps each environment (web, desktop, screen) to the log
+    columns that indicate it — identified by the LLM when the log is loaded. The
+    environment is the highest-priority one (web > desktop > screen) for which at
+    least one event of the activity recorded a value in one of its columns. The
+    priority follows the richness of the interface information each environment
+    exposes, so the richest available representation decides.
+
+    Args:
+        events: The events the UI activity was inferred from
+        environment_columns: Indicator columns per environment; None uses
+            ``DEFAULT_ENVIRONMENT_COLUMNS``
+
+    Returns:
+        (environment, deciding attributes): the environment is "web", "desktop",
+        "screen" or "unknown"; the deciding attributes map each indicator column of
+        that environment recorded in the events to its first recorded value.
+    """
+    columns = DEFAULT_ENVIRONMENT_COLUMNS if environment_columns is None else environment_columns
+
+    for environment in ENVIRONMENT_PRIORITY:
+        deciding: Dict[str, str] = {}
+        for column in columns.get(environment) or []:
+            for event in events:
+                value = event.recorded(column)
+                if value is not None:
+                    deciding[column] = value
+                    break
+        if deciding:
+            return environment, deciding
+    return "unknown", {}
+
+
+def get_context_from_events(
+    events: List[Event],
+    environment_columns: Optional[Dict[str, List[str]]] = None,
+) -> str:
+    """The execution environment of a set of events (see ``determine_environment``).
 
     Returns:
         Context string: "web", "desktop", "screen", or "unknown"
     """
-    _HTML_ATTRS = {
-        "xpath", "xpath_full", "html_id", "tag_name", "tag_type",
-        "tag_html", "tag_href", "browser_url", "webpage", "url",
-    }
-    _APP_ATTRS = {
-        "application", "app", "window_title", "workbook", "worksheet",
-        "cell_range", "cell_range_number", "control_type", "ui_path",
-    }
-    _COORD_ATTRS = {
-        "x", "y", "mouse_x", "mouse_y", "coordinates", "coordinate",
-        "click_x", "click_y",
-    }
-
-    has_html = False
-    has_app = False
-    has_coord = False
-
-    for event in events:
-        attrs = event.attributes
-        if any(k in attrs and attrs[k] not in (None, "", "None", "none") for k in _HTML_ATTRS):
-            has_html = True
-            break  # highest priority — no need to check further
-
-    if not has_html:
-        for event in events:
-            attrs = event.attributes
-            if any(k in attrs and attrs[k] not in (None, "", "None", "none") for k in _APP_ATTRS):
-                has_app = True
-                break
-
-    if not has_html and not has_app:
-        for event in events:
-            attrs = event.attributes
-            if any(k in attrs and attrs[k] not in (None, "", "None", "none") for k in _COORD_ATTRS):
-                has_coord = True
-                break
-
-    if has_html:
-        return "web"
-    if has_app:
-        return "desktop"
-    if has_coord:
-        return "screen"
-    return "unknown"
+    return determine_environment(events, environment_columns)[0]

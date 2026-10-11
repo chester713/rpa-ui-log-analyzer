@@ -2,7 +2,7 @@
 
 An AI-powered recommendation system that analyzes UI interaction logs (CSV format) and suggests appropriate RPA automation methods based on a library of 13 UI interaction patterns.
 
-Upload a UI event log and the tool infers what the user was doing at each step, matches each inferred activity to an RPA pattern, and recommends the most appropriate automation method (DOM manipulation, UI Automation, hardware simulation, etc.) broken down by execution environment.
+Upload a UI event log and the tool infers what the user was doing at each step, matches each inferred activity to an RPA pattern, and recommends a prioritised list of applicable automation methods (DOM manipulation, UI Automation, hardware simulation, etc.) for the activity's execution environment.
 
 ## Quick Start
 
@@ -25,9 +25,9 @@ python src_cli.py sample.csv
 
 ## Recommendation Pipeline
 
-The pipeline implements a two-stage recommendation approach: **task interpretation** followed by **method recommendation**.
+The pipeline implements a two-stage recommendation approach: **UI activity inference** followed by **method recommendation**.
 
-In task interpretation, consecutive UI events are grouped into interaction segments based on their collective intent — events that together constitute a single coherent interaction belong in the same group. The resulting group is then named as an activity using the pattern vocabulary. In method recommendation, the matched pattern and the detected execution environment together determine which automation method to recommend, following a priority order: content-level (web) → accessibility-level (desktop) → visual/hardware simulation (screen).
+In UI activity inference, consecutive UI events are grouped by their collective intent — events that together constitute a single coherent interaction belong in the same group — and the UI activity that produced each group is inferred and named using the pattern vocabulary. Business tasks (what the process is for) are out of scope: the approach works at the level of UI activities and actions. In method recommendation, the matched pattern and the detected execution environment together determine a prioritised list of applicable automation methods, ordered content-level (DOM) → accessibility-level (UI Automation) → visual/input-level (visual recognition, hardware simulation).
 
 The tool runs each log through six sequential steps:
 
@@ -37,10 +37,10 @@ The tool runs each log through six sequential steps:
 | 2 | **Activity Naming** | Groups are sent to an LLM in batches of 5 (processed sequentially to respect rate limits). For each group the LLM returns a unique, context-specific activity name aligned with the pattern vocabulary, the name of the RPA pattern that fits, whether the group switches application/environment (judged against the most recently recorded application, URL and window, carried forward over groups that did not record them), whether a prerequisite Find step is needed (and its name), supporting evidence, and a confidence score. | LLM |
 | 3 | **Action / Object Extraction** | The Action and Object are read from the pattern the LLM assigned in step 2 — each pattern carries a canonical Action/Object pair in the AOMC (Action-Object-Method-Context) vocabulary. No separate LLM call is made: log-level verbs (click/press/tap, type/paste/fill, etc.) were already resolved to the pattern vocabulary by the LLM when it named the activity. An unrecognised pattern name yields no pair rather than a guess. | Lookup |
 | 4 | **Pattern Matching** | The pattern name assigned in step 2 is resolved (case-insensitively) against the RPA UI Interaction Pattern Library. Matching is by name only: whether the pattern can be carried out in the activity's execution environment is checked in step 6, so an activity keeps its pattern even when the pattern has no variant for that environment. If the name is missing or unknown, the activity is left without a pattern. No LLM call is made. | Lookup |
-| 5 | **Context Identification** | Event attributes are scanned in priority order — HTML attributes → **web**; app/workbook attributes → **desktop**; coordinate attributes → **screen**. | Rule-based |
-| 6 | **Method Recommendation** | The matched pattern's method for the identified environment is selected (e.g. Write Element + web → *DOM manipulation*; + desktop → *UI Automation manipulation*; + screen → *Hardware simulation*). If the pattern has no variant for the environment (e.g. Delete Element on screen) or the environment could not be determined, no method is recommended and the reason is shown instead. | Rule-based |
+| 5 | **Context Identification** | When the log is loaded, the LLM identifies which columns indicate each environment — columns describing an HTML element or browser location → **web**; a native application's interface or document structure → **desktop**; raw screen coordinates → **screen** — by what the column describes, not its name. Each activity's environment is the highest-priority one (web > desktop > screen) for which one of its events recorded a value in such a column; otherwise *unknown*. | LLM (column roles, at load) + Rule-based |
+| 6 | **Method Recommendation** | The matched pattern's applicable methods for the identified environment are listed in priority order, at most three (e.g. Write Element + web → *DOM manipulation*, *UI Automation manipulation*, *Hardware simulation*; + desktop → *UI Automation manipulation*, *Hardware simulation*; + screen → *Hardware simulation*). If the pattern has no applicable variant (e.g. Delete Element on screen) or the environment could not be determined, no method is recommended and the reason is shown instead. | Rule-based |
 
-*Lookup* steps make no model call: they read what the LLM already decided in step 2. The LLM is called for four things only — suggesting the event column, identifying the context columns, refining groups, and naming activities.
+*Lookup* steps make no model call: they read what the LLM already decided in step 2. The LLM is called for four things only — suggesting the event column, identifying the column roles (application, grouping and environment columns, in one call), refining groups, and naming activities.
 
 Two implicit activities can also be inserted. Both are decided by the LLM during activity naming (step 2), not by fixed rules, so they can vary between runs and models:
 
@@ -57,15 +57,15 @@ Thirteen patterns across three categories:
 | **Modification** | Write Element, Delete Element, Disable Element |
 | **Control** | Open, Activate, Hover, Switch Context, Scroll, Focus, Refresh |
 
-Each pattern defines the execution environments it supports and, for each, an automation method. Applicability is cumulative: a **web** environment can use every method (DOM, UI Automation, visual recognition, hardware simulation); a **desktop** environment can use UI Automation, visual recognition and hardware simulation; a **screen** environment can use only visual recognition and hardware simulation. The tool recommends the highest-fidelity method the pattern defines for the detected environment:
+Each pattern defines the execution environments it supports and, for each, an automation method. Applicability is cumulative: a **web** environment can use every method (DOM, UI Automation, visual recognition, hardware simulation); a **desktop** environment can use UI Automation, visual recognition and hardware simulation; a **screen** environment can use only visual recognition and hardware simulation. The tool recommends the applicable methods the pattern defines as a prioritised list — content-level first, then accessibility-level, then visual/input-level — so the list holds at most three methods. The top-priority method per environment is:
 
-| Environment | Detection signal (examples) | Extraction method | Modification / Control method |
+| Environment | Detection signal (examples) | Extraction method (top priority) | Modification / Control method (top priority) |
 |-------------|-----------------|-------------------|-------------------------------|
 | **Web** | `xpath`, `tag_name`, `browser_url`, `webpage`, `url` | HTML DOM parsing | HTML DOM manipulation |
 | **Desktop** | `application`, `app`, `window_title`, `workbook`, `worksheet` | UI Automation tree parsing | UI Automation manipulation |
 | **Screen** | `x`, `y`, `mouse_x`, `mouse_y` | Visual recognition | Hardware simulation |
 
-The exact wording of a method varies slightly between pattern files, and the complete attribute lists are in `get_context_from_events` (`src/matching/pattern_matcher.py`). Not every pattern covers every environment: **Delete Element** has no screen variant, **Switch Context** is desktop-only, and **Hover** has no UI Automation variant (DOM manipulation on web, hardware simulation on desktop and screen). When a pattern does not support the detected environment, the activity keeps its pattern but gets no method, and the reason is shown — for example *No method for the screen environment: Delete Element has no screen variant (an element cannot be deleted from an image).* The reason comes from an optional `## Unsupported Environments` section in the pattern file (one `- screen: …` line per environment); without it, the message just states that the variant is missing.
+The exact wording of a method varies slightly between pattern files, and the detection signals are examples: which columns signal each environment is decided by the LLM for each log (`DEFAULT_ENVIRONMENT_COLUMNS` in `src/matching/pattern_matcher.py` is used only to replay analyses stored before this was added). Not every pattern covers every environment: **Delete Element** has no screen variant, **Switch Context** is desktop-only, and **Hover** has no UI Automation variant (DOM manipulation then hardware simulation on web, hardware simulation on desktop and screen). When a pattern does not support the detected environment, the activity keeps its pattern but gets no method, and the reason is shown — for example *No method for the screen environment: Delete Element has no screen variant (an element cannot be deleted from an image).* The reason comes from an optional `## Unsupported Environments` section in the pattern file (one `- screen: …` line per environment); without it, the message just states that the variant is missing.
 
 ## Web UI
 
@@ -78,16 +78,16 @@ The web interface (`python app.py`, port 5001) provides a guided six-page flow:
 5. **Results** (`/results/<id>`) — three linked panels plus a graph:
    - **Original Log** — every row of the uploaded CSV (values in columns whose names look sensitive — password, secret, token, API key — are shown as `[REDACTED]`); click a row to inspect its inferred activity.
    - **Inferred Activities** — the activity sequence, labelled *Recorded*, *Prerequisite* (Find) or *Switch* (context switch); click one to see its details.
-   - **Pattern & Method** — the matched pattern, the recommended method (or the reason there is none), the context attributes that decided the environment, and the LLM's confidence score and evidence for the activity (implicit Find / Switch steps are inserted from the LLM's flags and show *n/a*). The **method dropdown** lets you override the recommendation (Extraction: DOM parsing, UI Automation tree parsing, visual recognition, hardware simulation; Modification: DOM manipulation, UI Automation manipulation, hardware simulation); the override is kept in the page only and is reflected in the export.
+   - **Pattern & Method** — the matched pattern, the prioritised list of recommended methods (or the reason there is none), the context attributes that decided the environment, and the LLM's confidence score and evidence for the activity (implicit Find / Switch steps are inserted from the LLM's flags and show *n/a*). The **method dropdown** defaults to the top-priority method and lets you override it (Extraction: DOM parsing, UI Automation tree parsing, visual recognition, hardware simulation; Modification: DOM manipulation, UI Automation manipulation, hardware simulation); the override is kept in the page only and is reflected in the export.
    - **Direct-Follow Graph (DFG)** — the activity sequence as a directly-follows graph with zoom controls; clicking a node selects the matching activity and log rows.
-   - **Export CSV** — downloads the original log with four columns appended: `inferred_activity`, `execution_context`, `matched_pattern` and `recommended_method` (including any override).
+   - **Export CSV** — downloads the original log with five columns appended: `inferred_activity`, `execution_context`, `matched_pattern`, `recommended_method` (the top-priority method, or the override) and `prioritised_methods` (the full list, `>`-separated).
 6. **History** (`/history`) — past analyses stored in `data/history.json`, each linking to its workspace and results.
 
 ### LLM Configuration
 
 #### LLM used
 
-The LLM is called for four things — suggesting the event column, identifying the context columns used for grouping, refining event groups, and naming activities (which also assigns each activity's pattern, prerequisite Find step, context-switch flag, evidence and confidence). Action/object extraction, pattern matching, context identification and method recommendation make no model call. All four LLM tasks use this model by default:
+The LLM is called for four things — suggesting the event column, identifying the column roles (application and grouping columns, and the columns that indicate each execution environment), refining event groups, and naming activities (which also assigns each activity's pattern, prerequisite Find step, context-switch flag, evidence and confidence). Action/object extraction, pattern matching, the per-activity environment decision and method recommendation make no model call. All four LLM tasks use this model by default:
 
 | Setting | Value |
 |---------|-------|
@@ -146,7 +146,7 @@ The CLI runs the same pipeline as the web app. Grouping columns are identified b
 
 - **The LLM makes the final merge and switch decisions** — The refinement pass and activity naming are shown the log's application-related attributes as evidence (changed, same, or not recorded), but the code does not override their answers; it only checks that merged groups are adjacent. The model can therefore occasionally merge across a real application switch, keep apart groups that serve one intention, or miss a context switch. Groups are refined in batches of 10, so two groups on either side of a batch edge are never merged.
 
-- **SME task interpretation is simulated by LLM** — The recommendation approach as described requires a Subject Matter Expert (SME) to map interaction segments to meaningful business tasks. In this prototype that step is approximated by LLM inference. The LLM may misinterpret activities in unfamiliar domains or where log attributes are sparse.
+- **SME judgement is simulated by LLM** — The recommendation approach as described relies on a Subject Matter Expert (SME) to judge the collective intent of consecutive events, name the UI activity they realise, and recognise implicit activities. In this prototype that judgement is approximated by LLM inference. The LLM may misinterpret activities in unfamiliar domains or where log attributes are sparse.
 
 - **LLM is mandatory; output quality depends on it** — There is no keyword/heuristic fallback. Column identification, group refinement, activity naming and pattern assignment are LLM-driven (action/object extraction and pattern matching only look up the pattern the LLM assigned), so results vary with the model and the clarity of the log. Robustness is pursued by tightening the prompts rather than by adding rule-based safety nets.
 

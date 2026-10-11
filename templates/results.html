@@ -163,7 +163,9 @@
                         <div class="v" id="dPattern"></div>
                     </div>
                     <div class="kv">
-                        <div class="k">Recommended Method (Override Allowed)</div>
+                        <div class="k">Recommended Methods (Prioritised)</div>
+                        <ol id="dMethodList" style="margin:4px 0 8px 18px; padding:0; font-size:13px; line-height:1.6;"></ol>
+                        <div class="k">Selected Method (Override Allowed)</div>
                         <select id="dMethodSelect" style="width:100%; padding:8px 10px; border:1px solid #d6dbe3; border-radius:8px; font-size:13px; margin-top:4px;"></select>
                         <div class="muted" id="dMethodHint" style="margin-top:6px;"></div>
                     </div>
@@ -713,6 +715,7 @@
             document.getElementById('detailsScroll').style.display = 'block';
             document.getElementById('dPattern').textContent = '—';
             document.getElementById('dMethodSelect').innerHTML = '';
+            document.getElementById('dMethodList').innerHTML = '';
             document.getElementById('dMethodHint').textContent = 'No method recommendation for this activity type.';
             const ctxWrap = document.getElementById('dContextAttrs');
             ctxWrap.textContent = '—';
@@ -775,6 +778,18 @@
             const recommendedOriginal = rec.method || '';
             const recommended = normalizeMethodName(recommendedOriginal);
             const recKey = recommendationKey(rec);
+
+            // Prioritised list: content-level first, then accessibility-level, then visual/input-level.
+            const ranked = (Array.isArray(rec.methods) && rec.methods.length)
+                ? rec.methods
+                : (recommendedOriginal ? [recommendedOriginal] : []);
+            const methodList = document.getElementById('dMethodList');
+            methodList.innerHTML = '';
+            ranked.forEach(m => {
+                const li = document.createElement('li');
+                li.textContent = normalizeMethodName(m);
+                methodList.appendChild(li);
+            });
 
             // When there is no default, say why (e.g. the pattern has no variant for this environment).
             const noDefaultNote = rec.method_note || 'No default recommendation available for this activity.';
@@ -864,21 +879,22 @@
         }
 
         document.getElementById('exportBtn').addEventListener('click', () => {
-            const appended = ['inferred_activity', 'execution_context', 'matched_pattern', 'recommended_method'];
+            const appended = ['inferred_activity', 'execution_context', 'matched_pattern', 'recommended_method', 'prioritised_methods'];
             const headers = [...logColumns, ...appended];
             const lines = [headers.map(escapeCsv).join(',')];
             (logPreview || []).forEach(r => {
                 const values = r.values || {};
                 const rec = findRecommendationByRow(r.row_index);
-                let inferred = '', context = '', pattern = '', method = '';
+                let inferred = '', context = '', pattern = '', method = '', ranked = '';
                 if (rec) {
                     inferred = rec.inferred_activity || '';
                     context = rec.execution_environment || '';
                     pattern = rec.pattern_matched || '';
                     const key = recommendationKey(rec);
                     method = methodOverrides[key] || normalizeMethodName(rec.method || '');
+                    ranked = (rec.methods || []).map(normalizeMethodName).join(' > ');
                 }
-                const rowOut = [...logColumns.map(c => values[c] ?? ''), inferred, context, pattern, method];
+                const rowOut = [...logColumns.map(c => values[c] ?? ''), inferred, context, pattern, method, ranked];
                 lines.push(rowOut.map(escapeCsv).join(','));
             });
             const csvContent = lines.join('\n');

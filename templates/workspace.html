@@ -327,11 +327,11 @@
                     </div>
                 </div>
                 <div class="pane">
-                    <h3>Recommended Method</h3>
-                    <p class="step-desc">The most suitable automation method recommended based on the activity and its execution environment.</p>
+                    <h3>Recommended Methods</h3>
+                    <p class="step-desc">The applicable automation methods for the activity's pattern and execution environment, in priority order: content-level, then accessibility-level, then visual/input-level.</p>
                     <div class="tbl-wrap">
                         <table class="data-tbl" id="mrMethodTable">
-                            <thead><tr><th>#</th><th>Method</th><th>Category</th></tr></thead>
+                            <thead><tr><th>#</th><th>Methods (prioritised)</th><th>Category</th></tr></thead>
                             <tbody id="mrMethodBody"></tbody>
                         </table>
                     </div>
@@ -764,7 +764,9 @@
                     activity: n,
                     type: nameToType[n] || 'main',
                     env: c.execution_environment || '—',
-                    method: rec.recommended_method || '—',
+                    method: (Array.isArray(rec.methods) && rec.methods.length)
+                        ? rec.methods.map((m, k) => `${k + 1}. ${m}`).join('<br>')
+                        : (rec.recommended_method || '—'),
                     note: rec.method_note || '',
                     category: rec.method_category || '—',
                 };

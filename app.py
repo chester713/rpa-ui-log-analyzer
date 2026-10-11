@@ -282,6 +282,10 @@ def _synthesize_recommendations_from_progressive(entry):
             "execution_environment": r.get("execution_environment", ""),
             "pattern_matched": r.get("pattern_matched"),
             "method": r.get("method") or r.get("recommended_method"),
+            "methods": r.get("methods") or (
+                [r.get("method") or r.get("recommended_method")]
+                if (r.get("method") or r.get("recommended_method")) else []
+            ),
             "method_note": r.get("method_note"),
             "method_category": r.get("method_category"),
             "confidence": r.get("confidence", 0),

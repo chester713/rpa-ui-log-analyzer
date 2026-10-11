@@ -8,6 +8,15 @@ import re
 _LABEL_ALIASES = {"visual": "screen"}
 _KNOWN_ENVIRONMENTS = ("web", "desktop", "screen")
 
+# Environments ordered from richest to poorest interface information. Applicability is
+# cumulative: an environment can use the methods of its own level and of every poorer
+# level (web → content, accessibility and visual/input-level methods; desktop →
+# accessibility and visual/input-level; screen → visual/input-level only).
+_ENVIRONMENT_RANK = {"web": 0, "desktop": 1, "screen": 2}
+
+# At most one method per level, so a prioritised list never holds more than three.
+MAX_RECOMMENDED_METHODS = 3
+
 
 def _split_top_level(text: str, separator: str) -> List[str]:
     """Split on ``separator`` only where it is outside parentheses.
@@ -61,41 +70,87 @@ class Pattern:
         context_valid = context in self.contexts if self.contexts else True
         return action_match and object_match and context_valid
 
-    def get_method_for_context(self, context: str) -> Optional[str]:
-        """
-        Get the recommended method for the given execution environment.
+    def _variants(self) -> List[tuple]:
+        """The Method field as (method name, level) pairs, in the order written.
 
-        The pattern's Method field lists one variant per environment, highest
-        fidelity first, each followed by the environments it applies to, e.g.
-        "HTML DOM manipulation (Web) / UI Automation manipulation (Desktop) /
-        Hardware simulation (Visual)". A label may cover several environments
-        ("Hardware simulation (Web/Desktop/Screen)"), and "Visual" is the
-        pattern files' name for the screen environment. The first variant whose
-        label covers ``context`` is returned with its label stripped.
+        The Method field lists one variant per environment, each followed by the
+        environments it is written for, e.g. "HTML DOM manipulation (Web) / UI
+        Automation manipulation (Desktop) / Hardware simulation (Visual)". A label
+        may cover several environments ("Hardware simulation (Web/Desktop/Screen)"),
+        and "Visual" is the pattern files' name for the screen environment.
+
+        A variant's level is the rank of the poorest environment its label names:
+        a method that can run on a bare screen needs only pixels and input devices,
+        so it is a visual/input-level method even when it is also usable on the web.
+        An unlabelled variant applies everywhere and ranks as screen level.
+        """
+        variants = []
+        for variant in _split_top_level(self.method, "/"):
+            text = variant.strip()
+            if not text:
+                continue
+            match = re.fullmatch(r"(?P<name>[^()]*?)\s*\((?P<label>[^()]*)\)", text)
+            if match is None:
+                variants.append((text, _ENVIRONMENT_RANK["screen"]))
+                continue
+            ranks = [
+                _ENVIRONMENT_RANK[env]
+                for env in (
+                    _LABEL_ALIASES.get(token.strip().lower(), token.strip().lower())
+                    for token in re.split(r"[/,]", match.group("label"))
+                )
+                if env in _ENVIRONMENT_RANK
+            ]
+            if ranks:
+                variants.append((match.group("name").strip(), max(ranks)))
+        return variants
+
+    def get_methods_for_context(self, context: str) -> List[str]:
+        """
+        Get the prioritised list of methods applicable in an execution environment.
+
+        Applicability is cumulative: a method is applicable in ``context`` when its
+        level is the same as or poorer than the environment's own level, so a web
+        environment can use content-, accessibility- and visual/input-level methods,
+        a desktop environment accessibility- and visual/input-level methods, and a
+        screen environment visual/input-level methods only. The list is ordered by
+        level — content-level first, then accessibility-level, then visual/input-level
+        — keeping the pattern file's order within a level, and holds at most
+        ``MAX_RECOMMENDED_METHODS`` entries.
 
         Args:
             context: Execution context (web, desktop, screen, unknown)
 
         Returns:
-            The method name, or None when the pattern does not support the
-            context or defines no variant for it.
+            Method names, highest priority first. Empty when the pattern does not
+            support the context or defines no applicable variant.
         """
-        if context not in self.contexts:
-            return None
+        if context not in self.contexts or context not in _ENVIRONMENT_RANK:
+            return []
 
-        for variant in _split_top_level(self.method, "/"):
-            match = re.fullmatch(r"(?P<name>[^()]*?)\s*\((?P<label>[^()]*)\)", variant.strip())
-            if match is None:
-                # Unlabelled variant: applies to every environment.
-                return variant.strip() or None
-            environments = {
-                _LABEL_ALIASES.get(token.strip().lower(), token.strip().lower())
-                for token in re.split(r"[/,]", match.group("label"))
-            }
-            if context in environments:
-                return match.group("name").strip()
+        floor = _ENVIRONMENT_RANK[context]
+        applicable = sorted(
+            (v for v in self._variants() if v[1] >= floor),
+            key=lambda v: v[1],  # stable: keeps the file's order within a level
+        )
+        methods: List[str] = []
+        for name, _level in applicable:
+            if name not in methods:
+                methods.append(name)
+        return methods[:MAX_RECOMMENDED_METHODS]
 
-        return None
+    def get_method_for_context(self, context: str) -> Optional[str]:
+        """
+        Get the top-priority method for the given execution environment.
+
+        Args:
+            context: Execution context (web, desktop, screen, unknown)
+
+        Returns:
+            The first method of ``get_methods_for_context``, or None when there is none.
+        """
+        methods = self.get_methods_for_context(context)
+        return methods[0] if methods else None
 
 
 def explain_missing_method(pattern: Optional[Pattern], environment: str) -> Optional[str]:
@@ -137,6 +192,8 @@ class MethodRecommendation:
     inference_evidence: Optional[List[str]] = None
     inference_reasoning: Optional[str] = None
     method_note: Optional[str] = None  # why no method was recommended (None when one was)
+    # Prioritised methods (highest first, at most three); ``method`` is the first of them.
+    methods: List[str] = field(default_factory=list)
 
     def to_dict(self) -> dict:
         """Convert to dictionary for output."""
@@ -149,6 +206,7 @@ class MethodRecommendation:
             "execution_environment": self.execution_environment,
             "pattern_matched": self.pattern.name if self.pattern else None,
             "method": self.method,
+            "methods": list(self.methods),
             "method_category": self.method_category,
             "confidence": self.confidence,
             "confidence_explanation": self.confidence_explanation,

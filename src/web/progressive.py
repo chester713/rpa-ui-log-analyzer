@@ -95,10 +95,14 @@ PROGRESSIVE_LOGIC = {
         "pattern's context-method mapping are valid recommendations for the activity."
     ),
     "context_determination": (
-        "• Attribute-Based Environment Inference: Each activity group is examined for context-related CSV "
-        "attributes — such as a browser URL or XPath (indicating a web environment), an application name or "
-        "workbook reference (indicating a desktop environment), or screen coordinates (indicating a screen "
-        "environment). The first matching attribute found determines the execution environment.\n"
+        "• LLM-Identified Environment Columns: When the log is loaded, the LLM reads the CSV header and sample "
+        "rows and identifies which columns indicate each execution environment — columns describing an HTML "
+        "element or browser location (web), a native application's interface or document structure (desktop), "
+        "or raw screen coordinates (screen). Columns are classified by what they describe, not by their names, "
+        "because names differ between loggers.\n"
+        "• Environment per Activity: Each activity group is examined for recorded values in those columns. "
+        "The highest-priority environment with at least one recorded value determines the execution "
+        "environment; implicit Find and Switch steps take the environment of the group they belong to.\n"
         "• Priority Rule: Web indicators take precedence over desktop indicators, which take precedence over "
         "screen indicators. This priority reflects the method fidelity hierarchy: DOM-level methods are more "
         "reliable than UI Automation methods, which in turn are more reliable than visual recognition.\n"
@@ -107,23 +111,23 @@ PROGRESSIVE_LOGIC = {
         "analysts to verify or override the inferred context."
     ),
     "method_recommendation": (
-        "• Pattern-Driven Method Lookup: The automation method is drawn from the matched pattern's "
-        "context-method mapping for the activity's execution environment. Each pattern defines one method "
-        "per supported context (e.g., Write Element in web → DOM Manipulation; in desktop → UI Automation "
-        "Manipulation; in screen → Hardware Simulation); the method text for the activity's environment is "
-        "extracted directly from that mapping.\n"
+        "• Pattern-Driven Method Lookup: The automation methods are drawn from the matched pattern's "
+        "variants (e.g., Write Element: DOM manipulation, UI Automation manipulation, hardware simulation); "
+        "which of them apply depends on the activity's execution environment.\n"
         "• No Method for This Environment: When the matched pattern defines no variant for the determined "
         "environment (for example Delete Element on screen, because an element cannot be deleted from an "
         "image), no method is recommended and the stage states why instead of guessing. The same applies "
         "when the environment itself could not be determined from the log attributes.\n"
-        "• Fidelity Hierarchy (by construction): The patterns are authored so that richer environments map to "
-        "higher-fidelity methods — DOM-level methods (content-level) for web, UI Automation methods "
-        "(accessibility-level) for desktop, and visual recognition or hardware simulation (input-level) for "
-        "screen. The recommended method therefore follows directly from the determined environment; there is "
-        "no separate step that re-ranks methods across activities.\n"
-        "• One Recommendation per Activity: A single method is recommended per activity — the method defined "
-        "by the matched pattern for that activity's context. Analysts may override this recommendation on the "
-        "Analysis Results page if a different method better suits the deployment constraints."
+        "• Cumulative Applicability: A richer environment can also use the methods of every poorer one. A web "
+        "activity can use content-level (DOM), accessibility-level (UI Automation) and visual/input-level "
+        "(visual recognition, hardware simulation) methods; a desktop activity accessibility- and "
+        "visual/input-level methods; a screen activity visual/input-level methods only.\n"
+        "• Prioritised List: The applicable methods of the matched pattern are recommended in priority order — "
+        "content-level first, then accessibility-level, then visual/input-level — reflecting the reliability "
+        "and efficiency of each level. At most three methods are listed, one per level; patterns without a "
+        "variant at some level list fewer (e.g. Hover on web: DOM manipulation, then hardware simulation).\n"
+        "• Designer Override: The top-priority method is the default. Analysts may select another method on "
+        "the Analysis Results page if a different method better suits the deployment constraints."
     ),
 }
 
@@ -343,6 +347,7 @@ def _ws_pattern_matching(step3, step4):
 def _ws_context_determination(step1, step2, step3):
     groups_by_idx = {g["group_index"]: g for g in step1["groups"]}
     env_by_group = {c["group_index"]: c["environment"] for c in step3["contexts"]}
+    deciding_by_group = {c["group_index"]: c.get("deciding_attributes") for c in step3["contexts"]}
 
     contexts = []
     for a in step2["activities"]:
@@ -359,7 +364,9 @@ def _ws_context_determination(step1, step2, step3):
                     if sv not in unique_attr_vals[k]:
                         unique_attr_vals[k].append(sv)
 
-        context_attr_values = _pick_deciding_attributes(env, unique_attr_vals)
+        context_attr_values = deciding_by_group.get(group_idx)
+        if context_attr_values is None:  # analyses stored before step 3 recorded them
+            context_attr_values = _pick_deciding_attributes(env, unique_attr_vals)
         is_ctx_switch = a.get("activity_type", "main") == "context_switch"
 
         contexts.append({
@@ -382,6 +389,7 @@ def _ws_method_recommendation(step2, step6):
                 "inferred_activity": r["activity_name"],
                 "recommended_method": r.get("method"),   # workspace.html key
                 "method": r.get("method"),               # results.html key
+                "methods": r.get("methods") or ([r["method"]] if r.get("method") else []),  # prioritised
                 "method_note": r.get("method_note"),     # why there is no method, if there is none
                 "activity_action": r.get("activity_action", ""),
                 "activity_object": r.get("activity_object", ""),
@@ -465,7 +473,8 @@ def _compute_step1(store):
     return {"groups": serialized, "group_count": len(groups),
             "event_count": sum(len(g.events) for g in groups),
             "application_attributes": application_attributes,
-            "context_attributes": context_attributes}
+            "context_attributes": context_attributes,
+            "environment_columns": loader.detected_environment_columns}
 
 
 def _run_step2_thread(aid):
@@ -519,10 +528,13 @@ def _run_step2_thread(aid):
 
 
 def _compute_step3(store):
-    from src.matching.pattern_matcher import get_context_from_events
+    from src.matching.pattern_matcher import determine_environment
     from src.matching import PATTERNS
 
     step1 = store.load_step(1)
+    # Indicator columns per environment, identified by the LLM at load time. Older
+    # stored analyses predate them (None), and are replayed with the default names.
+    environment_columns = step1.get("environment_columns")
     step2 = store.load_step(2)
     activities = _reconstruct_activities(step2)
 
@@ -531,9 +543,11 @@ def _compute_step3(store):
     contexts = []
     for g in step1["groups"]:
         group_events = _reconstruct_events(g["events"])
+        environment, deciding = determine_environment(group_events, environment_columns)
         contexts.append({
             "group_index": g["group_index"],
-            "environment": get_context_from_events(group_events),
+            "environment": environment,
+            "deciding_attributes": deciding,
         })
     ctx_by_group = {c["group_index"]: c["environment"] for c in contexts}
 
@@ -600,7 +614,8 @@ def _compute_step6(store):
         # only lists "desktop", so look its method up in that environment.
         method_environment = "desktop" if a.activity_type == "context_switch" else context
         pattern = matcher.match(a)
-        method = pattern.get_method_for_context(method_environment) if pattern else None
+        methods = pattern.get_methods_for_context(method_environment) if pattern else []
+        method = methods[0] if methods else None
 
         recommendations.append({
             "activity_name": a.name,
@@ -609,6 +624,7 @@ def _compute_step6(store):
             "pattern_matched": pattern.name if pattern else None,
             "execution_environment": context,
             "method": method,
+            "methods": methods,
             "method_note": explain_missing_method(pattern, method_environment),
             "method_category": pattern.category if pattern else None,
             "confidence": a.confidence,
