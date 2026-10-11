@@ -10,7 +10,7 @@ from ..models.pattern import MethodRecommendation, explain_missing_method
 from ..inference.event_grouper import EventGrouper, LLMGroupRefiner
 from ..inference.activity_inferrer import ActivityInferrer
 from ..mapping.event_activity_mapper import EventActivityMapper
-from ..matching.pattern_matcher import get_context_from_events
+from ..matching.pattern_matcher import determine_environment
 from ..matching.output_formatter import RecommendationFormatter
 
 
@@ -142,7 +142,9 @@ class DataPipeline:
         # implicit "Find <element>" and "Switch Context" activities — so the CLI
         # matches the web pipeline rather than emitting main activities only.
         enriched = getattr(self.mapper, "enriched_activities", activities)
-        recommendations = self._create_recommendations(enriched, groups)
+        recommendations = self._create_recommendations(
+            enriched, groups, self.loader.detected_environment_columns
+        )
 
         statistics = {
             "total_events": len(events),
@@ -165,9 +167,15 @@ class DataPipeline:
         )
 
     def _create_recommendations(
-        self, activities: List[Activity], groups: List[Any]
+        self,
+        activities: List[Activity],
+        groups: List[Any],
+        environment_columns: Dict[str, List[str]] = None,
     ) -> List[MethodRecommendation]:
-        """Create one method recommendation per inferred activity.
+        """Create one (prioritised) method recommendation per inferred activity.
+
+        The execution environment is decided from the indicator columns the LLM
+        identified for each environment when the log was loaded.
 
         Operates on the full enriched activity sequence (main + implicit Find /
         Switch-Context activities), looking up each activity's source group by
@@ -182,7 +190,7 @@ class DataPipeline:
             group_idx = activity.group_index
             group = groups[group_idx] if 0 <= group_idx < len(groups) else None
             events = group.events if group else []
-            context = get_context_from_events(events)
+            context, deciding = determine_environment(events, environment_columns)
 
             # Context switches are OS-level operations; the Switch Context pattern
             # only lists "desktop", so look its method up in that environment
@@ -193,7 +201,8 @@ class DataPipeline:
             # The pattern is matched by name only. If it has no variant for the
             # environment, the pattern is kept and the method note says why.
             pattern = matcher.match(activity)
-            method = pattern.get_method_for_context(method_environment) if pattern else None
+            methods = pattern.get_methods_for_context(method_environment) if pattern else []
+            method = methods[0] if methods else None
 
             event_indices = [e.row_index for e in events if e.row_index is not None]
 
@@ -211,8 +220,10 @@ class DataPipeline:
                 execution_environment=context,
                 pattern=pattern,
                 method=method,
+                methods=methods,
                 method_category=pattern.category if pattern else None,
                 confidence=activity.confidence,
+                context_attributes_used=list(deciding) or None,
                 context_switch=is_context_switch,
                 context_switch_from=context_switch_from,
                 context_switch_to=context_switch_to,

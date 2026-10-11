@@ -104,7 +104,7 @@
         <!-- Pipeline -->
         <section class="card">
             <h2>Recommendation Pipeline</h2>
-            <p class="section-intro">The pipeline implements a two-stage recommendation approach. In <strong>task interpretation</strong> (steps 1–3), UI events are grouped into interaction segments by collective intent and each group is named as an activity using the pattern vocabulary. In <strong>method recommendation</strong> (steps 4–6), the matched pattern and execution environment determine the automation method, following a priority order: content-level (web) → accessibility-level (desktop) → visual/hardware simulation (screen).</p>
+            <p class="section-intro">The pipeline implements a two-stage recommendation approach. In <strong>UI activity inference</strong> (steps 1–3), consecutive UI events are grouped by their collective intent and the UI activity that produced each group is inferred and named using the pattern vocabulary. In <strong>method recommendation</strong> (steps 4–6), the matched pattern and execution environment determine a prioritised list of automation methods: content-level (DOM) → accessibility-level (UI Automation) → visual/input-level (visual recognition, hardware simulation).</p>
             <p class="section-intro">Steps marked <span class="badge badge-llm">LLM</span> send data to a language model; steps marked <span class="badge badge-rule">Rule-based</span> use deterministic logic; steps marked <span class="badge badge-lookup">Lookup</span> make no model call — they read what the LLM already decided in step 2. An LLM is required — the pipeline has <strong>no rule-based fallback</strong>, so if the model is unavailable the analysis surfaces an error rather than producing degraded results.</p>
             <div class="steps">
 
@@ -164,13 +164,14 @@
                         <div class="step-header">
                             <span class="step-title">Context Identification</span>
                             <span class="badge badge-rule">Rule-based</span>
+                            <span class="badge badge-llm">LLM columns</span>
                         </div>
-                        <p class="step-desc">Each group's execution environment is identified by scanning event attributes in priority order:</p>
+                        <p class="step-desc">When the log is loaded, the LLM reads the CSV header and sample rows and identifies which columns indicate each execution environment, by what the column describes rather than its name (column names differ between loggers). Each UI activity's environment is then decided in priority order:</p>
                         <p class="step-desc" style="margin-top:6px;">
-                            1. <strong>Web</strong> — if any event carries HTML-specific attributes: <code>xpath</code>, <code>tag_name</code>, <code>html_id</code>, <code>browser_url</code>, <code>webpage</code>, <code>url</code>.<br>
-                            2. <strong>Desktop</strong> — if HTML attributes are absent but app/UI-hierarchy attributes exist: <code>application</code>, <code>app</code>, <code>window_title</code>, <code>workbook</code>, <code>worksheet</code>, <code>control_type</code>.<br>
-                            3. <strong>Screen (visual)</strong> — if neither HTML nor app attributes are found but coordinate attributes exist: <code>x</code>, <code>y</code>, <code>mouse_x</code>, <code>mouse_y</code>.<br>
-                            4. <strong>Unknown</strong> — if no distinguishing attributes are found.
+                            1. <strong>Web</strong> — if any of its events recorded a value in a web column (properties of an HTML/DOM element or browser location, e.g. XPath, tag, URL).<br>
+                            2. <strong>Desktop</strong> — otherwise, if any event recorded a desktop column (native application UI or document structure, e.g. application, window title, workbook, cell).<br>
+                            3. <strong>Screen (visual)</strong> — otherwise, if any event recorded a screen column (raw coordinates).<br>
+                            4. <strong>Unknown</strong> — if none was recorded.
                         </p>
                     </div>
                 </div>
@@ -182,7 +183,7 @@
                             <span class="step-title">Method Recommendation</span>
                             <span class="badge badge-rule">Rule-based</span>
                         </div>
-                        <p class="step-desc">The matched pattern carries a <code>Method</code> field listing one implementation approach per execution environment, separated by " / " (e.g. "HTML DOM manipulation (Web) / UI Automation manipulation (Desktop) / Hardware simulation (Visual)"). The tool selects the slice whose context label matches the identified environment and strips the label, returning just the technique name. This is the final <strong>method recommendation</strong>. If the pattern defines no variant for the identified environment (for example <em>Delete Element</em> on screen — an element cannot be deleted from an image), no method is recommended and the reason is shown instead.</p>
+                        <p class="step-desc">The matched pattern carries a <code>Method</code> field listing its variants, separated by " / " (e.g. "HTML DOM manipulation (Web) / UI Automation manipulation (Desktop) / Hardware simulation (Visual)"). Applicability is cumulative: a web activity can use content-, accessibility- and visual/input-level methods, a desktop activity accessibility- and visual/input-level methods, and a screen activity visual/input-level methods only. The applicable variants form a <strong>prioritised list</strong> of at most three methods, content-level first. If the pattern defines no applicable variant for the identified environment (for example <em>Delete Element</em> on screen — an element cannot be deleted from an image), no method is recommended and the reason is shown instead.</p>
                     </div>
                 </div>
 
@@ -245,7 +246,7 @@
         <!-- Method computation -->
         <section class="card">
             <h2>Method Computation by Execution Environment</h2>
-            <p class="section-intro">The recommended automation method depends on both the matched pattern and the identified execution environment. The table below summarises the method assigned for each environment across pattern categories.</p>
+            <p class="section-intro">The recommended automation method depends on both the matched pattern and the identified execution environment. The table below summarises the top-priority method for each environment; lower-level methods follow it in the prioritised list (e.g. web: DOM → UI Automation → visual recognition / hardware simulation).</p>
             <table class="method-table">
                 <thead>
                     <tr>
@@ -258,19 +259,19 @@
                 <tbody>
                     <tr>
                         <td><span class="env-badge env-web">Web</span></td>
-                        <td>XPath, tag_name, browser_url, html_id, webpage</td>
+                        <td>Columns describing an HTML element or browser location (identified by the LLM)</td>
                         <td>HTML DOM parsing</td>
                         <td>HTML DOM manipulation</td>
                     </tr>
                     <tr>
                         <td><span class="env-badge env-desktop">Desktop</span></td>
-                        <td>application, app, workbook, worksheet, window_title, control_type</td>
+                        <td>Columns describing a native application UI or document (identified by the LLM)</td>
                         <td>UI Automation (UIA) tree parsing</td>
                         <td>UI Automation (UIA) manipulation</td>
                     </tr>
                     <tr>
                         <td><span class="env-badge env-screen">Screen</span></td>
-                        <td>x, y, mouse_x, mouse_y, coordinates</td>
+                        <td>Columns holding raw screen coordinates (identified by the LLM)</td>
                         <td>Visual recognition</td>
                         <td>Hardware simulation</td>
                     </tr>
