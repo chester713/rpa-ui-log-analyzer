@@ -147,6 +147,14 @@ class ActivityInferrer:
             pattern = llm_result.get("pattern")
             if not isinstance(pattern, str) or not pattern.strip() or pattern.strip().lower() in ("null", "none"):
                 pattern = None  # not covered by the pattern collection
+            elif self.patterns:
+                known = {p.name.lower(): p.name for p in self.patterns}
+                if pattern.strip().lower() not in known:
+                    raise LLMError(
+                        f"LLM returned the pattern '{pattern}' for group {group_idx}, which is not in "
+                        "the pattern collection. No fallback is applied — re-run the analysis."
+                    )
+                pattern = known[pattern.strip().lower()]
             target = llm_result.get("target")
             target = str(target).strip() if isinstance(target, str) and target.strip() else None
             mains.append(Activity(
@@ -249,7 +257,7 @@ class ActivityInferrer:
 
         groups_block = "\n\n".join(sections)
         pattern_reference = self._build_pattern_reference()
-        return f"""You are an RPA (Robotic Process Automation) designer analyzing UI event logs.
+        return f"""You are an RPA (Robotic Process Automation) designer analysing UI event logs.
 
 {pattern_reference}
 

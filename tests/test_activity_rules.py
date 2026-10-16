@@ -287,3 +287,15 @@ def test_naming_prompt_shows_the_identified_context_and_element_attributes() -> 
 
     assert "  URL: https://a.test" in prompt
     assert "  Element ID: lPupZ" in prompt
+
+
+def test_naming_rejects_a_pattern_outside_the_collection() -> None:
+    from src.llm.client import LLMError
+
+    class _Invented:
+        def complete(self, prompt):
+            return json.dumps([{"activity_name": "Drag file to folder", "pattern": "Drag Element",
+                                "target": None, "evidence": [], "confidence": 0.5, "reasoning": ""}])
+
+    with pytest.raises(LLMError, match="not in the pattern collection"):
+        ActivityInferrer(_Invented(), patterns=PATTERNS).infer_activities([[Event("drag", {"app": "Explorer"}, 0)]])
