@@ -276,3 +276,14 @@ def test_attribute_role_prompt_uses_attribute_terminology_and_keys(tmp_path) -> 
     assert loader.detected_element_columns == ["element_id"]
     assert loader.detected_environment_columns["desktop"] == ["app"]
     assert all("column name" not in p for p in llm.prompts)
+
+
+def test_naming_prompt_shows_the_identified_context_and_element_attributes() -> None:
+    inferrer = ActivityInferrer(None, application_attributes=["Application"],
+                                context_attributes=["URL", "Workbook"], element_attributes=["Element ID"])
+    group = EventGroup(events=[Event("Paste", {"Application": "Edge", "URL": "https://a.test",
+                                               "Element ID": "lPupZ"}, 0)])
+    prompt = inferrer._build_batch_prompt([(0, group, None)])
+
+    assert "  URL: https://a.test" in prompt
+    assert "  Element ID: lPupZ" in prompt

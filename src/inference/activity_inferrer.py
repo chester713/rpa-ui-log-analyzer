@@ -205,9 +205,12 @@ class ActivityInferrer:
                     parts.append(f"(element: {tag})")
                 event_lines.append("- " + " ".join(parts))
 
+            # The application, context and element attributes identified for this log
+            # come first; common attribute names follow for logs where none were identified.
             priority_keys: List[str] = []
             for key in (
-                self.application_attributes + self._DEFAULT_APPLICATION_KEYS + [
+                self.application_attributes + self.context_attributes + self.element_attributes
+                + self._DEFAULT_APPLICATION_KEYS + [
                     "webpage", "url", "browser_url",
                     "tag_name", "tag_type", "element_id", "id",
                     "workbook", "worksheet", "cell_range", "cell_range_number", "window",
