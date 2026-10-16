@@ -167,9 +167,9 @@ _FILL_FORM = (
 
 class _FillFormLLM:
     def complete(self, prompt):
-        if "selecting the event/action column" in prompt:
+        if "selecting the activity-name attribute" in prompt:
             return "Event"
-        if '"environment_columns"' in prompt:
+        if '"environment_attributes"' in prompt:
             return json.dumps({
                 "switch_columns": ["Application"],
                 "group_columns": ["Application", "Workbook", "URL"],
@@ -213,7 +213,7 @@ def test_fill_form_snippet_yields_find_focus_write(tmp_path) -> None:
 
 class _Columns:
     def complete(self, prompt):
-        if "selecting the event/action column" in prompt:
+        if "selecting the activity-name attribute" in prompt:
             return "event"
         return json.dumps({"switch_columns": ["app"], "group_columns": ["app"],
                            "environment_columns": {"web": [], "desktop": ["app"], "screen": []},
@@ -251,3 +251,28 @@ def test_naming_accepts_a_null_pattern() -> None:
     activities = ActivityInferrer(_NoPattern()).infer_activities([[Event("drag", {"app": "Explorer"}, 0)]])
 
     assert [(a.name, a.pattern_name) for a in activities] == [("Drag file to folder", None)]
+
+
+def test_attribute_role_prompt_uses_attribute_terminology_and_keys(tmp_path) -> None:
+    class _Roles:
+        def __init__(self):
+            self.prompts = []
+
+        def complete(self, prompt):
+            self.prompts.append(prompt)
+            if "selecting the activity-name attribute" in prompt:
+                return "event"
+            return json.dumps({"switch_attributes": ["app"], "group_attributes": ["app"],
+                               "environment_attributes": {"web": [], "desktop": ["app"], "screen": []},
+                               "element_attributes": ["element_id"]})
+
+    path = tmp_path / "log.csv"
+    path.write_text("event,app,element_id\nclick,Edge,x\n", encoding="utf-8")
+    llm = _Roles()
+    loader = CSVLoader(llm)
+    loader.load(str(path))
+
+    assert loader.detected_switch_columns == ["app"]
+    assert loader.detected_element_columns == ["element_id"]
+    assert loader.detected_environment_columns["desktop"] == ["app"]
+    assert all("column name" not in p for p in llm.prompts)

@@ -324,9 +324,9 @@ class _RecordingLLM:
 
     def complete(self, prompt):
         self.prompts.append(prompt)
-        if "selecting the event/action column" in prompt:
+        if "selecting the activity-name attribute" in prompt:
             return "event"
-        if '"switch_columns"' in prompt:
+        if '"switch_attributes"' in prompt:
             return json.dumps({"switch_columns": ["Process Name"], "group_columns": ["Process Name", "Page"]})
         if "grouping UI events into UI activities" in prompt:
             n = int(re.search(r"Below are (\d+) candidate", prompt).group(1))

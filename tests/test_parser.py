@@ -18,7 +18,7 @@ class _FakeLLM:
         self.event_column = event_column
 
     def complete(self, prompt):
-        if "switch_columns" in prompt or "two column sets" in prompt:
+        if "switch_attributes" in prompt:
             return '{"switch_columns": [], "group_columns": []}'
         return self.event_column
 

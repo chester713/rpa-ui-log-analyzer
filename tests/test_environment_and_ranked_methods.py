@@ -146,7 +146,7 @@ class _ColumnLLM:
 
     def complete(self, prompt):
         self.prompts.append(prompt)
-        if "selecting the event/action column" in prompt:
+        if "selecting the activity-name attribute" in prompt:
             return "event"
         return json.dumps(self.column_roles)
 
@@ -175,8 +175,8 @@ def test_loader_keeps_only_real_columns_and_one_environment_per_column(tmp_path)
         "desktop": ["Process Name"],
         "screen": ["PosX"],
     }
-    roles_prompt = next(p for p in llm.prompts if "environment_columns" in p)
-    assert "Classify by what the column describes, not by its name" in roles_prompt
+    roles_prompt = next(p for p in llm.prompts if "environment_attributes" in p)
+    assert "Classify by what the attribute describes, not by its name" in roles_prompt
 
 
 def test_loader_reports_no_environment_columns_when_the_llm_gives_none(tmp_path) -> None:
@@ -190,9 +190,9 @@ def test_loader_reports_no_environment_columns_when_the_llm_gives_none(tmp_path)
 
 class _PipelineLLM:
     def complete(self, prompt):
-        if "selecting the event/action column" in prompt:
+        if "selecting the activity-name attribute" in prompt:
             return "event"
-        if '"environment_columns"' in prompt:
+        if '"environment_attributes"' in prompt:
             return json.dumps({
                 "switch_columns": ["Process Name"],
                 "group_columns": ["Process Name", "Page Address"],

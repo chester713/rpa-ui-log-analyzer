@@ -120,20 +120,20 @@ class CSVLoader:
             sample_by_column.append(f"- {field}: {values}")
 
         sample_str = "\n".join(sample_by_column)
-        prompt = f"""You are selecting the event/action column from a UI log CSV.
+        prompt = f"""You are selecting the activity-name attribute of a UI log (in the CSV file, each attribute is a column).
 
-Columns:
+Attributes:
 {columns_str}
 
-Sample values per column:
+Sample values per attribute:
 {sample_str}
 
-Choose the column whose values generally look like UI actions, usually verb+noun style labels.
+Choose the attribute whose values generally look like UI actions, usually verb+noun style labels.
 Examples: activateWorkbook, openWindow, clickTextField, setValue, findElement.
 
-Avoid columns that are timestamps, ids, URLs, application names, free-text descriptions, or long sentences.
+Avoid attributes that are timestamps, ids, URLs, application names, free-text descriptions, or long sentences.
 
-Return only one exact column name from the list above. No explanation."""
+Return only one exact attribute name from the list above. No explanation."""
 
         response = self.llm_client.complete(prompt)
         detected = self._extract_detected_field(response, fieldnames)
@@ -179,45 +179,50 @@ Return only one exact column name from the list above. No explanation."""
             sample_by_column.append(f"- {field}: {values}")
 
         sample_str = "\n".join(sample_by_column)
-        prompt = f"""You are analysing columns from a UI activity log CSV.
+        prompt = f"""You are analysing the attributes of a UI log (in the CSV file, each attribute is a column).
 
-Columns (the event/action column has already been identified and is excluded):
+Attributes (the activity-name attribute has already been identified and is excluded):
 {", ".join(candidates)}
 
-Sample values per column:
+Sample values per attribute:
 {sample_str}
 
-Identify four column sets:
-1. "switch_columns": columns whose value identifies which application or process is active (e.g. application name, process name). A change in this value means the user switched to a different application. Do not include window or page titles: they change when the user navigates within one application.
-2. "group_columns": columns useful for grouping consecutive events into the same activity (includes switch_columns plus things like URL, screen name, webpage, tab, element scope).
-3. "environment_columns": columns whose recorded value shows the execution environment the event took place in. Classify by what the column describes, not by its name:
+Identify four attribute sets:
+1. "switch_attributes": attributes whose value identifies which application or process is active (e.g. application name, process name). A change in this value means the user switched to a different application. Do not include window or page titles: they change when the user navigates within one application.
+2. "group_attributes": attributes useful for grouping consecutive events into the same activity (includes switch_attributes plus things like URL, screen name, webpage, tab, element scope).
+3. "environment_attributes": attributes whose recorded value shows the execution environment the event took place in. Classify by what the attribute describes, not by its name:
    - "web": properties of an HTML/DOM element or of a browser location (e.g. XPath, HTML tag, HTML id or name, page URL, webpage title).
    - "desktop": properties of a native application's user interface or document structure (e.g. application or process name, window title, workbook, worksheet, cell reference, UI Automation control type or path).
    - "screen": raw screen positions (e.g. x/y or mouse coordinates).
-   A column belongs to at most one environment. Columns that indicate none of them (timestamps, ids, case ids, typed values, clipboard content, free text) are left out.
-4. "element_columns": columns whose value identifies the specific UI element an event targets (e.g. element id or name, XPath, cell reference, UI Automation id or control name), in order of preference. Columns describing the page, window or application are not element columns.
+   An attribute belongs to at most one environment. Attributes that indicate none of them (timestamps, ids, case ids, typed values, clipboard content, free text) are left out.
+4. "element_attributes": attributes whose value identifies the specific UI element an event targets (e.g. element id or name, XPath, cell reference, UI Automation id or control name), in order of preference. Attributes describing the page, window or application are not element attributes.
 
 Rules:
-- Only include column names that appear exactly in the list above.
-- "switch_columns" must be a subset of "group_columns".
-- Return empty lists if no column qualifies.
+- Only include attribute names that appear exactly in the list above.
+- "switch_attributes" must be a subset of "group_attributes".
+- Return empty lists if no attribute qualifies.
 - Return only valid JSON, no explanation.
 
 Format:
-{{"switch_columns": ["col1"], "group_columns": ["col1", "col2"], "environment_columns": {{"web": ["col2"], "desktop": ["col1"], "screen": []}}, "element_columns": ["col3"]}}"""
+{{"switch_attributes": ["a1"], "group_attributes": ["a1", "a2"], "environment_attributes": {{"web": ["a2"], "desktop": ["a1"], "screen": []}}, "element_attributes": ["a3"]}}"""
 
         response = self.llm_client.complete(prompt)
         clean = (response or "").strip()
         if clean.startswith("```"):
             clean = re.sub(r"```[a-z]*\n?", "", clean).strip("`").strip()
         parsed = json.loads(clean)
-        switch_cols = [c for c in parsed.get("switch_columns", []) if c in candidates]
-        group_cols = [c for c in parsed.get("group_columns", []) if c in candidates]
+        def _role(name: str, default):
+            # The prompt asks for "<role>_attributes"; "<role>_columns" is accepted as well.
+            value = parsed.get(f"{name}_attributes", parsed.get(f"{name}_columns", default))
+            return value if value is not None else default
+
+        switch_cols = [c for c in _role("switch", []) if c in candidates]
+        group_cols = [c for c in _role("group", []) if c in candidates]
         for c in switch_cols:
             if c not in group_cols:
                 group_cols.append(c)
 
-        raw_env = parsed.get("environment_columns")
+        raw_env = _role("environment", {})
         if not isinstance(raw_env, dict):
             raw_env = {}
         environment_columns: Dict[str, List[str]] = {}
@@ -231,7 +236,7 @@ Format:
                 if c in candidates and c not in assigned:
                     environment_columns[env].append(c)
                     assigned.add(c)
-        raw_elements = parsed.get("element_columns")
+        raw_elements = _role("element", [])
         element_cols = [c for c in raw_elements if c in candidates] if isinstance(raw_elements, list) else []
         return {
             "group_columns": group_cols,
