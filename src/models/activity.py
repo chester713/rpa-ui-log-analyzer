@@ -19,16 +19,20 @@ class Activity:
         is_implicit: bool = False,
         group_index: int = 0,
         pattern_name: Optional[str] = None,
+        target: Optional[str] = None,
+        target_id: Optional[str] = None,
     ):
         self.name = name
         self.confidence = max(0.0, min(1.0, confidence))
         self.evidence = evidence or []
         self.reasoning = reasoning or ""
         self.source_events = source_events or []
-        self.activity_type = activity_type  # "main", "prerequisite", "context_switch"
+        self.activity_type = activity_type  # "main", "prerequisite" (Find/Focus), "context_switch"
         self.is_implicit = is_implicit
         self.group_index = group_index
         self.pattern_name = pattern_name  # LLM-assigned pattern name; resolved against the pattern library
+        self.target = target  # readable name of the target UI element, None for page-level actions
+        self.target_id = target_id  # identity used to tell whether two activities share a target
 
     def __repr__(self) -> str:
         return f"Activity(name='{self.name}', type='{self.activity_type}', confidence={self.confidence})"

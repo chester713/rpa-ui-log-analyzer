@@ -38,29 +38,31 @@ PROGRESSIVE_LOGIC = {
         "• Candidate Application Boundaries: When a recorded application value differs from the last recorded "
         "application, the current group closes and a new group begins. An event that has no application value is "
         "not treated as a change — a missing value is no evidence of a switch — and later events are compared "
-        "with the last recorded application. These boundaries are candidates only; whether a Switch Context "
-        "activity is inserted is decided by the LLM during activity inference.\n"
-        "• LLM Group Refinement: Rule-based pre-segmentation tends to over-split a single user intention across "
-        "several adjacent groups. A second pass sends the candidate groups to an LLM together with evidence from "
-        "the log between every pair of adjacent groups: the application-related attributes first (carrying the "
-        "last recorded application across a group that recorded none), then URL, window and element values. "
-        "The LLM makes the final decision to merge directly-adjacent groups that "
-        "share one intention; a changed application counts strongly against merging, and a missing one is no "
-        "evidence either way. The code only checks that merged groups are adjacent.\n"
-        "• Group Scope: Each final group represents one contiguous interaction unit. Its size (number of events) "
-        "reflects the complexity of that interaction. Groups are the primary input to activity inference: "
-        "one group produces one inferred activity name."
+        "with the last recorded application. These boundaries are candidates only.\n"
+        "• LLM Abstraction into UI Activities: Context-based pre-segmentation can split one intention across "
+        "adjacent groups and can put several intentions into one group. A second pass therefore sends the "
+        "events of each batch of candidate groups to an LLM, numbered and with their target elements, together "
+        "with evidence from the log between every pair of adjacent groups (the application-related attributes "
+        "first, then URL, window and element values). The LLM returns runs of consecutive events, one per UI "
+        "activity: it may divide a group (clicking a text field focuses it; pasting into it writes) and combine "
+        "events of adjacent groups (a paste and the value-changed event it causes form one Write). A changed "
+        "application counts strongly against combining, and a missing one is no evidence either way. The code "
+        "only checks that every run is consecutive and that every event is covered once.\n"
+        "• Group Scope: Each final group is one UI activity — one action on one target — and produces one "
+        "activity name."
     ),
     "activity_naming": (
         "• Activity Labeling: Each event group is sent to an LLM which interprets the interaction intent and assigns a natural language activity name "
         "(e.g., 'Write data into a textfield') rather than describing low-level events.\n"
-        "• Prerequisite Activities: When an activity targets a specific UI element, an implicit 'Find <element>' activity is inserted before it, "
-        "reflecting the RPA requirement to locate an element before interacting with it.\n"
-        "• Context Switches: The LLM compares each group's application, URL, window and workbook with the most "
-        "recently recorded values from earlier groups (carried forward over groups that did not record them). When "
-        "it judges that the user moved to a different application or execution environment (e.g., from Excel to a "
-        "browser), an implicit 'Switch context from X to Y' activity is inserted to explicitly represent the "
-        "transition. A missing application value alone is not treated as a switch."
+        "• Pattern and Target: The LLM also assigns the pattern the activity realises — or none, when no "
+        "pattern of the collection fits, in which case the activity is reported as not covered — and names "
+        "the concrete target element.\n"
+        "• Implicit Activities by Fixed Rules: After naming, three rules are applied in order to each activity. "
+        "Switch Context: the activity is recorded in a different application from the last recorded one "
+        "(a missing application value is no evidence; a URL change within one application is not a switch). "
+        "Find Element: the activity acts on a specific element and the preceding activity does not already "
+        "target it. Focus: the activity writes into an element that the preceding activity did not focus. "
+        "An element is therefore found, then focused, then written to, with one Find serving both."
     ),
     "action_object_extraction": (
         "• Canonical Action — Carried from the Matched Pattern: During activity naming, the LLM interpreted "
@@ -73,10 +75,10 @@ PROGRESSIVE_LOGIC = {
         "specific log verbs (e.g., 'click', 'paste', 'changeField', 'getCell') to the canonical AOMC Action "
         "was performed by the LLM when it chose the pattern — there is no separate verb-mapping rule table at "
         "this stage.\n"
-        "• Canonical Object — Carried from the Matched Pattern: Each pattern also defines the AOMC Object it "
-        "acts upon (the interface element type — e.g., element, page, application). This stage reports the "
-        "matched pattern's Object together with its Action, giving the Action–Object pair that characterises "
-        "the bot's interaction intent at design level.\n"
+        "• Object Type — From the Execution Environment: The object's type is a property of the object, given by "
+        "the environment it resides in: an HTML element (web), a UI element (desktop) or a visual element "
+        "(screen). Switch Context acts on a context rather than an element. Choosing a poorer method later "
+        "does not change the type: an HTML element clicked through hardware simulation is still an HTML element.\n"
         "• No Match, No Pair: When the activity's assigned pattern name does not resolve to a known pattern, "
         "no Action or Object is reported rather than guessing one."
     ),
@@ -259,6 +261,8 @@ def _reconstruct_activities(step2):
             is_implicit=a.get("is_implicit", False),
             group_index=a.get("group_index", 0),
             pattern_name=a.get("pattern_name"),
+            target=a.get("target"),
+            target_id=a.get("target_id"),
         ))
     return result
 
@@ -274,6 +278,8 @@ def _serialize_activity(a):
         "is_implicit": a.is_implicit,
         "group_index": a.group_index,
         "pattern_name": a.pattern_name,
+        "target": a.target,
+        "target_id": a.target_id,
     }
 
 
@@ -452,10 +458,12 @@ def _compute_step1(store):
     # on log data. They are stored with step 1 because step 2 runs separately.
     application_attributes = list(grouper.context_switch_attributes)
     context_attributes = [c for c in grouper.group_attributes if c not in application_attributes]
+    element_attributes = list(loader.detected_element_columns or [])
     refiner = LLMGroupRefiner(
         llm_client,
         application_attributes=application_attributes,
         context_attributes=context_attributes,
+        element_attributes=element_attributes,
     )
     groups = refiner.refine(groups)
 
@@ -474,7 +482,8 @@ def _compute_step1(store):
             "event_count": sum(len(g.events) for g in groups),
             "application_attributes": application_attributes,
             "context_attributes": context_attributes,
-            "environment_columns": loader.detected_environment_columns}
+            "environment_columns": loader.detected_environment_columns,
+            "element_columns": element_attributes}
 
 
 def _run_step2_thread(aid):
@@ -502,6 +511,7 @@ def _run_step2_thread(aid):
             patterns=PATTERNS,
             application_attributes=step1.get("application_attributes"),
             context_attributes=step1.get("context_attributes"),
+            element_attributes=step1.get("element_columns"),
         )
         activities = inferrer.infer_activities(groups)
         if not activities:
@@ -530,6 +540,7 @@ def _run_step2_thread(aid):
 def _compute_step3(store):
     from src.matching.pattern_matcher import determine_environment
     from src.matching import PATTERNS
+    from src.models.pattern import object_type_for
 
     step1 = store.load_step(1)
     # Indicator columns per environment, identified by the LLM at load time. Older
@@ -555,11 +566,14 @@ def _compute_step3(store):
     for i, a in enumerate(activities):
         group_idx = a.group_index
         pattern = patterns_by_name.get((a.pattern_name or "").strip().lower())
+        environment = ctx_by_group.get(group_idx, "unknown")
+        object_environment = "desktop" if a.activity_type == "context_switch" else environment
         pairs.append({
             "activity_index": i,
             "activity_name": a.name,
             "norm_action": pattern.action if pattern else None,
-            "norm_object": pattern.object if pattern else None,
+            "norm_object": object_type_for(pattern, object_environment),
+            "target": a.target,
             "activity_type": a.activity_type,
             "is_implicit": a.is_implicit,
             "group_index": group_idx,
@@ -599,7 +613,7 @@ def _compute_step4(store):
 def _compute_step6(store):
     from src.matching.pattern_matcher import PatternMatcher
     from src.matching import PATTERNS
-    from src.models.pattern import explain_missing_method
+    from src.models.pattern import explain_missing_method, object_type_for
 
     step2 = store.load_step(2)
     step3 = store.load_step(3)
@@ -620,7 +634,8 @@ def _compute_step6(store):
         recommendations.append({
             "activity_name": a.name,
             "activity_action": pattern.action if pattern else None,
-            "activity_object": pattern.object if pattern else None,
+            "activity_object": object_type_for(pattern, method_environment),
+            "target": a.target,
             "pattern_matched": pattern.name if pattern else None,
             "execution_environment": context,
             "method": method,

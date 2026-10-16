@@ -300,14 +300,15 @@ def test_naming_prompt_uses_the_application_columns_the_llm_identified() -> None
 
     assert _previous_context(prompt, 2) == "Process Name=EXCEL.EXE"
     assert "Process Name: chrome.exe" in prompt
-    assert "application-related attributes (Process Name)" in prompt
 
 
-def test_naming_prompt_asks_for_log_evidence_and_ignores_a_missing_application() -> None:
+def test_naming_prompt_asks_for_the_target_and_leaves_implicit_activities_to_rules() -> None:
     prompt = _naming_prompt([EventGroup(events=[Event("click", {"app": "Excel"}, 0)])])
 
-    assert "NOT RECORDED in this group is no evidence either way" in prompt
-    assert 'name the changed attribute values in "evidence"' in prompt
+    assert '"target"' in prompt
+    assert "Use null if no pattern fits the interaction" in prompt
+    assert "added afterwards by fixed rules" in prompt
+    assert '"prerequisite"' not in prompt and '"context_switch"' not in prompt
 
 
 # ── the columns identified at load time reach both prompts ──────────────────
@@ -327,7 +328,7 @@ class _RecordingLLM:
             return "event"
         if '"switch_columns"' in prompt:
             return json.dumps({"switch_columns": ["Process Name"], "group_columns": ["Process Name", "Page"]})
-        if "grouping UI events into discrete tasks" in prompt:
+        if "grouping UI events into UI activities" in prompt:
             n = int(re.search(r"Below are (\d+) candidate", prompt).group(1))
             return json.dumps([[i] for i in range(n)])
         if "RPA (Robotic Process Automation) designer" in prompt:
@@ -361,7 +362,7 @@ def test_cli_pipeline_gives_both_llm_prompts_the_detected_application_columns(tm
     assert pipeline.refiner.application_attributes == ["Process Name"]
     assert pipeline.refiner.context_attributes == ["Page"]
     assert pipeline.inferrer.application_attributes == ["Process Name"]
-    refinement = llm.prompt_containing("grouping UI events into discrete tasks")
+    refinement = llm.prompt_containing("grouping UI events into UI activities")
     assert "Application-related attributes in this log: Process Name." in refinement
     assert "last recorded EXCEL.EXE in GROUP 0, GROUP 2 has chrome.exe (CHANGED from that)" in refinement
     naming = llm.prompt_containing("RPA (Robotic Process Automation) designer")
@@ -390,7 +391,7 @@ def test_web_pipeline_stores_the_detected_columns_and_uses_them_for_naming(monke
 
     assert step1["application_attributes"] == ["Process Name"]
     assert step1["context_attributes"] == ["Page"]
-    refinement = llm.prompt_containing("grouping UI events into discrete tasks")
+    refinement = llm.prompt_containing("grouping UI events into UI activities")
     assert "last recorded EXCEL.EXE in GROUP 0, GROUP 2 has chrome.exe (CHANGED from that)" in refinement
 
     progressive._step2_progress[aid] = {"status": "computing", "completed": 0, "total": 0}

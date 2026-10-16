@@ -6,7 +6,7 @@ from typing import List, Dict, Any
 from ..parser.csv_loader import CSVLoader
 from ..models.event import Event
 from ..models.activity import Activity, EventActivityMapping
-from ..models.pattern import MethodRecommendation, explain_missing_method
+from ..models.pattern import MethodRecommendation, explain_missing_method, object_type_for
 from ..inference.event_grouper import EventGrouper, LLMGroupRefiner
 from ..inference.activity_inferrer import ActivityInferrer
 from ..mapping.event_activity_mapper import EventActivityMapper
@@ -122,10 +122,13 @@ class DataPipeline:
         context_attributes = [
             c for c in self.grouper.group_attributes if c not in application_attributes
         ]
+        element_attributes = list(self.loader.detected_element_columns or [])
         self.refiner.application_attributes = application_attributes
         self.refiner.context_attributes = context_attributes
+        self.refiner.element_attributes = element_attributes
         self.inferrer.application_attributes = application_attributes
         self.inferrer.context_attributes = context_attributes
+        self.inferrer.element_attributes = element_attributes
 
         # Rule-based pre-segmentation, then an LLM refinement pass that merges
         # over-segmented adjacent groups sharing one intent. This mirrors the web
@@ -215,7 +218,7 @@ class DataPipeline:
             recommendation = MethodRecommendation(
                 activity_name=activity.name,
                 activity_action=pattern.action if pattern else None,
-                activity_object=pattern.object if pattern else None,
+                activity_object=object_type_for(pattern, method_environment),
                 events=event_indices,
                 execution_environment=context,
                 pattern=pattern,
@@ -228,6 +231,7 @@ class DataPipeline:
                 context_switch_from=context_switch_from,
                 context_switch_to=context_switch_to,
                 method_note=explain_missing_method(pattern, method_environment),
+                target=getattr(activity, "target", None),
             )
             recommendations.append(recommendation)
 

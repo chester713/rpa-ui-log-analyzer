@@ -198,7 +198,7 @@ class _PipelineLLM:
                 "group_columns": ["Process Name", "Page Address"],
                 "environment_columns": {"web": ["Page Address"], "desktop": ["Process Name"], "screen": []},
             })
-        if "grouping UI events into discrete tasks" in prompt:
+        if "grouping UI events into UI activities" in prompt:
             n = int(re.search(r"Below are (\d+) candidate", prompt).group(1))
             return json.dumps([[i] for i in range(n)])
         if "RPA (Robotic Process Automation) designer" in prompt:
@@ -227,7 +227,7 @@ def test_pipeline_recommends_a_prioritised_list_per_environment(tmp_path) -> Non
     )
 
     result = DataPipeline(csv_path, llm_client=_PipelineLLM()).run()
-    records = [r.to_dict() for r in result.recommendations]
+    records = [r.to_dict() for r in result.recommendations if r.pattern and r.pattern.name == "Write Element"]
 
     assert [r["execution_environment"] for r in records] == ["desktop", "web"]
     assert records[0]["methods"] == ["UI Automation manipulation", "Hardware simulation"]

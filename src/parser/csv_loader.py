@@ -25,6 +25,8 @@ class CSVLoader:
         self.detected_switch_columns: Optional[List[str]] = None
         # environment -> columns indicating it ("web", "desktop", "screen")
         self.detected_environment_columns: Optional[Dict[str, List[str]]] = None
+        # columns that identify the target UI element (element id, XPath, cell, ...)
+        self.detected_element_columns: Optional[List[str]] = None
 
     @staticmethod
     def _dedup_headers(raw_headers: List[str]) -> List[str]:
@@ -81,6 +83,7 @@ class CSVLoader:
         self.detected_group_columns = context_cols.get("group_columns") or None
         self.detected_switch_columns = context_cols.get("switch_columns") or None
         self.detected_environment_columns = context_cols.get("environment_columns")
+        self.detected_element_columns = context_cols.get("element_columns") or None
 
         if event_column is None:
             raise ValueError(
@@ -158,6 +161,7 @@ Return only one exact column name from the list above. No explanation."""
                 "group_columns": [],
                 "switch_columns": [],
                 "environment_columns": {env: [] for env in _ENVIRONMENTS},
+                "element_columns": [],
             }
 
         if self.llm_client is None:
@@ -183,14 +187,15 @@ Columns (the event/action column has already been identified and is excluded):
 Sample values per column:
 {sample_str}
 
-Identify three column sets:
-1. "switch_columns": columns whose value identifies which application or process is active (e.g. app name, process, window title). A change in this value means the user switched to a different application.
+Identify four column sets:
+1. "switch_columns": columns whose value identifies which application or process is active (e.g. application name, process name). A change in this value means the user switched to a different application. Do not include window or page titles: they change when the user navigates within one application.
 2. "group_columns": columns useful for grouping consecutive events into the same activity (includes switch_columns plus things like URL, screen name, webpage, tab, element scope).
 3. "environment_columns": columns whose recorded value shows the execution environment the event took place in. Classify by what the column describes, not by its name:
    - "web": properties of an HTML/DOM element or of a browser location (e.g. XPath, HTML tag, HTML id or name, page URL, webpage title).
    - "desktop": properties of a native application's user interface or document structure (e.g. application or process name, window title, workbook, worksheet, cell reference, UI Automation control type or path).
    - "screen": raw screen positions (e.g. x/y or mouse coordinates).
    A column belongs to at most one environment. Columns that indicate none of them (timestamps, ids, case ids, typed values, clipboard content, free text) are left out.
+4. "element_columns": columns whose value identifies the specific UI element an event targets (e.g. element id or name, XPath, cell reference, UI Automation id or control name), in order of preference. Columns describing the page, window or application are not element columns.
 
 Rules:
 - Only include column names that appear exactly in the list above.
@@ -199,7 +204,7 @@ Rules:
 - Return only valid JSON, no explanation.
 
 Format:
-{{"switch_columns": ["col1"], "group_columns": ["col1", "col2"], "environment_columns": {{"web": ["col2"], "desktop": ["col1"], "screen": []}}}}"""
+{{"switch_columns": ["col1"], "group_columns": ["col1", "col2"], "environment_columns": {{"web": ["col2"], "desktop": ["col1"], "screen": []}}, "element_columns": ["col3"]}}"""
 
         response = self.llm_client.complete(prompt)
         clean = (response or "").strip()
@@ -226,10 +231,13 @@ Format:
                 if c in candidates and c not in assigned:
                     environment_columns[env].append(c)
                     assigned.add(c)
+        raw_elements = parsed.get("element_columns")
+        element_cols = [c for c in raw_elements if c in candidates] if isinstance(raw_elements, list) else []
         return {
             "group_columns": group_cols,
             "switch_columns": switch_cols,
             "environment_columns": environment_columns,
+            "element_columns": element_cols,
         }
 
     def _extract_detected_field(self, response: str, fieldnames: List[str]) -> str:

@@ -17,6 +17,41 @@ _ENVIRONMENT_RANK = {"web": 0, "desktop": 1, "screen": 2}
 # At most one method per level, so a prioritised list never holds more than three.
 MAX_RECOMMENDED_METHODS = 3
 
+# Object type of an element in each execution environment. The type is a property of
+# the object: choosing a poorer method (e.g. hardware simulation on an HTML element)
+# does not change it.
+OBJECT_TYPE_BY_ENVIRONMENT = {"web": "HTML element", "desktop": "UI element", "screen": "visual element"}
+
+
+def method_level(method_name: str) -> Optional[int]:
+    """The level of a method by its family, or None when the family is not recognised.
+
+    0 — content-level (DOM parsing/manipulation): acts only on HTML elements;
+    1 — accessibility-level (UI Automation): acts on UI elements and HTML elements;
+    2 — visual recognition and hardware simulation: act on any object.
+    """
+    name = method_name.lower()
+    if "dom" in name or "html" in name:
+        return 0
+    if "ui automation" in name or "uia" in name:
+        return 1
+    if "visual" in name or "hardware" in name:
+        return 2
+    return None
+
+
+def object_type_for(pattern: Optional["Pattern"], environment: str) -> Optional[str]:
+    """The object type of an activity: HTML, UI or visual element by environment.
+
+    Patterns whose object class is not an element (Switch Context acts on a context)
+    keep their own object class.
+    """
+    if pattern is None:
+        return None
+    if (pattern.object or "").strip().lower() != "element":
+        return pattern.object or None
+    return OBJECT_TYPE_BY_ENVIRONMENT.get(environment)
+
 
 def _split_top_level(text: str, separator: str) -> List[str]:
     """Split on ``separator`` only where it is outside parentheses.
@@ -79,10 +114,11 @@ class Pattern:
         may cover several environments ("Hardware simulation (Web/Desktop/Screen)"),
         and "Visual" is the pattern files' name for the screen environment.
 
-        A variant's level is the rank of the poorest environment its label names:
-        a method that can run on a bare screen needs only pixels and input devices,
-        so it is a visual/input-level method even when it is also usable on the web.
-        An unlabelled variant applies everywhere and ranks as screen level.
+        A variant's level is determined by its method family (see ``method_level``):
+        DOM methods are content-level, UI Automation methods accessibility-level, and
+        visual recognition and hardware simulation act on any object. Only when the
+        family is not recognised does the label decide (the poorest environment it
+        names); an unlabelled, unrecognised variant ranks as screen level.
         """
         variants = []
         for variant in _split_top_level(self.method, "/"):
@@ -90,6 +126,11 @@ class Pattern:
             if not text:
                 continue
             match = re.fullmatch(r"(?P<name>[^()]*?)\s*\((?P<label>[^()]*)\)", text)
+            name = match.group("name").strip() if match else text
+            family_level = method_level(name)
+            if family_level is not None:
+                variants.append((name, family_level))
+                continue
             if match is None:
                 variants.append((text, _ENVIRONMENT_RANK["screen"]))
                 continue
@@ -160,7 +201,7 @@ def explain_missing_method(pattern: Optional[Pattern], environment: str) -> Opti
     ``environment`` is the execution environment the method is looked up in.
     """
     if pattern is None:
-        return "No method: no pattern matched this activity."
+        return "No method: no pattern matched this activity, which is not covered by the pattern collection."
     if pattern.get_method_for_context(environment) is not None:
         return None
     if environment not in _KNOWN_ENVIRONMENTS:
@@ -192,6 +233,7 @@ class MethodRecommendation:
     inference_evidence: Optional[List[str]] = None
     inference_reasoning: Optional[str] = None
     method_note: Optional[str] = None  # why no method was recommended (None when one was)
+    target: Optional[str] = None  # the concrete target element, e.g. "First Name field"
     # Prioritised methods (highest first, at most three); ``method`` is the first of them.
     methods: List[str] = field(default_factory=list)
 
@@ -217,5 +259,6 @@ class MethodRecommendation:
             "inference_evidence": self.inference_evidence or [],
             "inference_reasoning": self.inference_reasoning or "",
             "method_note": self.method_note,
+            "target": self.target,
         }
         return recommendation_record

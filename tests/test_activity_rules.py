@@ -1,0 +1,253 @@
+"""UI activity abstraction, rule-based implicit activities, object types and coverage.
+
+* The refinement LLM returns runs of consecutive event numbers, so a context segment
+  can be divided (focusing a field vs writing into it) as well as combined.
+* Implicit activities follow fixed rules, applied in the order Switch context ->
+  Find -> Focus: an element is found, then focused, then written to.
+* Object types follow the execution environment; a pattern may be "not covered".
+"""
+
+import json
+import re
+
+import pytest
+
+from src.inference.activity_inferrer import ActivityInferrer, add_implicit_activities
+from src.inference.event_grouper import EventGroup, EventGrouper, LLMGroupRefiner
+from src.matching import PATTERNS
+from src.models.activity import Activity
+from src.models.event import Event
+from src.models.pattern import explain_missing_method, object_type_for
+from src.parser.csv_loader import CSVLoader
+from src.pipeline.data_pipeline import DataPipeline
+
+
+def _by_name(name):
+    return next(p for p in PATTERNS if p.name == name)
+
+
+# ── refinement: divide and combine ──────────────────────────────────────────
+
+class _Runs:
+    def __init__(self, runs):
+        self.runs = runs
+        self.prompts = []
+
+    def complete(self, prompt):
+        self.prompts.append(prompt)
+        return json.dumps(self.runs)
+
+
+def _fill_form_events():
+    return [
+        Event("clickTextField", {"app": "Edge", "element_id": "lPupZ", "url": "u"}, 1),
+        Event("Paste", {"app": "Edge", "url": "u"}, 2),
+        Event("changeField", {"app": "Edge", "element_id": "lPupZ", "url": "u"}, 3),
+    ]
+
+
+def test_refinement_can_divide_a_context_segment() -> None:
+    groups = EventGrouper().group_events_with_context_switches(_fill_form_events())
+    assert len(groups) == 1  # all three share the URL
+
+    refined = LLMGroupRefiner(_Runs([[0], [1, 2]])).refine(groups)
+
+    assert [[e.event for e in g.events] for g in refined] == [["clickTextField"], ["Paste", "changeField"]]
+
+
+def test_refinement_prompt_numbers_events_and_explains_focus_and_effect_events() -> None:
+    llm = _Runs([[0], [1, 2]])
+    refiner = LLMGroupRefiner(llm, element_attributes=["element_id"])
+    refiner.refine(EventGrouper().group_events_with_context_switches(_fill_form_events()))
+
+    prompt = llm.prompts[0]
+    assert "[0] clickTextField (target: lPupZ)" in prompt
+    assert "[1] Paste" in prompt
+    assert "only record the effect of an action" in prompt
+    assert "is a UI activity of its own (focusing the field)" in prompt
+
+
+def test_refinement_rejects_runs_that_skip_an_event() -> None:
+    groups = EventGrouper().group_events_with_context_switches(_fill_form_events())
+
+    with pytest.raises(ValueError, match="non-consecutive"):
+        LLMGroupRefiner(_Runs([[0, 2], [1]])).refine(groups)
+
+
+def test_refinement_rejects_runs_that_miss_an_event() -> None:
+    groups = EventGrouper().group_events_with_context_switches(_fill_form_events())
+
+    with pytest.raises(ValueError, match="incomplete"):
+        LLMGroupRefiner(_Runs([[0], [1]])).refine(groups)
+
+
+# ── implicit activities ─────────────────────────────────────────────────────
+
+def _main(i, pattern, target=None, target_id=None, rows=None):
+    return Activity(name=f"A{i}", confidence=0.9, pattern_name=pattern, group_index=i,
+                    source_events=rows or [i], target=target, target_id=target_id)
+
+
+def _sequence(groups, mains, apps=("app",)):
+    return [(a.activity_type, a.pattern_name) for a in add_implicit_activities(groups, mains, list(apps))]
+
+
+def test_find_then_focus_then_write_with_one_find() -> None:
+    groups = [EventGroup(events=[Event("click", {"app": "Edge"}, 0)]),
+              EventGroup(events=[Event("paste", {"app": "Edge"}, 1)])]
+    mains = [_main(0, "Focus", "First Name field", "id=lPupZ"),
+             _main(1, "Write Element", "First Name field", "id=lPupZ")]
+
+    assert _sequence(groups, mains) == [
+        ("prerequisite", "Find Element"),
+        ("main", "Focus"),
+        ("main", "Write Element"),
+    ]
+
+
+def test_write_without_a_recorded_focus_gets_find_and_focus() -> None:
+    groups = [EventGroup(events=[Event("paste", {"app": "Edge"}, 0)])]
+    mains = [_main(0, "Write Element", "Last Name field", "id=abc")]
+
+    assert _sequence(groups, mains) == [
+        ("prerequisite", "Find Element"),
+        ("prerequisite", "Focus"),
+        ("main", "Write Element"),
+    ]
+
+
+def test_switch_comes_first_and_page_level_actions_need_no_find() -> None:
+    groups = [EventGroup(events=[Event("getCell", {"app": "Excel"}, 0)]),
+              EventGroup(events=[Event("openUrl", {"app": "Edge"}, 1)])]
+    mains = [_main(0, "Read Element", "cell A2", "cell=A2"), _main(1, "Open", None, None)]
+
+    assert _sequence(groups, mains) == [
+        ("prerequisite", "Find Element"),
+        ("main", "Read Element"),
+        ("context_switch", "Switch Context"),
+        ("main", "Open"),
+    ]
+
+
+def test_missing_application_is_no_switch_and_a_url_change_is_no_switch() -> None:
+    groups = [EventGroup(events=[Event("a", {"app": "Edge", "url": "u1"}, 0)]),
+              EventGroup(events=[Event("b", {"url": "u2"}, 1)]),
+              EventGroup(events=[Event("c", {"app": "Edge", "url": "u3"}, 2)])]
+    mains = [_main(0, "Open"), _main(1, "Scroll"), _main(2, "Refresh")]
+
+    assert [t for t, _ in _sequence(groups, mains)] == ["main", "main", "main"]
+
+
+def test_switch_names_both_applications() -> None:
+    groups = [EventGroup(events=[Event("a", {"app": "Excel"}, 0)]),
+              EventGroup(events=[Event("b", {"app": "Edge"}, 1)])]
+    activities = add_implicit_activities(groups, [_main(0, "Open"), _main(1, "Open")], ["app"])
+
+    assert activities[1].name == "Switch context from Excel to Edge"
+
+
+def test_inferrer_identifies_targets_from_element_columns() -> None:
+    inferrer = ActivityInferrer(None, element_attributes=["element_id"])
+    events = [Event("Paste", {}, 0), Event("changeField", {"element_id": "lPupZ"}, 1)]
+
+    assert inferrer._target_identity(events, "First Name field") == "element_id=lPupZ"
+    assert inferrer._target_identity([Event("Paste", {}, 0)], "First Name field") == "first name field"
+
+
+# ── end to end on the published Fill Form snippet ──────────────────────────
+
+_FILL_FORM = (
+    "Event,Application,Workbook,Cell range,Element ID,URL\n"
+    "Get Cell,Microsoft Excel,challenge.xlsx,A2,,\n"
+    "clickTextField,Edge,,,lPupZ,https://rpachallenge.com/\n"
+    "Paste,Edge,,,,https://rpachallenge.com/\n"
+    "changeField,Edge,,,lPupZ,https://rpachallenge.com/\n"
+)
+
+
+class _FillFormLLM:
+    def complete(self, prompt):
+        if "selecting the event/action column" in prompt:
+            return "Event"
+        if '"environment_columns"' in prompt:
+            return json.dumps({
+                "switch_columns": ["Application"],
+                "group_columns": ["Application", "Workbook", "URL"],
+                "environment_columns": {"web": ["URL", "Element ID"], "desktop": ["Workbook", "Cell range"], "screen": []},
+                "element_columns": ["Element ID", "Cell range"],
+            })
+        if "grouping UI events into UI activities" in prompt:
+            m = int(re.search(r"holding (\d+) events", prompt).group(1))
+            assert m == 4
+            return json.dumps([[0], [1], [2, 3]])
+        if "RPA (Robotic Process Automation) designer" in prompt:
+            return json.dumps([
+                {"activity_name": "Read cell A2", "pattern": "Read Element", "target": "cell A2",
+                 "evidence": [], "confidence": 0.9, "reasoning": ""},
+                {"activity_name": "Focus First Name field", "pattern": "Focus", "target": "First Name field",
+                 "evidence": [], "confidence": 0.9, "reasoning": ""},
+                {"activity_name": "Write value into First Name field", "pattern": "Write Element",
+                 "target": "First Name field", "evidence": [], "confidence": 0.9, "reasoning": ""},
+            ])
+        raise AssertionError("unexpected prompt")
+
+
+def test_fill_form_snippet_yields_find_focus_write(tmp_path) -> None:
+    path = tmp_path / "fill.csv"
+    path.write_text(_FILL_FORM, encoding="utf-8")
+
+    result = DataPipeline(str(path), llm_client=_FillFormLLM()).run()
+    rows = [(r.pattern.name if r.pattern else None, r.activity_object, r.method) for r in result.recommendations]
+
+    assert rows == [
+        ("Find Element", "UI element", "UIA Tree Parsing"),
+        ("Read Element", "UI element", "UI Automation tree parsing"),
+        ("Switch Context", "Context", "UI Automation manipulation"),
+        ("Find Element", "HTML element", "DOM parsing"),
+        ("Focus", "HTML element", "HTML DOM manipulation"),
+        ("Write Element", "HTML element", "DOM manipulation"),
+    ]
+
+
+# ── loader, object types, coverage ──────────────────────────────────────────
+
+class _Columns:
+    def complete(self, prompt):
+        if "selecting the event/action column" in prompt:
+            return "event"
+        return json.dumps({"switch_columns": ["app"], "group_columns": ["app"],
+                           "environment_columns": {"web": [], "desktop": ["app"], "screen": []},
+                           "element_columns": ["element_id", "made_up"]})
+
+
+def test_loader_keeps_only_real_element_columns(tmp_path) -> None:
+    path = tmp_path / "log.csv"
+    path.write_text("event,app,element_id\nclick,Edge,x\n", encoding="utf-8")
+    loader = CSVLoader(_Columns())
+    loader.load(str(path))
+
+    assert loader.detected_element_columns == ["element_id"]
+
+
+def test_object_type_follows_the_environment_but_switch_context_acts_on_a_context() -> None:
+    write = _by_name("Write Element")
+
+    assert object_type_for(write, "web") == "HTML element"
+    assert object_type_for(write, "desktop") == "UI element"
+    assert object_type_for(write, "screen") == "visual element"
+    assert object_type_for(_by_name("Switch Context"), "desktop") == "Context"
+
+
+def test_uncovered_action_is_reported_as_not_covered() -> None:
+    assert "not covered by the pattern collection" in explain_missing_method(None, "web")
+
+
+def test_naming_accepts_a_null_pattern() -> None:
+    class _NoPattern:
+        def complete(self, prompt):
+            return json.dumps([{"activity_name": "Drag file to folder", "pattern": None, "target": None,
+                                "evidence": [], "confidence": 0.5, "reasoning": ""}])
+
+    activities = ActivityInferrer(_NoPattern()).infer_activities([[Event("drag", {"app": "Explorer"}, 0)]])
+
+    assert [(a.name, a.pattern_name) for a in activities] == [("Drag file to folder", None)]

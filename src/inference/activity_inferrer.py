@@ -26,18 +26,22 @@ class ActivityInferrer:
         patterns=None,
         application_attributes: Optional[List[str]] = None,
         context_attributes: Optional[List[str]] = None,
+        element_attributes: Optional[List[str]] = None,
     ):
         """
         Args:
             application_attributes: Columns that identify the active application, as
                 identified by the LLM when the log was loaded (defaults to common names).
             context_attributes: Other columns that locate an event, e.g. URL or window.
+            element_attributes: Columns that identify the target UI element (element id,
+                XPath, cell reference, ...), used to tell whether activities share a target.
         """
         self.llm_client = llm_client
         self.progress_callback = progress_callback
         self.patterns = patterns or []
         self.application_attributes = list(application_attributes or self._DEFAULT_APPLICATION_KEYS)
         self.context_attributes = list(context_attributes or [])
+        self.element_attributes = list(element_attributes or [])
 
     def _context_keys(self) -> List[str]:
         """Attributes compared between groups, application-related ones first."""
@@ -65,11 +69,11 @@ class ActivityInferrer:
         """Build a compact pattern reference block from loaded Pattern objects."""
         if not self.patterns:
             return (
-                "RPA Patterns (choose exactly one name for the \"pattern\" field):\n"
+                "RPA Patterns (choose one name for the \"pattern\" field, or null if none fits):\n"
                 "Find Element, Read Element, Observe, Write Element, Delete Element, "
                 "Disable Element, Open, Activate, Hover, Switch Context, Scroll, Focus, Refresh"
             )
-        lines = ['RPA Pattern Reference (use exactly one pattern name for the "pattern" field):']
+        lines = ['RPA Pattern Reference (use one pattern name for the "pattern" field, or null if none fits):']
         for p in self.patterns:
             first_sentence = p.description.split(".")[0].strip() if p.description else ""
             lines.append(
@@ -81,10 +85,10 @@ class ActivityInferrer:
         """
         Infer enriched activity list from event groups.
 
-        For each event group produces (in order):
-        - An implicit context-switch activity if the LLM detects an application change
-        - An implicit prerequisite "Find <element>" activity if the LLM indicates one is needed
-        - The main LLM-inferred activity
+        The LLM names each group's UI activity, assigns its pattern (or none, when the
+        collection has no fitting pattern) and names its target element. The implicit
+        Switch context, Find and Focus activities are then inserted by fixed rules
+        (see ``add_implicit_activities``), not by the LLM.
 
         Args:
             event_groups: List[EventGroup] or List[List[Event]] (legacy)
@@ -101,8 +105,8 @@ class ActivityInferrer:
             else:
                 normalised.append(EG(events=g))
 
-        # Precompute the "previous context" for each group so the LLM can judge context
-        # switches against log data. It is the most recently recorded value of each
+        # Precompute the "previous context" for each group, shown to the LLM as
+        # background when it names the activity. It is the most recently recorded value of each
         # application/URL/window attribute over ALL earlier groups, so a group that did
         # not record the application does not erase what is known about it. None marks
         # the first group; an empty dict means earlier groups recorded none of these.
@@ -129,54 +133,23 @@ class ActivityInferrer:
             if self.progress_callback:
                 self.progress_callback(completed, total)
 
-        # Assemble activities in original group order.
-        activities: List[Activity] = []
+        # Main activities, in group order, exactly as the LLM named them.
+        mains: List[Activity] = []
         for group_idx, group in enumerate(normalised):
             source_events = [e.row_index for e in group.events if e.row_index is not None]
             llm_result = llm_results.get(group_idx, {})
-
-            # 1. Implicit context-switch activity — LLM-detected only
-            cs_info = llm_result.get("context_switch") or {}
-            if not isinstance(cs_info, dict):
-                cs_info = {}
-            llm_cs = cs_info.get("detected", False)
-            from_ctx = cs_info.get("from_context") or None
-            to_ctx = cs_info.get("to_context") or None
-
-            if llm_cs and (from_ctx or to_ctx):
-                activities.append(Activity(
-                    name=f"Switch context from {from_ctx or 'unknown'} to {to_ctx or 'unknown'}",
-                    confidence=1.0,
-                    evidence=[],
-                    source_events=source_events,
-                    activity_type="context_switch",
-                    is_implicit=True,
-                    group_index=group_idx,
-                    pattern_name="Switch Context",
-                ))
-
-            # 2. Prerequisite "Find <element>" activity — identified and named by LLM
-            prereq = llm_result.get("prerequisite") or {}
-            if prereq.get("needed") and prereq.get("name"):
-                activities.append(Activity(
-                    name=prereq["name"],
-                    confidence=1.0,
-                    evidence=[],
-                    source_events=source_events,
-                    activity_type="prerequisite",
-                    is_implicit=True,
-                    group_index=group_idx,
-                    pattern_name=prereq.get("pattern", "Find Element"),
-                ))
-
-            # 3. Main activity
             activity_name = llm_result.get("activity_name")
             if not activity_name or not str(activity_name).strip():
                 raise LLMError(
                     f"LLM did not return an activity name for group {group_idx}. "
                     "No fallback is applied — re-run once the LLM is available."
                 )
-            activities.append(Activity(
+            pattern = llm_result.get("pattern")
+            if not isinstance(pattern, str) or not pattern.strip() or pattern.strip().lower() in ("null", "none"):
+                pattern = None  # not covered by the pattern collection
+            target = llm_result.get("target")
+            target = str(target).strip() if isinstance(target, str) and target.strip() else None
+            mains.append(Activity(
                 name=activity_name,
                 confidence=llm_result.get("confidence", 0.3),
                 evidence=llm_result.get("evidence", []),
@@ -185,10 +158,21 @@ class ActivityInferrer:
                 activity_type="main",
                 is_implicit=False,
                 group_index=group_idx,
-                pattern_name=llm_result.get("pattern"),
+                pattern_name=pattern,
+                target=target,
+                target_id=self._target_identity(group.events, target),
             ))
 
-        return activities
+        return add_implicit_activities(normalised, mains, self.application_attributes)
+
+    def _target_identity(self, events: List[Event], target: Optional[str]) -> Optional[str]:
+        """The identity of an activity's target: a recorded element identifier, else its name."""
+        for event in events:
+            for key in self.element_attributes:
+                value = event.recorded(key)
+                if value is not None:
+                    return f"{key}={value}"
+        return target.lower() if target else None
 
     def _call_llm_for_batch(self, indexed_groups: list) -> list:
         """Fan-out worker: one LLM call for a batch of groups. Returns [(group_idx, result_dict), ...]."""
@@ -209,7 +193,10 @@ class ActivityInferrer:
             event_lines = []
             for e in events:
                 parts = [e.event]
-                tag = (
+                tag = next(
+                    (e.recorded(k) for k in self.element_attributes if e.recorded(k) is not None),
+                    None,
+                ) or (
                     e.attributes.get("tag_name")
                     or e.attributes.get("tag_type")
                     or e.attributes.get("element_id")
@@ -259,7 +246,6 @@ class ActivityInferrer:
 
         groups_block = "\n\n".join(sections)
         pattern_reference = self._build_pattern_reference()
-        application_columns = ", ".join(self.application_attributes)
         return f"""You are an RPA (Robotic Process Automation) designer analyzing UI event logs.
 
 {pattern_reference}
@@ -268,20 +254,17 @@ Analyze the following {n} event group(s). Return a JSON ARRAY with exactly {n} o
 
 {groups_block}
 
-For each group return this JSON structure:
+Each group is one UI activity: one action on one target. For each group return this JSON structure:
 {{
   "activity_name": "Verb + object in a UNIQUE, context-specific phrasing aligned with the matched pattern. Include the concrete detail that sets this interaction apart from similar ones — the specific field/element label, cell reference, value entered, URL, or page (e.g. 'Write \"John\" into First Name field', 'Activate Submit button on registration form', 'Read cell B2 from Forecast sheet')",
-  "pattern": "Exactly one pattern name from the reference above — choose based on semantic meaning of the interaction, not the exact words in the log",
-  "context_switch": {{"detected": false, "from_context": null, "to_context": null}},
-  "prerequisite": {{"needed": false}},
+  "pattern": "One pattern name from the reference above, chosen by the semantic meaning of the interaction, not the exact words in the log (e.g. a click on a button activates it; a click on a text field focuses it). Use null if no pattern fits the interaction — never force a pattern.",
+  "target": "The specific UI element the action is performed on, named concretely with its label and location (e.g. 'First Name field on registration form', 'Submit button on registration form', 'cell B2 in Forecast sheet'), or null for page- or application-level actions without a target element (opening a URL, scrolling a page, refreshing, switching application)",
   "evidence": ["2-4 concise observations from events/attributes"],
   "confidence": 0.9,
   "reasoning": "One sentence summary"
 }}
 
-Field guide:
-- "context_switch": "Previous context" is the most recently recorded value of each application/URL/window attribute from earlier groups, carried forward over groups that did not record it. Base the decision on the application-related attributes ({application_columns}) and the other recorded attributes: a recorded application that differs from the previous one is evidence of a switch, while an application that is simply NOT RECORDED in this group is no evidence either way. When you flag a switch, name the changed attribute values in "evidence". Set "detected" to true only when the user moves to a genuinely different application, tool, or execution environment compared to the "Previous context" shown above. A change in execution environment — web (browser/HTML), desktop (native application, spreadsheet), or screen (raw coordinates) — is always a context switch, as is moving between two different applications in the same environment. Examples that ARE context switches: Excel → Chrome, one web app → a different web app, desktop app → browser. Examples that are NOT: navigating to a new page within the same site, opening a modal in the same app, scrolling. When detected is true, "from_context" and "to_context" must name the environments (e.g. "Microsoft Excel", "Google Chrome").
-- "prerequisite": Identify whether the bot must locate a specific UI element before performing the main action. Set "needed" to true whenever the activity reads from, writes to, focuses, or activates a specific element (input fields, buttons, dropdowns, checkboxes, links, table cells) — these element-targeting actions all require the element to be found first. Set "needed" to false for page-level actions that have no specific target element (opening a URL, scrolling, switching windows/context, refreshing, launching an application, passive observation). When needed is true, also provide "name" — the activity name for the Find step using the same UNIQUE, context-specific verb+object phrasing as "activity_name" above. Include the concrete detail that identifies the target — the specific field/element label, cell reference, sheet, page, or URL — so the Find name is never bare (e.g. "Find First Name field on registration form", "Find Submit button on registration form", "Find cell B2 in Forecast sheet"), and "pattern": always "Find Element".
+Implicit activities (locating an element first, focusing a field before writing, switching application) are added afterwards by fixed rules; do not describe them.
 
 CRITICAL OUTPUT RULES:
 1. Return a valid JSON ARRAY with EXACTLY {n} object(s) — one per group, in the same order.
@@ -289,7 +272,7 @@ CRITICAL OUTPUT RULES:
 3. Every "activity_name" MUST be UNIQUE across the array. When groups perform the same kind of action, tell them apart using concrete context from their own events/attributes — the specific field or element label, cell reference, value, URL, page, or step — so that no two names are identical (e.g. "Write \"John\" into First Name field" vs "Write \"Smith\" into Last Name field"; "Read cell A2 from Sheet1" vs "Read cell A3 from Sheet1"). Never disambiguate with bare counters like "(2)".
 4. Output raw JSON only — no markdown fences, no explanation text before or after the array.
 
-[{{"activity_name": "...", "pattern": "...", "context_switch": {{"detected": false, ...}}, "prerequisite": {{"needed": false}}, ...}}, ...]"""
+[{{"activity_name": "...", "pattern": "...", "target": "...", "evidence": [...], "confidence": 0.9, "reasoning": "..."}}, ...]"""
 
     def _parse_batch_response(self, raw: str, n: int) -> List[dict]:
         """Parse a JSON array response from a batch prompt. Returns exactly n dicts.
@@ -316,3 +299,105 @@ CRITICAL OUTPUT RULES:
                 f"LLM returned {len(results)} activity result(s) but {n} were expected."
             )
         return results
+
+
+# ── implicit activities (step 4 of the approach) ─────────────────────────────
+
+# Patterns whose action is performed on a specific target element: the bot has to
+# locate that element first (Find Element).
+ELEMENT_TARGETING_PATTERNS = {
+    "read element", "observe", "write element", "delete element",
+    "disable element", "activate", "focus", "hover",
+}
+
+
+def _application_at(events: List[Event], attributes: List[str], last: bool) -> Optional[str]:
+    """The first (or last) application recorded in a group, or None."""
+    for event in (reversed(events) if last else events):
+        for key in attributes:
+            value = event.recorded(key)
+            if value is not None:
+                return value
+    return None
+
+
+def add_implicit_activities(groups, mains: List[Activity], application_attributes: List[str]) -> List[Activity]:
+    """Insert the implicit activities of step 4 before the activities that need them.
+
+    Three rules are applied, in this order, to each main activity, each considering
+    the sequence extended by the implicit activities already inserted:
+
+    1. Switch context — the activity is recorded in a different application from the
+       last application recorded before it (a missing value is no evidence, so the
+       last recorded application is carried forward).
+    2. Find element — the activity's pattern acts on a specific target element and
+       the preceding activity does not already target the same element.
+    3. Focus — the activity writes into an element and the preceding activity does not
+       focus that element.
+
+    The result is: an element is found, then focused, then written to, with one Find
+    serving both the Focus and the Write activity.
+    """
+    enriched: List[Activity] = []
+    last_app: Optional[str] = None
+
+    for group, main in zip(groups, mains):
+        events = group.events if hasattr(group, "events") else group
+        source_events = main.source_events
+        pattern = (main.pattern_name or "").strip().lower()
+        label = main.target or "the target element"
+
+        start_app = _application_at(events, application_attributes, last=False)
+        if start_app is not None and last_app is not None and start_app != last_app:
+            enriched.append(Activity(
+                name=f"Switch context from {last_app} to {start_app}",
+                confidence=1.0,
+                source_events=source_events,
+                activity_type="context_switch",
+                is_implicit=True,
+                group_index=main.group_index,
+                pattern_name="Switch Context",
+            ))
+
+        if pattern in ELEMENT_TARGETING_PATTERNS:
+            previous = enriched[-1] if enriched else None
+            if not (previous is not None and main.target_id and previous.target_id == main.target_id):
+                enriched.append(Activity(
+                    name=f"Find {label}",
+                    confidence=1.0,
+                    source_events=source_events,
+                    activity_type="prerequisite",
+                    is_implicit=True,
+                    group_index=main.group_index,
+                    pattern_name="Find Element",
+                    target=main.target,
+                    target_id=main.target_id,
+                ))
+
+        if pattern == "write element":
+            previous = enriched[-1] if enriched else None
+            focused = (
+                previous is not None
+                and (previous.pattern_name or "").strip().lower() == "focus"
+                and main.target_id
+                and previous.target_id == main.target_id
+            )
+            if not focused:
+                enriched.append(Activity(
+                    name=f"Focus {label}",
+                    confidence=1.0,
+                    source_events=source_events,
+                    activity_type="prerequisite",
+                    is_implicit=True,
+                    group_index=main.group_index,
+                    pattern_name="Focus",
+                    target=main.target,
+                    target_id=main.target_id,
+                ))
+
+        enriched.append(main)
+        end_app = _application_at(events, application_attributes, last=True)
+        if end_app is not None:
+            last_app = end_app
+
+    return enriched

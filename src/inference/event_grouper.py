@@ -165,16 +165,22 @@ class EventGrouper:
 
 
 class LLMGroupRefiner:
-    """Second-pass refinement: asks the LLM to merge over-segmented candidate groups
-    that share the same user intent into single activity groups.
+    """Second pass: the LLM turns the candidate groups into UI activities.
 
-    The LLM makes the final decision. For every pair of adjacent groups it is shown
-    evidence from the log itself — the application-related attributes first, then
-    URL, window and element values — and is told that a changed application counts
-    strongly against merging while a missing one is no evidence either way. The code
-    does not override its answer; it only validates that merged groups are adjacent.
-    There is no fallback: a missing LLM or an invalid response raises instead of
-    returning the candidate groups unchanged.
+    Rule-based pre-segmentation by context both over- and under-segments: one
+    intention can be split across adjacent groups, and one group can hold several
+    intentions (clicking a text field, which focuses it, then pasting into it).
+    The LLM therefore receives the events of a batch of candidate groups, numbered
+    consecutively, and returns runs of consecutive event numbers, one per UI
+    activity. It may divide a group and combine events of directly adjacent groups.
+
+    Between every pair of adjacent groups it is shown evidence from the log itself
+    (the application-related attributes first, then URL, window and element values)
+    and is told that a changed application counts strongly against combining while
+    a missing value is no evidence either way. The code does not override its
+    answer; it only validates that every run is consecutive and that every event is
+    covered exactly once. There is no fallback: a missing LLM or an invalid response
+    raises instead of returning the candidate groups unchanged.
     """
 
     BATCH_SIZE = 10
@@ -188,14 +194,17 @@ class LLMGroupRefiner:
         llm_client=None,
         application_attributes: Optional[List[str]] = None,
         context_attributes: Optional[List[str]] = None,
+        element_attributes: Optional[List[str]] = None,
     ):
         """
         Args:
-            llm_client: LLM used to decide the merges.
+            llm_client: LLM used to decide the UI activities.
             application_attributes: Columns that identify the active application, as
                 identified by the LLM when the log was loaded. Defaults to common names.
             context_attributes: Other columns that locate an event (URL, window,
                 element, ...). Defaults to common names.
+            element_attributes: Columns that identify the target UI element; their
+                values are shown next to each event so the LLM can tell targets apart.
         """
         self.llm_client = llm_client
         self.application_attributes = list(application_attributes or self._DEFAULT_APPLICATION_KEYS)
@@ -204,10 +213,11 @@ class LLMGroupRefiner:
             for key in (context_attributes or self._DEFAULT_CONTEXT_KEYS)
             if key not in self.application_attributes
         ]
+        self.element_attributes = list(element_attributes or [])
 
     def refine(self, groups: List[EventGroup]) -> List[EventGroup]:
-        """Return LLM-merged groups."""
-        if len(groups) <= 1:
+        """Return the UI activities decided by the LLM, as event groups."""
+        if not groups or sum(len(g.events) for g in groups) <= 1:
             return groups
         if self.llm_client is None:
             raise ValueError("LLM client required for group refinement")
@@ -219,20 +229,23 @@ class LLMGroupRefiner:
     # ── private ──────────────────────────────────────────────────────────────
 
     def _refine_batch(self, batch: List[EventGroup]) -> List[EventGroup]:
-        if len(batch) == 1:
+        event_count = sum(len(g.events) for g in batch)
+        if event_count <= 1:
             return batch
         prompt = self._build_prompt(batch)
         _logger.debug("=== LLMGroupRefiner prompt ===\n%s\n=== end prompt ===", prompt)
         response = self.llm_client.complete(prompt)
         _logger.debug("=== LLMGroupRefiner response ===\n%s\n=== end response ===", response)
-        merge_sets = self._parse_response(response, len(batch))
-        return self._apply_merges(batch, merge_sets)
+        runs = self._parse_response(response, event_count)
+        return self._apply_runs(batch, runs)
 
     def _build_prompt(self, batch: List[EventGroup]) -> str:
         sections = []
         last_recorded: Dict[str, Tuple[str, int]] = {}  # attribute -> (value, group index)
+        first_number = 0
         for i, group in enumerate(batch):
-            sections.append(self._group_section(i, group))
+            sections.append(self._group_section(i, group, first_number))
+            first_number += len(group.events)
             if i + 1 < len(batch):
                 sections.append(self._boundary_evidence(i, group, batch[i + 1], last_recorded))
             for key in self.application_attributes:
@@ -241,36 +254,43 @@ class LLMGroupRefiner:
                     last_recorded[key] = (value, i)
 
         n = len(batch)
+        m = first_number
         application_columns = ", ".join(self.application_attributes)
-        return f"""You are grouping UI events into discrete tasks for RPA design.
-Each task must correspond to exactly one user intention — one atomic action a bot would automate.
+        return f"""You are grouping UI events into UI activities for RPA design.
+Each UI activity is one action a bot performs on one target, such as focusing a text field, writing a value into a field, activating a button or reading a cell.
 
-Below are {n} candidate event groups from rule-based pre-segmentation, in temporal order.
+Below are {n} candidate event groups from rule-based pre-segmentation by context, in temporal order, holding {m} events numbered [0] to [{m - 1}].
 Between every two adjacent groups you are given evidence taken from the log's own attributes.
 Application-related attributes in this log: {application_columns}.
 
 {chr(10).join(sections)}
 
-Whether two adjacent groups belong to the same task is your decision; base it on that evidence:
+How events form one UI activity:
+- Events that repeat the same action on the same target belong together (e.g. several input or keystroke events that type one value into one field).
+- Events that only record the effect of an action belong to that action (e.g. a field-change or value-changed event recorded after a value was typed or pasted into the field).
+- A click that gives a text field focus before a value is typed or pasted into it is a UI activity of its own (focusing the field), not part of the writing.
+- Actions on different targets are different UI activities.
+You may therefore divide a candidate group into several UI activities, and you may combine events of directly adjacent groups.
+
+Whether events on either side of a group boundary belong to the same UI activity is your decision; base it on that evidence:
 - A recorded application that CHANGED between two groups means the user switched application.
-  Do not merge across it unless the two values clearly name the same application
+  Do not combine across it unless the two values clearly name the same application
   (for example "Chrome" and "chrome.exe").
 - An application that is NOT RECORDED on one side is not evidence of a switch. Decide from the
   other attributes and from the events themselves.
-- A changed URL, window or element also counts against merging, but less strongly than a changed
+- A changed URL, window or element also counts against combining, but less strongly than a changed
   application.
-- When the evidence does not show that two groups serve one intention, keep them separate.
+- When the evidence does not show that events across a boundary serve one intention, keep them apart.
 
 Rules:
-1. You may only merge groups that are DIRECTLY ADJACENT (consecutive indices like [2,3] or [0,1,2]).
-   Non-adjacent indices such as [1,3] or [0,2,4] are NEVER allowed — the groups are in strict temporal order.
-2. Every index from 0 to {n - 1} must appear in exactly one set.
-3. When in doubt, keep groups separate.
+1. Every UI activity is a run of CONSECUTIVE event numbers, such as [3,4,5]. Skipping an event,
+   as in [3,5], is NEVER allowed: the events are in strict temporal order.
+2. Every event number from 0 to {m - 1} must appear in exactly one UI activity.
 
-Return a JSON array of arrays where each inner array is a consecutive run of indices to merge.
+Return a JSON array of arrays, one inner array of event numbers per UI activity, in order.
 
-VALID   (5 groups, merge 1+2):     [[0],[1,2],[3],[4]]
-INVALID (non-adjacent — forbidden): [[0],[1,3],[2],[4]]
+VALID   (6 events):                [[0],[1,2],[3],[4,5]]
+INVALID (skips an event, forbidden): [[0],[1,3],[2],[4,5]]
 
 Return only valid JSON. No explanation."""
 
@@ -309,7 +329,7 @@ Return only valid JSON. No explanation."""
         ]
         return found[: self._MAX_CONTEXT_COLUMNS]
 
-    def _group_section(self, index: int, group: EventGroup) -> str:
+    def _group_section(self, index: int, group: EventGroup, first_number: int = 0) -> str:
         parts = []
         for key in self.application_attributes:
             values = self._distinct_values(group, key)
@@ -321,7 +341,15 @@ Return only valid JSON. No explanation."""
             values = self._distinct_values(group, key)
             parts.append(f"{key}: " + " / ".join(self._clip(v) for v in values[:3]))
 
-        event_lines = "\n".join(f"  - {e.event}" for e in group.events) or "  - (none)"
+        lines = []
+        for offset, event in enumerate(group.events):
+            target = next(
+                (event.recorded(k) for k in self.element_attributes if event.recorded(k) is not None),
+                None,
+            )
+            suffix = f" (target: {self._clip(target)})" if target else ""
+            lines.append(f"  [{first_number + offset}] {event.event}{suffix}")
+        event_lines = "\n".join(lines) or "  - (none)"
         return f"GROUP {index} [{' | '.join(parts)}]\nEvents:\n{event_lines}"
 
     def _boundary_evidence(
@@ -381,7 +409,10 @@ Return only valid JSON. No explanation."""
         )
 
     def _parse_response(self, response: str, n: int) -> List[List[int]]:
-        """Parse and validate merge sets from LLM response."""
+        """Parse and validate the runs of event numbers returned by the LLM.
+
+        ``n`` is the number of events in the batch.
+        """
         text = (response or "").strip()
         if text.startswith("```"):
             text = re.sub(r"```[a-z]*\n?", "", text).strip("`").strip()
@@ -393,38 +424,42 @@ Return only valid JSON. No explanation."""
             raise ValueError("The LLM returned an unexpected response format for group refinement. Please try again.")
 
         seen = set()
-        for s in parsed:
-            if not isinstance(s, list) or not s:
+        for run in parsed:
+            if not isinstance(run, list) or not run:
                 raise ValueError("The LLM returned an invalid group structure. Please try again.")
-            for idx in s:
+            for idx in run:
                 if not isinstance(idx, int) or idx < 0 or idx >= n or idx in seen:
                     raise ValueError("The LLM returned an invalid group structure. Please try again.")
                 seen.add(idx)
         if seen != set(range(n)):
             raise ValueError("The LLM returned an incomplete group structure. Please try again.")
 
-        for s in parsed:
-            sorted_s = sorted(s)
-            if sorted_s != list(range(sorted_s[0], sorted_s[0] + len(sorted_s))):
-                raise ValueError("The LLM attempted to merge non-adjacent event groups, which is not allowed. Please try again.")
+        for run in parsed:
+            ordered = sorted(run)
+            if ordered != list(range(ordered[0], ordered[0] + len(ordered))):
+                raise ValueError("The LLM attempted to group non-consecutive events, which is not allowed. Please try again.")
 
-        return parsed
+        return sorted((sorted(run) for run in parsed), key=lambda r: r[0])
 
-    def _apply_merges(self, batch: List[EventGroup], merge_sets: List[List[int]]) -> List[EventGroup]:
-        """Apply LLM-specified merge sets."""
+    def _apply_runs(self, batch: List[EventGroup], runs: List[List[int]]) -> List[EventGroup]:
+        """Build one event group per run of consecutive event numbers."""
+        flat: List[Tuple[Event, int, bool]] = []  # (event, source group, first event of that group)
+        for g_idx, group in enumerate(batch):
+            for offset, event in enumerate(group.events):
+                flat.append((event, g_idx, offset == 0))
+
         result = []
-        for merge_set in sorted(merge_sets, key=lambda s: s[0]):
-            if len(merge_set) == 1:
-                result.append(batch[merge_set[0]])
-            else:
-                merged_events: List[Event] = []
-                for idx in merge_set:
-                    merged_events.extend(batch[idx].events)
-                first = batch[merge_set[0]]
+        for run in runs:
+            events = [flat[i][0] for i in run]
+            _, source, starts_group = flat[run[0]]
+            if starts_group:
+                origin = batch[source]
                 result.append(EventGroup(
-                    events=merged_events,
-                    is_context_switch=first.is_context_switch,
-                    previous_app=first.previous_app,
-                    current_app=first.current_app,
+                    events=events,
+                    is_context_switch=origin.is_context_switch,
+                    previous_app=origin.previous_app,
+                    current_app=origin.current_app,
                 ))
+            else:
+                result.append(EventGroup(events=events))
         return result

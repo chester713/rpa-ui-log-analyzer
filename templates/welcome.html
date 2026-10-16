@@ -115,9 +115,9 @@
                         <div class="step-header">
                             <span class="step-title">Event Grouping</span>
                             <span class="badge badge-rule">Rule-based</span>
-                            <span class="badge badge-llm">LLM refine</span>
+                            <span class="badge badge-llm">LLM abstraction</span>
                         </div>
-                        <p class="step-desc">Consecutive events are grouped into <em>interaction segments</em> based on their collective intent — events that together constitute a single coherent interaction belong in the same group. The LLM first reads the CSV header and sample rows to identify which columns carry context (for example the application, webpage, URL, or element — column names differ between loggers). A shared value in one of these columns serves as supporting evidence for grouping, and a change of the recorded application value closes the current group and starts a new one — a <strong>candidate application boundary</strong> (an event with no application value is not treated as a change). An LLM second pass then <strong>refines</strong> these candidate groups: it is shown the application-related attributes (then URL, window and element values) on both sides of every boundary (carrying the last recorded application across a group that recorded none) and makes the final decision to merge directly-adjacent groups that share a single intent; a changed application counts strongly against merging. <em>Note: the rule-based pre-segmentation approximates intent-based grouping using attribute matching as a heuristic.</em></p>
+                        <p class="step-desc">Consecutive events are grouped into <em>interaction segments</em> based on their collective intent — events that together constitute a single coherent interaction belong in the same group. The LLM first reads the CSV header and sample rows to identify which columns carry context (for example the application, webpage, URL, or element — column names differ between loggers). A shared value in one of these columns serves as supporting evidence for grouping, and a change of the recorded application value closes the current group and starts a new one — a <strong>candidate application boundary</strong> (an event with no application value is not treated as a change). An LLM second pass then turns these candidate groups into <strong>UI activities</strong> — one action on one target each: it sees the numbered events with their target elements and may <strong>divide</strong> a group (clicking a text field focuses it; pasting into it writes) or <strong>combine</strong> events of adjacent groups (a paste and the value-changed event it causes form one Write). It is shown the application-related attributes (then URL, window and element values) on both sides of every boundary; a changed application counts strongly against combining.</p>
                     </div>
                 </div>
 
@@ -129,7 +129,7 @@
                             <span class="step-title">Activity Naming</span>
                             <span class="badge badge-llm">LLM</span>
                         </div>
-                        <p class="step-desc">Each interaction segment is sent to an LLM (batched in groups of 5, processed sequentially to respect rate limits). The LLM interprets the group's collective intent and assigns an <strong>activity name</strong> — verb + object aligned with the pattern vocabulary, made <strong>unique and context-specific</strong> by including the concrete detail that sets the interaction apart (e.g. 'Write "John" into First Name field' versus 'Write "Smith" into Last Name field'), so no two activities share a name. It also returns the <strong>best-matching RPA pattern name</strong>, whether a prerequisite Find step is needed (for element-targeting actions) and the element to find, a <strong>context-switch detection</strong> flag with from/to environment labels (judged against the most recently recorded application, URL and window, so a group that did not record the application is not mistaken for a switch), supporting <strong>evidence</strong> observations, and a <strong>confidence score</strong>.</p>
+                        <p class="step-desc">Each interaction segment is sent to an LLM (batched in groups of 5, processed sequentially to respect rate limits). The LLM interprets the group's collective intent and assigns an <strong>activity name</strong> — verb + object aligned with the pattern vocabulary, made <strong>unique and context-specific</strong> by including the concrete detail that sets the interaction apart (e.g. 'Write "John" into First Name field' versus 'Write "Smith" into Last Name field'), so no two activities share a name. It also returns the <strong>best-matching RPA pattern name</strong> (or none, when no pattern fits — the activity is then reported as not covered by the collection), the concrete <strong>target element</strong>, supporting <strong>evidence</strong> observations, and a <strong>confidence score</strong>. Implicit activities are then inserted by fixed rules (below).</p>
                     </div>
                 </div>
 
@@ -193,15 +193,19 @@
         <!-- Implicit activities -->
         <section class="card">
             <h2>Implicit Activities</h2>
-            <p class="section-intro">Two types of activity are automatically inserted into the sequence — they are not directly observed in the log but are necessary for a realistic RPA bot design.</p>
+            <p class="section-intro">Three types of activity are inserted into the sequence by fixed rules, applied in this order — they are not recorded in the log but are necessary for a realistic RPA bot design. An element is found, then focused, then written to.</p>
             <div class="implicit-grid">
                 <div class="implicit-item">
-                    <h3>Prerequisite Find Element <span class="badge badge-llm">LLM</span></h3>
-                    <p>When an activity targets a specific UI element (button, input, dropdown, etc.) the bot must <em>locate</em> that element before it can interact with it. A "Find [element]" step is automatically inserted immediately before any such activity. The LLM flags this for element-targeting actions (read, write, focus, activate) and names the element to find. Page-level actions (open a URL, scroll, refresh) get no Find step.</p>
+                    <h3>Context Switch <span class="badge badge-rule">Rule</span></h3>
+                    <p>When an activity is recorded in a different application from the last recorded one (e.g. Excel → Edge), a "Switch context from A to B" step is inserted before it. A missing application value is no evidence, and navigating to another page within the same application is <em>not</em> a switch.</p>
                 </div>
                 <div class="implicit-item">
-                    <h3>Context Switch <span class="badge badge-llm">LLM</span></h3>
-                    <p>When the user moves to a different application or execution environment (e.g. Excel → browser) between consecutive groups, a "Switch context from A to B" step is inserted at the boundary. The LLM detects the switch — including a change of environment between web, desktop, and screen — and names the from/to environments. Navigating to a new page within the same site is <em>not</em> treated as a context switch.</p>
+                    <h3>Find Element <span class="badge badge-rule">Rule</span></h3>
+                    <p>When an activity acts on a specific element (read, observe, write, delete, disable, activate, focus, hover), the bot must <em>locate</em> it first: a "Find [element]" step is inserted, unless the preceding activity already targets the same element. Page-level actions (open a URL, scroll, refresh) get no Find step.</p>
+                </div>
+                <div class="implicit-item">
+                    <h3>Focus <span class="badge badge-rule">Rule</span></h3>
+                    <p>Writing into an element requires it to have input focus: a "Focus [element]" step is inserted before a Write activity unless the preceding activity focuses that element. It is essential when the bot uses hardware simulation.</p>
                 </div>
             </div>
         </section>
