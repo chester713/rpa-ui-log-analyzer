@@ -248,7 +248,7 @@ class LLMGroupRefiner:
             first_number += len(group.events)
             if i + 1 < len(batch):
                 sections.append(self._boundary_evidence(i, group, batch[i + 1], last_recorded))
-            for key in self.application_attributes:
+            for key in list(self.application_attributes) + list(self._context_columns_in(group)):
                 value = self._edge_value(group, key, last=True)
                 if value is not None:
                     last_recorded[key] = (value, i)
@@ -361,9 +361,9 @@ Return only valid JSON. No explanation."""
     ) -> str:
         """One line comparing the end of ``left`` with the start of ``right``.
 
-        ``last_recorded`` holds, per application attribute, the latest value recorded
-        in the groups *before* ``left``; it is used when ``left`` recorded none, so a
-        group without an application value does not hide what the application was.
+        ``last_recorded`` holds, per application and context attribute, the latest value
+        recorded in the groups *before* ``left``; it is used when ``left`` recorded none,
+        so a group without a value does not hide what the value was.
         """
         checks = [
             self._compare(key, left, right, index, last_recorded.get(key))
@@ -374,7 +374,7 @@ Return only valid JSON. No explanation."""
         else:
             checks = [check for check in checks if check is not None]
         for key in self._context_columns_in(left, right):
-            check = self._compare(key, left, right, index)
+            check = self._compare(key, left, right, index, last_recorded.get(key))
             if check is not None:
                 checks.append(check)
         return f"  >> between GROUP {index} and GROUP {index + 1}: " + "; ".join(checks)

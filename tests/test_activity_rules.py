@@ -299,3 +299,13 @@ def test_naming_rejects_a_pattern_outside_the_collection() -> None:
 
     with pytest.raises(LLMError, match="not in the pattern collection"):
         ActivityInferrer(_Invented(), patterns=PATTERNS).infer_activities([[Event("drag", {"app": "Explorer"}, 0)]])
+
+
+def test_boundary_evidence_carries_context_values_forward() -> None:
+    groups = [EventGroup(events=[Event("getCell", {"app": "Excel", "wb": "c.xlsx"}, 0)]),
+              EventGroup(events=[Event("paste", {"app": "Edge", "url": "u"}, 1)]),
+              EventGroup(events=[Event("getCell", {"app": "Excel", "wb": "c.xlsx"}, 2)])]
+    llm = _Runs([[0], [1], [2]])
+    LLMGroupRefiner(llm, application_attributes=["app"], context_attributes=["wb", "url"]).refine(groups)
+
+    assert "wb NOT RECORDED in GROUP 1; last recorded c.xlsx in GROUP 0, GROUP 2 has c.xlsx (same as that)" in llm.prompts[0]
