@@ -1,4 +1,22 @@
-"""Progressive (lazy-compute) pipeline — integrates with the existing workspace UI."""
+"""Progressive pipeline of the web app: the seven steps of the approach, stage by stage.
+
+The workspace shows the steps of the approach in their order (Section 4 of the paper):
+
+  Stage 1 — UI activity identification
+    1  Segment events by context          rules (attribute roles identified by the LLM at load)
+    2  Abstract higher-level UI activities LLM in place of the SME (prompt P3)
+    3  Normalise UI activities            LLM in place of the SME (prompt P4)
+    4  Add implicit activities            rules
+  Stage 2 — Method recommendation
+    5  Match patterns                     lookup (P4 returned the pattern with the action)
+    6  Determine environment, object type rules
+    7  Recommend prioritised methods      rules
+
+Steps 1 and 2 run when the analysis starts. Step 3 is the second LLM call and runs when
+the analyst opens it; steps 4 to 7 are computed right after it. Every step's output is
+stored (data/progressive/<aid>/) and the pages are built from these files, so the
+workspace and the results page always show the same analysis.
+"""
 
 import csv as _csv
 import json
@@ -9,131 +27,136 @@ import tempfile
 import threading
 import uuid
 from datetime import datetime
-
-_logger = logging.getLogger(__name__)
-
+from typing import Dict, List, Optional
 from urllib.parse import quote as _urlquote
 
 from flask import Blueprint, jsonify, redirect, request, session
 
 from .step_store import StepStore
 
+_logger = logging.getLogger(__name__)
+
 bp = Blueprint("progressive", __name__, url_prefix="/p")
 
-PROGRESSIVE_STAGE_KEYS = (
-    "event_grouping",
-    "activity_naming",
-    "action_object_extraction",
-    "pattern_matching",
-    "context_determination",
-    "method_recommendation",
-)
+# ── Stages: the steps of the approach ─────────────────────────────────────────
 
-PROGRESSIVE_LOGIC = {
-    "event_grouping": (
-        "• Rule-Based Pre-Segmentation: Consecutive events are placed in the same candidate group when they "
-        "share at least one context attribute — such as the active application name, webpage URL, or element "
-        "identifier — indicating they belong to the same interaction unit within the log. Which columns carry "
-        "this context is identified by the LLM from the CSV header and sample rows.\n"
-        "• Candidate Application Boundaries: When a recorded application value differs from the last recorded "
-        "application, the current group closes and a new group begins. An event that has no application value is "
-        "not treated as a change — a missing value is no evidence of a switch — and later events are compared "
-        "with the last recorded application. These boundaries are candidates only.\n"
-        "• LLM Abstraction into UI Activities: Context-based pre-segmentation can split one intention across "
-        "adjacent groups and can put several intentions into one group. A second pass therefore sends the "
-        "events of each batch of candidate groups to an LLM, numbered and with their target elements, together "
-        "with evidence from the log between every pair of adjacent groups (the application-related attributes "
-        "first, then URL, window and element values). The LLM returns runs of consecutive events, one per UI "
-        "activity: it may divide a group (clicking a text field focuses it; pasting into it writes) and combine "
-        "events of adjacent groups (a paste and the value-changed event it causes form one Write). A changed "
-        "application counts strongly against combining, and a missing one is no evidence either way. The code "
-        "only checks that every run is consecutive and that every event is covered once.\n"
-        "• Group Scope: Each final group is one UI activity — one action on one target — and produces one "
-        "activity name."
-    ),
-    "activity_naming": (
-        "• Activity Labeling: Each event group is sent to an LLM which interprets the interaction intent and assigns a natural language activity name "
-        "(e.g., 'Write data into a textfield') rather than describing low-level events.\n"
-        "• Pattern and Target: The LLM also assigns the pattern the activity realises — or none, when no "
-        "pattern of the collection fits, in which case the activity is reported as not covered — and names "
-        "the concrete target element.\n"
-        "• Implicit Activities by Fixed Rules: After naming, three rules are applied in order to each activity. "
-        "Switch Context: the activity is recorded in a different application from the last recorded one "
-        "(a missing application value is no evidence; a URL change within one application is not a switch). "
-        "Find Element: the activity acts on a specific element and the preceding activity does not already "
-        "target it. Focus: the activity writes into an element that the preceding activity did not focus. "
-        "An element is therefore found, then focused, then written to, with one Find serving both."
-    ),
-    "action_object_extraction": (
-        "• Canonical Action — Carried from the Matched Pattern: During activity naming, the LLM interpreted "
-        "each interaction's intent and assigned it one of the 13 RPA UI Interaction patterns by name. Every "
-        "pattern is defined in the Action-Object-Method-Context (AOMC) framework with a single canonical "
-        "Action, drawn from three categories: Extraction (Find/Identify, Read/Extract, Observe), Modification "
-        "(Write/Input/Update/Modify, Delete/Remove, Disable/Hide), and Control (Open/Run, Activate, Hover, "
-        "Switch context, Scroll, Focus, Refresh). This stage looks up the activity's assigned pattern and "
-        "surfaces that pattern's canonical Action and AOMC category. The semantic mapping from raw, tool-"
-        "specific log verbs (e.g., 'click', 'paste', 'changeField', 'getCell') to the canonical AOMC Action "
-        "was performed by the LLM when it chose the pattern — there is no separate verb-mapping rule table at "
-        "this stage.\n"
-        "• Object Type — From the Execution Environment: The object's type is a property of the object, given by "
-        "the environment it resides in: an HTML element (web), a UI element (desktop) or a visual element "
-        "(screen). Switch Context acts on a context rather than an element. Choosing a poorer method later "
-        "does not change the type: an HTML element clicked through hardware simulation is still an HTML element.\n"
-        "• No Match, No Pair: When the activity's assigned pattern name does not resolve to a known pattern, "
-        "no Action or Object is reported rather than guessing one."
-    ),
-    "pattern_matching": (
-        "• Pattern Resolution by Assigned Name: During activity naming the LLM selected one of the 13 RPA UI "
-        "Interaction patterns by name for each activity. This stage resolves that name against the pattern "
-        "catalogue to retrieve the full pattern definition — its canonical action, object, method category, "
-        "supported execution contexts, and context-to-method mapping.\n"
-        "• Name Match Only: A pattern is matched on its name alone — no LLM call is made and no keyword guess "
-        "is applied. Whether the pattern can be carried out in the activity's execution environment is not "
-        "decided here; it is checked when the method is chosen in the Method Recommendation stage. An activity "
-        "therefore keeps its pattern even when that pattern has no variant for the detected environment "
-        "(for example Delete Element on screen).\n"
-        "• Single Matched Pattern: Resolution yields at most one pattern per activity — the one named by the "
-        "LLM. The matched pattern constrains the automation method: only the methods defined within that "
-        "pattern's context-method mapping are valid recommendations for the activity."
-    ),
-    "context_determination": (
-        "• LLM-Identified Environment Columns: When the log is loaded, the LLM reads the CSV header and sample "
-        "rows and identifies which columns indicate each execution environment — columns describing an HTML "
-        "element or browser location (web), a native application's interface or document structure (desktop), "
-        "or raw screen coordinates (screen). Columns are classified by what they describe, not by their names, "
-        "because names differ between loggers.\n"
-        "• Environment per Activity: Each activity group is examined for recorded values in those columns. "
-        "The highest-priority environment with at least one recorded value determines the execution "
-        "environment; implicit Find and Switch steps take the environment of the group they belong to.\n"
-        "• Priority Rule: Web indicators take precedence over desktop indicators, which take precedence over "
-        "screen indicators. This priority reflects the method fidelity hierarchy: DOM-level methods are more "
-        "reliable than UI Automation methods, which in turn are more reliable than visual recognition.\n"
-        "• Deciding Attributes: Only the attributes that actually drove the environment decision are shown — "
-        "not all attributes present in the group. This makes it explicit which evidence was used and allows "
-        "analysts to verify or override the inferred context."
-    ),
-    "method_recommendation": (
-        "• Pattern-Driven Method Lookup: The automation methods are drawn from the matched pattern's "
-        "variants (e.g., Write Element: DOM manipulation, UI Automation manipulation, hardware simulation); "
-        "which of them apply depends on the activity's execution environment.\n"
-        "• No Method for This Environment: When the matched pattern defines no variant for the determined "
-        "environment (for example Delete Element on screen, because an element cannot be deleted from an "
-        "image), no method is recommended and the stage states why instead of guessing. The same applies "
-        "when the environment itself could not be determined from the log attributes.\n"
-        "• Cumulative Applicability: A richer environment can also use the methods of every poorer one. A web "
-        "activity can use content-level (DOM), accessibility-level (UI Automation) and visual/input-level "
-        "(visual recognition, hardware simulation) methods; a desktop activity accessibility- and "
-        "visual/input-level methods; a screen activity visual/input-level methods only.\n"
-        "• Prioritised List: The applicable methods of the matched pattern are recommended in priority order — "
-        "content-level first, then accessibility-level, then visual/input-level — reflecting the reliability "
-        "and efficiency of each level. At most three methods are listed, one per level; patterns without a "
-        "variant at some level list fewer (e.g. Hover on web: DOM manipulation, then hardware simulation).\n"
-        "• Designer Override: The top-priority method is the default. Analysts may select another method on "
-        "the Analysis Results page if a different method better suits the deployment constraints."
-    ),
+STAGES = [
+    {"key": "segment", "step": 1, "stage": 1, "title": "Segment events by context"},
+    {"key": "abstract", "step": 2, "stage": 1, "title": "Abstract higher-level UI activities"},
+    {"key": "normalise", "step": 3, "stage": 1, "title": "Normalise UI activities"},
+    {"key": "implicit", "step": 4, "stage": 1, "title": "Add implicit activities"},
+    {"key": "match", "step": 5, "stage": 2, "title": "Match patterns"},
+    {"key": "environment", "step": 6, "stage": 2, "title": "Determine environment and object type"},
+    {"key": "methods", "step": 7, "stage": 2, "title": "Recommend prioritised methods"},
+]
+STAGE_KEYS = tuple(s["key"] for s in STAGES)
+STAGE_GROUPS = {1: "UI activity identification", 2: "Method recommendation"}
+
+# What each step does and why, shown under the step. (title, explanation) pairs.
+STAGE_LOGIC: Dict[str, List[List[str]]] = {
+    "segment": [
+        ["Attribute roles", "Loggers name attributes differently, so when the log is loaded an LLM "
+         "identifies the role of each attribute by what it describes, not by its name: the application "
+         "(software context), the further context such as webpage, window or worksheet (data context), "
+         "the target element, and the attributes indicating each execution environment. The activity-name "
+         "attribute is proposed by the LLM and confirmed or changed by the analyst before the analysis starts."],
+        ["Software context first", "Traversing the log in temporal order, consecutive events stay in the same "
+         "interaction segment as long as they share their software context; a change of the recorded "
+         "application starts a new segment."],
+        ["Then data context", "Within one application, a change of a data-context value — a different webpage, "
+         "worksheet or UI element — starts a new segment."],
+        ["Missing values", "A value that was not recorded is no evidence of a change: an event is compared on the "
+         "attributes it records, against the last value recorded in the segment (or, for the application, "
+         "the last application recorded in the log)."],
+        ["Evidence, not result", "Segments and UI activities need not coincide. The segments are the evidence "
+         "from which step 2 starts, not a constraint on its result."],
+    ],
+    "abstract": [
+        ["Collective intent", "In place of the SME, an LLM (prompt P3) receives the events of the segments, "
+         "numbered and with their target elements, and decides which consecutive events form one UI activity: "
+         "one action on one target."],
+        ["What belongs together", "Repetitions of the same action on the same target, and events that only record "
+         "the effect of an action (such as the change of a field registered when it loses focus), belong to "
+         "that action. Any other event forms a UI activity of its own; clicking a text field before pasting "
+         "into it is a separate UI activity."],
+        ["Divide and combine", "A segment may be divided, and events of adjacent segments may be combined. "
+         "Between adjacent segments the LLM is told, per attribute, whether the value is the same, changed or "
+         "not recorded. A changed application counts strongly against combining, and when the evidence does "
+         "not show one intent the events are kept apart."],
+        ["Checked, not overridden", "The code does not change the LLM's answer; it only checks that every UI "
+         "activity is a run of consecutive events and that every event belongs to exactly one UI activity. "
+         "Segments are sent in batches of up to 10, so events on either side of a batch boundary are not combined."],
+    ],
+    "normalise": [
+        ["Pattern vocabulary", "In place of the SME, an LLM (prompt P4) normalises each UI activity to the "
+         "terminology of the pattern collection, choosing by the meaning of the interaction rather than the "
+         "words of the log: a click on a button activates it, a click on a text field focuses it."],
+        ["Action from the pattern", "The LLM returns the pattern of the UI activity. No two patterns share an "
+         "action, so the pattern determines the normalised action; normalisation and pattern matching (step 5) "
+         "are one judgement here."],
+        ["Name: action + object + context", "Each UI activity is named by its action, its target object and the "
+         "context the object resides in, e.g. 'Write First Name field on rpachallenge.com in Edge'. Input "
+         "values are not part of the name."],
+        ["Not covered", "If no pattern fits, the LLM returns none and the UI activity is reported as not covered "
+         "by the pattern collection, rather than assigned to the closest pattern. A pattern name outside the "
+         "collection stops the analysis."],
+    ],
+    "implicit": [
+        ["Rules, in this order", "Some UI activities a bot must perform are not recorded. Three rules are applied, "
+         "in this order, to each UI activity, each considering the activities already inserted."],
+        ["Switch context", "When a UI activity is recorded in a different application from the last application "
+         "recorded before it, a Switch Context activity is inserted. A missing application value is no evidence; "
+         "a different webpage in the same application is not a switch. Switches between windows or tabs of one "
+         "application are found only when the log records them."],
+        ["Find", "Every UI activity that acts on a target element requires the bot to locate it first: Read, "
+         "Observe, Write, Delete, Disable, Activate, Hover and Focus, and Scroll and Refresh when they act on an "
+         "element rather than a whole page. A Find is inserted unless the preceding activity targets the same "
+         "element. Open, Switch Context and Find itself need no Find."],
+        ["Focus", "Writing requires the element to be focused for input. If the preceding activity does not focus "
+         "it, a Focus activity is inserted. An element is therefore found, then focused, then written to."],
+        ["Same element", "Two activities target the same element when they record the same element-attribute "
+         "value (any of their events); if the log records no element attribute, the target object and context "
+         "named by the LLM are compared."],
+    ],
+    "match": [
+        ["One pattern per action", "Every UI activity matches the pattern whose action is its normalised action; "
+         "implicit activities match the pattern they were inserted for. No model call is made in this step."],
+        ["Environment checked later", "Whether the pattern can be carried out in the activity's execution "
+         "environment is decided in step 7, so an activity keeps its pattern even when the pattern has no "
+         "variant for its environment."],
+    ],
+    "environment": [
+        ["Richest environment", "The execution environment of a UI activity is the richest one indicated by the "
+         "attributes recorded for any of its events: web (HTML element or browser location), then desktop "
+         "(native application interface or document structure), then screen (screen coordinates). A browser "
+         "event also records desktop and screen attributes, so the richest one recorded is the richest interface "
+         "representation available to a bot."],
+        ["Object type", "The environment determines the object type: an HTML element (web), a UI element (desktop) "
+         "or a visual element (screen). It is a property of the object; a poorer method chosen later does not "
+         "change it. Switch Context acts on a context."],
+        ["Implicit activities", "Find and Focus take the environment of the UI activity they precede. Switch Context "
+         "always takes the desktop environment: switching between applications, windows or browser tabs is an "
+         "operation of the desktop."],
+        ["Unknown", "If no attribute indicating an environment is recorded for any event of the UI activity, the "
+         "environment is reported as unknown and no method is recommended."],
+    ],
+    "methods": [
+        ["Cumulative applicability", "An object in a richer environment can also be acted on by the methods of every "
+         "poorer level: an HTML element is part of the DOM, exposed in the UI Automation tree and rendered on screen."],
+        ["Prioritised list", "The applicable variants of the matched pattern are listed in order of level: "
+         "content-level (DOM) first, then accessibility-level (UI Automation), then visual recognition and "
+         "hardware simulation. A pattern defines at most one variant per level, so the list has at most three methods."],
+        ["No method", "If the pattern defines no variant for the environment (e.g. Delete Element on screen), or the "
+         "environment is unknown, or the UI activity is not covered by the collection, no method is recommended "
+         "and the reason is stated."],
+        ["Designer's choice", "The first method is the recommendation. On the results page the analyst can select "
+         "another method from the list for each activity; the export uses the selected method."],
+    ],
 }
 
-# ── Async state for activity naming (LLM) ────────────────────────────────────
+_SENSITIVE_FIELD_TOKENS = ("password", "passwd", "secret", "token", "api_key", "apikey", "authorization")
+
+# ── Async state for the LLM step (step 3) ─────────────────────────────────────
 _step2_lock = threading.Lock()
 _step2_progress: dict = {}
 
@@ -156,6 +179,7 @@ def _get_history():
 def _save_history(history):
     path = "data/history.json"
     dir_path = os.path.dirname(os.path.abspath(path))
+    os.makedirs(dir_path, exist_ok=True)
     with tempfile.NamedTemporaryFile("w", encoding="utf-8", dir=dir_path,
                                      delete=False, suffix=".tmp") as f:
         json.dump(history, f, indent=2)
@@ -163,71 +187,45 @@ def _save_history(history):
     os.replace(tmp_path, path)
 
 
-def _update_history_stage(history_id, stage_key, workspace_data):
+def _update_history_entry(history_id, **fields):
     with _history_lock:
         history = _get_history()
         for entry in history:
-            if entry["id"] == history_id:
-                entry["progressive_artifacts"][stage_key] = workspace_data
+            if entry.get("id") == history_id:
+                entry.update(fields)
                 break
         _save_history(history)
 
 
-def _update_history_dfg(history_id, dfg):
-    with _history_lock:
-        history = _get_history()
-        for entry in history:
-            if entry["id"] == history_id:
-                entry["dfg"] = dfg
-                break
-        _save_history(history)
+# ── The recorded log ──────────────────────────────────────────────────────────
+
+def _redact(row: dict) -> dict:
+    return {
+        k: ("[REDACTED]" if any(t in str(k or "").lower() for t in _SENSITIVE_FIELD_TOKENS) else v)
+        for k, v in (row or {}).items()
+    }
 
 
-# ── CSV preview helper ────────────────────────────────────────────────────────
-
-def _read_csv_preview(filepath, max_rows=100):
+def load_log(filepath: str):
+    """All rows of the uploaded log as (columns, [{row_index, values}]), sensitive fields redacted."""
     from src.parser.csv_loader import CSVLoader
+    if not filepath or not os.path.exists(filepath):
+        return [], []
     with open(filepath, "r", encoding="utf-8-sig", newline="") as f:
         reader = _csv.reader(f)
-        raw_headers = next(reader, [])
-        headers = CSVLoader._dedup_headers(raw_headers)
-        rows = []
-        for i, vals in enumerate(reader):
-            if i >= max_rows:
-                break
-            rows.append({h: (vals[j] if j < len(vals) else "") for j, h in enumerate(headers)})
+        headers = CSVLoader._dedup_headers(next(reader, []))
+        rows = [
+            {"row_index": i, "values": _redact({h: (vals[j] if j < len(vals) else "") for j, h in enumerate(headers)})}
+            for i, vals in enumerate(reader)
+        ]
     return headers, rows
 
 
-# ── Context attribute picker (mirrors app.py logic) ───────────────────────────
+# ── Serialisation helpers ─────────────────────────────────────────────────────
 
-_WEB_ATTRS = ["xpath", "xpath_full", "html_id", "tag_name", "tag_type",
-              "tag_html", "tag_href", "browser_url", "webpage", "url"]
-_DESKTOP_ATTRS = ["application", "app", "window_title", "workbook",
-                  "worksheet", "cell_range", "control_type", "ui_path"]
-_SCREEN_ATTRS = ["x", "y", "mouse_x", "mouse_y", "click_x", "click_y",
-                 "coordinates", "coordinate"]
+def _serialize_events(events):
+    return [{"event": e.event, "row_index": e.row_index, "attributes": e.attributes} for e in events]
 
-
-def _pick_deciding_attributes(env, unique_attr_vals):
-    def _first_present(candidates):
-        for attr in candidates:
-            val = (unique_attr_vals.get(attr) or [None])[0]
-            if val not in (None, "", "None", "none"):
-                return {attr: val}
-        return {}
-    if env == "web":
-        return _first_present(_WEB_ATTRS)
-    if env == "desktop":
-        result = _first_present(["application", "app"])
-        result.update(_first_present(["window_title", "workbook", "worksheet"]))
-        return result
-    if env == "screen":
-        return _first_present(_SCREEN_ATTRS)
-    return {}
-
-
-# ── Object reconstruction helpers ─────────────────────────────────────────────
 
 def _reconstruct_events(serialized):
     from src.models.event import Event
@@ -236,35 +234,15 @@ def _reconstruct_events(serialized):
 
 def _reconstruct_groups(step1):
     from src.inference.event_grouper import EventGroup
-    result = []
-    for g in step1["groups"]:
-        result.append(EventGroup(
+    return [
+        EventGroup(
             events=_reconstruct_events(g["events"]),
             is_context_switch=g.get("is_context_switch", False),
             previous_app=g.get("previous_app"),
             current_app=g.get("current_app"),
-        ))
-    return result
-
-
-def _reconstruct_activities(step2):
-    from src.models.activity import Activity
-    result = []
-    for a in step2["activities"]:
-        result.append(Activity(
-            name=a["name"],
-            confidence=a["confidence"],
-            evidence=a.get("evidence", []),
-            reasoning=a.get("reasoning", ""),
-            source_events=a.get("source_events", []),
-            activity_type=a.get("activity_type", "main"),
-            is_implicit=a.get("is_implicit", False),
-            group_index=a.get("group_index", 0),
-            pattern_name=a.get("pattern_name"),
-            target=a.get("target"),
-            target_id=a.get("target_id"),
-        ))
-    return result
+        )
+        for g in step1["groups"]
+    ]
 
 
 def _serialize_activity(a):
@@ -280,159 +258,14 @@ def _serialize_activity(a):
         "pattern_name": a.pattern_name,
         "target": a.target,
         "target_id": a.target_id,
+        "context": getattr(a, "context", None),
     }
 
 
-# ── Workspace-format converters ───────────────────────────────────────────────
-
-def _ws_event_grouping(step1):
-    return {
-        "groups": [
-            {
-                "group_index": g["group_index"],
-                "event_rows": [e["row_index"] for e in g["events"] if e.get("row_index") is not None],
-                "event_labels": [e["event"] for e in g["events"]],
-                "group_size": len(g["events"]),
-            }
-            for g in step1["groups"]
-        ]
-    }
-
-
-def _ws_activity_naming(step2):
-    return {
-        "activities": [
-            {
-                "activity_index": i,
-                "group_index": a.get("group_index", 0),
-                "activity_name": a["name"],
-                "activity_type": a.get("activity_type", "main"),
-                "is_implicit": a.get("is_implicit", False),
-                "confidence": a["confidence"],
-                "source_events": a.get("source_events", []),
-                "evidence": a.get("evidence", []),
-            }
-            for i, a in enumerate(step2["activities"])
-        ]
-    }
-
-
-def _ws_action_object_extraction(step2, step3):
-    return {
-        "pairs": [
-            {
-                "activity_index": p["activity_index"],
-                "group_index": p.get("group_index", 0),
-                "activity_name": p["activity_name"],
-                "activity_type": p.get("activity_type", "main"),
-                "is_implicit": p.get("is_implicit", False),
-                "activity_action": p["norm_action"],
-                "activity_object": p["norm_object"],
-            }
-            for p in step3["pairs"]
-        ]
-    }
-
-
-def _ws_pattern_matching(step3, step4):
-    ctx_by_group = {c["group_index"]: c["environment"] for c in step3["contexts"]}
-    return {
-        "matches": [
-            {
-                "inferred_activity": m["activity_name"],
-                "execution_environment": ctx_by_group.get(m.get("group_index", -1), "unknown"),
-                "pattern_matched": m.get("pattern_name"),
-                "method_category": m.get("method_category"),
-                "events": m.get("source_events", []),
-            }
-            for m in step4["matches"]
-        ]
-    }
-
-
-def _ws_context_determination(step1, step2, step3):
-    groups_by_idx = {g["group_index"]: g for g in step1["groups"]}
-    env_by_group = {c["group_index"]: c["environment"] for c in step3["contexts"]}
-    deciding_by_group = {c["group_index"]: c.get("deciding_attributes") for c in step3["contexts"]}
-
-    contexts = []
-    for a in step2["activities"]:
-        group_idx = a.get("group_index", 0)
-        group = groups_by_idx.get(group_idx, {})
-        env = env_by_group.get(group_idx, "unknown")
-
-        unique_attr_vals = {}
-        for e in group.get("events", []):
-            for k, v in e.get("attributes", {}).items():
-                sv = str(v) if v is not None else ""
-                if sv:
-                    unique_attr_vals.setdefault(k, [])
-                    if sv not in unique_attr_vals[k]:
-                        unique_attr_vals[k].append(sv)
-
-        context_attr_values = deciding_by_group.get(group_idx)
-        if context_attr_values is None:  # analyses stored before step 3 recorded them
-            context_attr_values = _pick_deciding_attributes(env, unique_attr_vals)
-        is_ctx_switch = a.get("activity_type", "main") == "context_switch"
-
-        contexts.append({
-            "inferred_activity": a["name"],
-            "execution_environment": env,
-            "context_attributes_used": list(context_attr_values.keys()),
-            "context_attribute_values": context_attr_values,
-            "context_switch": is_ctx_switch,
-            "context_switch_from": group.get("previous_app") if is_ctx_switch else None,
-            "context_switch_to": group.get("current_app") if is_ctx_switch else None,
-        })
-
-    return {"contexts": contexts}
-
-
-def _ws_method_recommendation(step2, step6):
-    return {
-        "recommendations": [
-            {
-                "inferred_activity": r["activity_name"],
-                "recommended_method": r.get("method"),   # workspace.html key
-                "method": r.get("method"),               # results.html key
-                "methods": r.get("methods") or ([r["method"]] if r.get("method") else []),  # prioritised
-                "method_note": r.get("method_note"),     # why there is no method, if there is none
-                "activity_action": r.get("activity_action", ""),
-                "activity_object": r.get("activity_object", ""),
-                "execution_environment": r.get("execution_environment", ""),
-                "pattern_matched": r.get("pattern_matched"),
-                "method_category": r.get("method_category"),
-                "confidence": r.get("confidence"),
-                "events": r.get("events", []),
-                "context_switch": r.get("context_switch", False),
-                "activity_type": r.get("activity_type", "main"),
-                "is_implicit": r.get("is_implicit", False),
-            }
-            for r in step6["recommendations"]
-        ]
-    }
-
-
-def _to_workspace(store, stage_key):
-    """Convert StepStore data to the workspace progressive_artifacts format."""
-    if stage_key == "event_grouping":
-        return _ws_event_grouping(store.load_step(1))
-    if stage_key == "activity_naming":
-        return _ws_activity_naming(store.load_step(2))
-    if stage_key == "action_object_extraction":
-        return _ws_action_object_extraction(store.load_step(2), store.load_step(3))
-    if stage_key == "pattern_matching":
-        return _ws_pattern_matching(store.load_step(3), store.load_step(4))
-    if stage_key == "context_determination":
-        return _ws_context_determination(store.load_step(1), store.load_step(2), store.load_step(3))
-    if stage_key == "method_recommendation":
-        return _ws_method_recommendation(store.load_step(2), store.load_step(6))
-    return {}
-
-
-# ── Step compute functions ────────────────────────────────────────────────────
+# ── Step computations ─────────────────────────────────────────────────────────
 
 def _compute_step1(store):
+    """Attribute roles, step 1 (segments, rules) and step 2 (UI activities, LLM)."""
     from src.parser.csv_loader import CSVLoader
     from src.inference.event_grouper import EventGrouper, LLMGroupRefiner
     from src.llm.client import get_llm_client
@@ -450,43 +283,90 @@ def _compute_step1(store):
         grouper.group_attributes = loader.detected_group_columns
     if loader.detected_switch_columns:
         grouper.context_switch_attributes = loader.detected_switch_columns
+    element_attributes = list(loader.detected_element_columns or [])
+    grouper.element_attributes = element_attributes
 
-    groups = grouper.group_events_with_context_switches(events)
+    # Step 1: segmentation by software and data context (rules).
+    segments = grouper.group_events_with_context_switches(events)
 
-    # The LLM that refines the groups (and later names the activities) is shown the
-    # same application and context columns the grouper used, so its decisions rest
-    # on log data. They are stored with step 1 because step 2 runs separately.
+    # Step 2: the LLM abstracts UI activities from the segments. It is shown the same
+    # application, context and element attributes the segmentation used.
     application_attributes = list(grouper.context_switch_attributes)
     context_attributes = [c for c in grouper.group_attributes if c not in application_attributes]
-    element_attributes = list(loader.detected_element_columns or [])
     refiner = LLMGroupRefiner(
         llm_client,
         application_attributes=application_attributes,
         context_attributes=context_attributes,
         element_attributes=element_attributes,
     )
-    groups = refiner.refine(groups)
+    groups = refiner.refine(segments)
 
-    serialized = [
-        {
-            "group_index": i,
-            "events": [{"event": e.event, "row_index": e.row_index, "attributes": e.attributes}
-                       for e in g.events],
-            "is_context_switch": g.is_context_switch,
-            "previous_app": g.previous_app,
-            "current_app": g.current_app,
-        }
-        for i, g in enumerate(groups)
-    ]
-    return {"groups": serialized, "group_count": len(groups),
-            "event_count": sum(len(g.events) for g in groups),
-            "application_attributes": application_attributes,
-            "context_attributes": context_attributes,
-            "environment_columns": loader.detected_environment_columns,
-            "element_columns": element_attributes}
+    return {
+        "segments": [
+            {"segment_index": i, "rows": [e.row_index for e in s.events], "labels": [e.event for e in s.events],
+             "boundary": s.boundary}
+            for i, s in enumerate(segments)
+        ],
+        "groups": [
+            {"group_index": i, "events": _serialize_events(g.events), "is_context_switch": g.is_context_switch,
+             "previous_app": g.previous_app, "current_app": g.current_app}
+            for i, g in enumerate(groups)
+        ],
+        "group_count": len(groups),
+        "event_count": len(events),
+        "event_column": loader.detected_column,
+        "application_attributes": application_attributes,
+        "context_attributes": context_attributes,
+        "environment_columns": loader.detected_environment_columns,
+        "element_columns": element_attributes,
+    }
+
+
+def compute_recommendations(step1: dict, step2: dict) -> List[dict]:
+    """Steps 5 to 7 for every activity of the sequence (recorded and implicit)."""
+    from src.matching import PATTERNS
+    from src.matching.pattern_matcher import determine_environment
+    from src.models.pattern import explain_missing_method, object_type_for
+
+    patterns_by_name = {p.name.lower(): p for p in PATTERNS}
+    groups = step1["groups"]
+    environment_columns = step1.get("environment_columns")
+    by_group = {}
+    for g in groups:
+        by_group[g["group_index"]] = determine_environment(_reconstruct_events(g["events"]), environment_columns)
+
+    records = []
+    for a in step2["activities"]:
+        pattern = patterns_by_name.get((a.get("pattern_name") or "").strip().lower())
+        is_switch = a.get("activity_type") == "context_switch"
+        if is_switch:
+            environment, deciding = "desktop", {}
+            environment_note = ("Switch Context always takes the desktop environment: switching between "
+                                "applications, windows or browser tabs is an operation of the desktop.")
+        else:
+            environment, deciding = by_group.get(a.get("group_index"), ("unknown", {}))
+            environment_note = None
+            if a.get("is_implicit"):
+                environment_note = "Takes the environment of the UI activity it precedes."
+        methods = pattern.get_methods_for_context(environment) if pattern else []
+        records.append({
+            "pattern": pattern.name if pattern else None,
+            "action": pattern.action if pattern else None,
+            "category": pattern.category if pattern else None,
+            "pattern_description": pattern.description if pattern else None,
+            "object_type": object_type_for(pattern, environment),
+            "environment": environment,
+            "deciding": deciding,
+            "environment_note": environment_note,
+            "methods": methods,
+            "method": methods[0] if methods else None,
+            "method_note": explain_missing_method(pattern, environment),
+        })
+    return records
 
 
 def _run_step2_thread(aid):
+    """Step 3 (LLM, prompt P4) and step 4 (rules), then steps 5 to 7 (rules)."""
     store = StepStore(aid)
     try:
         from src.inference.activity_inferrer import ActivityInferrer
@@ -495,18 +375,16 @@ def _run_step2_thread(aid):
 
         step1 = store.load_step(1)
         groups = _reconstruct_groups(step1)
-        total = len(groups)
 
         with _step2_lock:
-            _step2_progress[aid].update({"total": total})
+            _step2_progress[aid].update({"total": len(groups)})
 
         def _on_progress(completed, total):
             with _step2_lock:
                 _step2_progress[aid].update({"completed": completed, "total": total})
 
-        llm_client = get_llm_client()
         inferrer = ActivityInferrer(
-            llm_client,
+            get_llm_client(),
             progress_callback=_on_progress,
             patterns=PATTERNS,
             application_attributes=step1.get("application_attributes"),
@@ -515,204 +393,124 @@ def _run_step2_thread(aid):
         )
         activities = inferrer.infer_activities(groups)
         if not activities:
-            raise RuntimeError("Activity naming produced no results — LLM may be unavailable.")
+            raise RuntimeError("Normalisation produced no UI activities — the LLM may be unavailable.")
 
-        step2_data = {"activities": [_serialize_activity(a) for a in activities]}
+        step2 = {"activities": [_serialize_activity(a) for a in activities]}
+        store.save_step(3, {"recommendations": compute_recommendations(step1, step2)})
+        # Written last: the poller treats step 2 as "done".
+        store.save_step(2, step2)
 
-        # Update the history artifact BEFORE writing the step2 file. The poller
-        # treats has_step(2) as "done", so if the file landed first a reload
-        # could race ahead of the history write and render an empty
-        # activity_naming stage. Writing the file last guarantees that once the
-        # stage reports done, its data is already in history.
         meta = store.load("meta")
-        _update_history_stage(meta["history_id"], "activity_naming",
-                              _ws_activity_naming(step2_data))
-        store.save_step(2, step2_data)
+        _update_history_entry(meta["history_id"], activity_count=len(activities))
 
         with _step2_lock:
             _step2_progress[aid]["status"] = "done"
-
-    except Exception as exc:
+    except Exception as exc:  # surfaced to the analyst; there is no fallback
+        _logger.exception("Normalisation (step 3) failed")
         with _step2_lock:
             _step2_progress[aid] = {"status": "error", "error": str(exc)}
 
 
-def _compute_step3(store):
-    from src.matching.pattern_matcher import determine_environment
-    from src.matching import PATTERNS
-    from src.models.pattern import object_type_for
+# ── The view shown by the workspace and results pages ─────────────────────────
 
+_RULE_OF_PATTERN = {"Switch Context": "switch", "Find Element": "find", "Focus": "focus"}
+
+
+def build_view(store) -> dict:
+    """Everything the workspace and the results page show, built from the stored steps."""
+    meta = store.load("meta") or {}
     step1 = store.load_step(1)
-    # Indicator columns per environment, identified by the LLM at load time. Older
-    # stored analyses predate them (None), and are replayed with the default names.
-    environment_columns = step1.get("environment_columns")
-    step2 = store.load_step(2)
-    activities = _reconstruct_activities(step2)
-
-    patterns_by_name = {p.name.lower(): p for p in PATTERNS}
-
-    contexts = []
-    for g in step1["groups"]:
-        group_events = _reconstruct_events(g["events"])
-        environment, deciding = determine_environment(group_events, environment_columns)
-        contexts.append({
-            "group_index": g["group_index"],
-            "environment": environment,
-            "deciding_attributes": deciding,
-        })
-    ctx_by_group = {c["group_index"]: c["environment"] for c in contexts}
-
-    pairs = []
-    for i, a in enumerate(activities):
-        group_idx = a.group_index
-        pattern = patterns_by_name.get((a.pattern_name or "").strip().lower())
-        environment = ctx_by_group.get(group_idx, "unknown")
-        object_environment = "desktop" if a.activity_type == "context_switch" else environment
-        pairs.append({
-            "activity_index": i,
-            "activity_name": a.name,
-            "norm_action": pattern.action if pattern else None,
-            "norm_object": object_type_for(pattern, object_environment),
-            "target": a.target,
-            "activity_type": a.activity_type,
-            "is_implicit": a.is_implicit,
-            "group_index": group_idx,
-            "environment": ctx_by_group.get(group_idx, "unknown"),
-        })
-
-    return {"pairs": pairs, "contexts": contexts}
-
-
-def _compute_step4(store):
-    from src.matching.pattern_matcher import PatternMatcher
-    from src.matching import PATTERNS
-
-    step2 = store.load_step(2)
-    activities = _reconstruct_activities(step2)
-    matcher = PatternMatcher(PATTERNS)
-
-    matches = []
-    for a in activities:
-        # Matched by name only: whether the pattern has a variant for the
-        # activity's environment is reported by step 6, not decided here.
-        pattern = matcher.match(a)
-        matches.append({
-            "activity_name": a.name,
-            "activity_action": pattern.action if pattern else None,
-            "pattern_name": pattern.name if pattern else None,
-            "method_category": pattern.category if pattern else None,
-            "activity_type": a.activity_type,
-            "is_implicit": a.is_implicit,
-            "group_index": a.group_index,
-            "source_events": a.source_events,
-        })
-
-    return {"matches": matches}
-
-
-def _compute_step6(store):
-    from src.matching.pattern_matcher import PatternMatcher
-    from src.matching import PATTERNS
-    from src.models.pattern import explain_missing_method, object_type_for
-
     step2 = store.load_step(2)
     step3 = store.load_step(3)
-    activities = _reconstruct_activities(step2)
-    ctx_by_group = {c["group_index"]: c["environment"] for c in step3["contexts"]}
-    matcher = PatternMatcher(PATTERNS)
+    columns, rows = load_log(meta.get("filepath"))
 
-    recommendations = []
-    for a in activities:
-        context = ctx_by_group.get(a.group_index, "unknown")
-        # Context switches are OS-level operations; the Switch Context pattern
-        # only lists "desktop", so look its method up in that environment.
-        method_environment = "desktop" if a.activity_type == "context_switch" else context
-        pattern = matcher.match(a)
-        methods = pattern.get_methods_for_context(method_environment) if pattern else []
-        method = methods[0] if methods else None
+    view = {
+        "aid": store.aid,
+        "filename": meta.get("filename"),
+        "log": {"columns": columns, "rows": rows},
+        "roles": {},
+        "segments": [],
+        "ui_activities": [],
+        "activities": [],
+        "graph": {"nodes": [], "edges": []},
+        "available": {key: False for key in STAGE_KEYS},
+        "outdated": False,
+    }
+    if not step1 or "segments" not in step1:
+        view["outdated"] = bool(step1)
+        return view
 
-        recommendations.append({
-            "activity_name": a.name,
-            "activity_action": pattern.action if pattern else None,
-            "activity_object": object_type_for(pattern, method_environment),
-            "target": a.target,
-            "pattern_matched": pattern.name if pattern else None,
-            "execution_environment": context,
-            "method": method,
-            "methods": methods,
-            "method_note": explain_missing_method(pattern, method_environment),
-            "method_category": pattern.category if pattern else None,
-            "confidence": a.confidence,
-            "events": a.source_events,
-            "activity_type": a.activity_type,
-            "is_implicit": a.is_implicit,
-            "context_switch": a.activity_type == "context_switch",
+    event_column = meta.get("event_column") or step1.get("event_column")
+    view["roles"] = {
+        "event_column": event_column,
+        "event_column_source": (
+            "selected by the analyst" if meta.get("llm_column") and meta.get("llm_column") != event_column
+            else "proposed by the LLM, confirmed by the analyst"
+        ),
+        "application": step1.get("application_attributes") or [],
+        "context": step1.get("context_attributes") or [],
+        "element": step1.get("element_columns") or [],
+        "environment": step1.get("environment_columns") or {},
+    }
+    view["segments"] = step1["segments"]
+
+    row_to_segment = {}
+    for s in step1["segments"]:
+        for r in s["rows"]:
+            row_to_segment[r] = s["segment_index"]
+    for g in step1["groups"]:
+        rows_ = [e["row_index"] for e in g["events"]]
+        view["ui_activities"].append({
+            "index": g["group_index"],
+            "rows": rows_,
+            "labels": [e["event"] for e in g["events"]],
+            "segments": sorted({row_to_segment[r] for r in rows_ if r in row_to_segment}),
         })
+    view["available"]["segment"] = view["available"]["abstract"] = True
 
-    return {"recommendations": recommendations}
+    if not step2 or not step3:
+        return view
 
-
-def _compute_dfg(store):
-    """Build the Directly-Follows Graph from the inferred activity sequence.
-
-    Mirrors the activity sequence the workspace shows (step 2 activities,
-    including implicit Find/Switch steps), in temporal order.
-    """
-    from src.process_mining import build_dfg_payload
-
-    meta = store.load("meta")
-    activities = _reconstruct_activities(store.load_step(2))
-
-    class _EvShim:
-        def __init__(self, row_index):
-            self.row_index = row_index
-            self.attributes = {}
-
-    class _MapShim:
-        def __init__(self, activity):
-            self.activity = activity
-            self.events = [_EvShim(r) for r in (activity.source_events or [])]
-
-    mappings = [_MapShim(a) for a in activities]
-    return build_dfg_payload(mappings, session_id=meta.get("history_id") or meta["aid"])
-
-
-_STAGE_TO_STEP = {
-    "action_object_extraction": 3,
-    "pattern_matching": 4,
-    "context_determination": 3,  # reads from step 3 contexts
-    "method_recommendation": 6,
-}
-
-_STEP_COMPUTE_FNS = {3: _compute_step3, 4: _compute_step4, 6: _compute_step6}
-
-_STEP_DEPS = {
-    "action_object_extraction": [3],
-    "pattern_matching": [3, 4],
-    "context_determination": [3],
-    "method_recommendation": [3, 6],
-}
-
-
-def _ensure_dependencies(store, stage_key):
-    """Auto-compute any missing prerequisite steps (steps 3, 4, 6 only)."""
-    for step_num in _STEP_DEPS.get(stage_key, []):
-        if not store.has_step(step_num):
-            data = _STEP_COMPUTE_FNS[step_num](store)
-            store.save_step(step_num, data)
+    recs = step3["recommendations"]
+    for i, (a, rec) in enumerate(zip(step2["activities"], recs)):
+        implicit = bool(a.get("is_implicit"))
+        view["activities"].append({
+            "index": i,
+            "number": i + 1,
+            "kind": "implicit" if implicit else "recorded",
+            "rule": _RULE_OF_PATTERN.get(a.get("pattern_name")) if implicit else None,
+            "name": a["name"],
+            "target": a.get("target"),
+            "context": a.get("context"),
+            "ui_activity": a.get("group_index"),
+            "rows": a.get("source_events") or [],
+            "confidence": None if implicit else a.get("confidence"),
+            "evidence": [] if implicit else (a.get("evidence") or []),
+            "reasoning": a.get("reasoning") or "",
+            **rec,
+        })
+    view["graph"] = {
+        "nodes": [{"id": a["index"], "label": a["name"], "kind": a["kind"], "rule": a["rule"]}
+                  for a in view["activities"]],
+        "edges": [{"source": i, "target": i + 1} for i in range(len(view["activities"]) - 1)],
+    }
+    for key in ("normalise", "implicit", "match", "environment", "methods"):
+        view["available"][key] = True
+    return view
 
 
 # ── Routes ────────────────────────────────────────────────────────────────────
 
 @bp.route("/start-progressive")
 def start_progressive():
-    """Entry point: compute step 1 from the session file and redirect to workspace."""
+    """Run attribute roles and steps 1–2 for the uploaded log, then open the workspace."""
     filepath = session.get("uploaded_file")
     filename = session.get("filename")
     if not filepath or not os.path.exists(filepath):
         return redirect("/upload")
 
     event_column = request.args.get("event_column")
+    llm_column = request.args.get("llm_column")
     aid = str(uuid.uuid4())
     history_id = str(uuid.uuid4())
 
@@ -727,49 +525,34 @@ def start_progressive():
         "filename": filename,
         "filepath": prog_filepath,
         "event_column": event_column,
+        "llm_column": llm_column,
     })
 
     try:
         step1_data = _compute_step1(store)
     except Exception as exc:
-        _logger.exception("Step 1 (event grouping / column detection) failed")
+        _logger.exception("Steps 1-2 (segmentation and abstraction) failed")
         return redirect(f"/upload?llm_error={_urlquote(str(exc))}")
     store.save_step(1, step1_data)
-
-    try:
-        log_columns, preview_rows = _read_csv_preview(prog_filepath)
-        log_preview = [{"row_index": i, "values": row} for i, row in enumerate(preview_rows)]
-    except Exception:
-        log_columns, log_preview = [], []
-
-    progressive_artifacts = {k: {} for k in PROGRESSIVE_STAGE_KEYS}
-    progressive_artifacts["event_grouping"] = _ws_event_grouping(step1_data)
 
     history_entry = {
         "id": history_id,
         "timestamp": datetime.now().isoformat(),
         "filename": filename,
-        "activities": [],
-        "recommendations": [],
-        "dfg": {},
-        "progressive_artifacts": progressive_artifacts,
-        "progressive_logic": PROGRESSIVE_LOGIC,
         "event_column": event_column,
-        "log_columns": log_columns,
-        "log_preview": log_preview,
         "progressive_aid": aid,
+        "activity_count": 0,
     }
-
     with _history_lock:
         history = _get_history()
         history.insert(0, history_entry)
         _save_history(history)
 
-    return redirect(f"/workspace/{history_id}#event_grouping")
+    return redirect(f"/workspace/{history_id}#segment")
 
 
-@bp.route("/<aid>/compute/activity_naming/start", methods=["POST"])
-def activity_naming_start(aid):
+@bp.route("/<aid>/normalise/start", methods=["POST"])
+def normalise_start(aid):
     if not StepStore.exists(aid):
         return jsonify({"error": "not found"}), 404
     store = StepStore(aid)
@@ -778,58 +561,17 @@ def activity_naming_start(aid):
     with _step2_lock:
         state = _step2_progress.get(aid, {})
         if state.get("status") == "computing":
-            return jsonify({"status": "computing",
-                            "completed": state.get("completed", 0),
+            return jsonify({"status": "computing", "completed": state.get("completed", 0),
                             "total": state.get("total", 0)})
         _step2_progress[aid] = {"status": "computing", "completed": 0, "total": 0}
-    t = threading.Thread(target=_run_step2_thread, args=(aid,), daemon=True)
-    t.start()
+    threading.Thread(target=_run_step2_thread, args=(aid,), daemon=True).start()
     return jsonify({"status": "started"})
 
 
-@bp.route("/<aid>/compute/activity_naming/poll")
-def activity_naming_poll(aid):
-    if StepStore(aid).has_step(2):
+@bp.route("/<aid>/normalise/poll")
+def normalise_poll(aid):
+    if StepStore.exists(aid) and StepStore(aid).has_step(2):
         return jsonify({"status": "done"})
     with _step2_lock:
         state = dict(_step2_progress.get(aid, {"status": "waiting"}))
     return jsonify(state)
-
-
-@bp.route("/<aid>/compute/<stage_key>")
-def compute_stage(aid, stage_key):
-    """Synchronously compute a pipeline stage, update history, redirect to workspace."""
-    if stage_key == "activity_naming":
-        return jsonify({"error": "use async endpoint"}), 400
-    if stage_key not in PROGRESSIVE_STAGE_KEYS:
-        return "Unknown stage", 400
-    if not StepStore.exists(aid):
-        return redirect("/upload")
-
-    store = StepStore(aid)
-    meta = store.load("meta")
-    history_id = meta["history_id"]
-
-    # All stages after event_grouping need activity naming (step 2) to be done first
-    if stage_key != "event_grouping" and not store.has_step(2):
-        return redirect(f"/workspace/{history_id}#activity_naming")
-
-    # Compute every stage in order from action_object_extraction up to the
-    # requested stage. This ensures no intermediate stage is skipped when the
-    # user jumps ahead in the roadmap.
-    try:
-        stage_idx = PROGRESSIVE_STAGE_KEYS.index(stage_key)
-        computed = PROGRESSIVE_STAGE_KEYS[2:stage_idx + 1]
-        for sk in computed:
-            _ensure_dependencies(store, sk)
-            ws_data = _to_workspace(store, sk)
-            _update_history_stage(history_id, sk, ws_data)
-        # The DFG reflects the full activity sequence, so build it once the
-        # final method_recommendation stage has been computed.
-        if "method_recommendation" in computed:
-            _update_history_dfg(history_id, _compute_dfg(store))
-    except Exception as exc:
-        _logger.exception("Stage %s computation failed", stage_key)
-        return redirect(f"/workspace/{history_id}?llm_error={_urlquote(str(exc))}#{stage_key}")
-
-    return redirect(f"/workspace/{history_id}#{stage_key}")

@@ -12,16 +12,32 @@ _logger = logging.getLogger(__name__)
 
 @dataclass
 class EventGroup:
-    """Represents a group of events with context information."""
+    """Represents a group of events with context information.
+
+    ``boundary`` says why the group starts where it does (step 1 of the approach):
+    the recorded application changed, a data-context attribute changed, or None for
+    the first group of the log. It is set for the rule-based segments only.
+    """
 
     events: List[Event]
     is_context_switch: bool = False
     previous_app: Optional[str] = None
     current_app: Optional[str] = None
+    boundary: Optional[str] = None
 
 
 class EventGrouper:
-    """Groups consecutive events that share common attributes."""
+    """Segments the log by context (step 1 of the approach).
+
+    Following the aggregation mechanism of Völker and Weske, consecutive events stay
+    in the same *interaction segment* as long as they share their software context
+    (the recorded application); within a software context, a change in data context
+    (e.g. a different webpage, worksheet or UI element) starts a new segment.
+
+    A value that was not recorded is no evidence of a change: an event that records
+    no application, or no value for a data-context attribute, is compared on the
+    attributes it does record, against the last value recorded before it.
+    """
 
     DEFAULT_GROUP_ATTRIBUTES = [
         "app",
@@ -38,25 +54,34 @@ class EventGrouper:
         self,
         group_attributes: Optional[List[str]] = None,
         context_switch_attributes: Optional[List[str]] = None,
+        element_attributes: Optional[List[str]] = None,
     ):
+        """
+        Args:
+            group_attributes: Context attributes of the log (software and data context),
+                as identified by the LLM when the log was loaded.
+            context_switch_attributes: Attributes recording the application (software
+                context); a subset of ``group_attributes``.
+            element_attributes: Attributes identifying the target UI element; part of
+                the data context.
+        """
         self.group_attributes = group_attributes or self.DEFAULT_GROUP_ATTRIBUTES
         self.context_switch_attributes = (
             context_switch_attributes or self.CONTEXT_SWITCH_ATTRIBUTES
         )
+        self.element_attributes = list(element_attributes or [])
+
+    @property
+    def data_context_attributes(self) -> List[str]:
+        """Context attributes other than the application, then the element attributes."""
+        keys: List[str] = []
+        for key in list(self.group_attributes) + self.element_attributes:
+            if key not in self.context_switch_attributes and key not in keys:
+                keys.append(key)
+        return keys
 
     def group_events(self, events: List[Event]) -> List[List[Event]]:
-        """
-        Group consecutive events that share at least one grouping attribute.
-
-        Events are grouped if they are consecutive AND share at least one
-        attribute value from group_attributes.
-
-        Args:
-            events: List of Event objects in temporal order
-
-        Returns:
-            List of event groups (each group is a list of Events)
-        """
+        """Segment the log by context and return the segments as lists of events."""
         groups = self._group_events_with_context(events)
         return [g.events for g in groups]
 
@@ -64,20 +89,18 @@ class EventGrouper:
         self, events: List[Event]
     ) -> List[EventGroup]:
         """
-        Group events and propose application-switch boundaries.
+        Segment the log by context and mark application switches.
 
-        When a recorded application value differs from the last recorded one, the
-        current group closes and a new one starts: a *candidate* switch for the
-        LLM refinement pass and activity naming to confirm or reject. An event
-        with no application value is never treated as a switch (a missing value
-        is no evidence either way); the next recorded value is compared with the
-        last recorded application instead.
+        When a recorded application differs from the last recorded one, a new segment
+        starts and is marked with the previous and current application. Within one
+        application, a recorded data-context value that differs from the value last
+        recorded in the current segment starts a new segment.
 
         Args:
             events: List of Event objects in temporal order
 
         Returns:
-            List of EventGroup objects with candidate switch boundaries
+            List of EventGroup objects (interaction segments)
         """
         return self._group_events_with_context(events)
 
@@ -88,25 +111,39 @@ class EventGrouper:
 
         groups = []
         current_group = EventGroup(events=[events[0]])
+        segment_values = self._data_context(events[0])
         last_app = self._get_application_attribute(events[0])
 
         for event in events[1:]:
             app = self._get_application_attribute(event)
+            values = self._data_context(event)
             application_changed = (
                 app is not None and last_app is not None and app != last_app
             )
+            changed = [
+                key for key, value in values.items()
+                if key in segment_values and segment_values[key] != value
+            ]
 
             if application_changed:
                 current_group.is_context_switch = True
                 groups.append(current_group)
                 current_group = EventGroup(
-                    events=[event], previous_app=last_app, current_app=app
+                    events=[event], previous_app=last_app, current_app=app,
+                    boundary=f"application changed: {last_app} \u2192 {app}",
                 )
-            elif self._events_share_attribute(current_group.events[-1], event):
-                current_group.events.append(event)
-            else:
+                segment_values = dict(values)
+            elif changed:
                 groups.append(current_group)
-                current_group = EventGroup(events=[event])
+                key = changed[0]
+                current_group = EventGroup(
+                    events=[event],
+                    boundary=f"{key} changed: {segment_values[key]} \u2192 {values[key]}",
+                )
+                segment_values = dict(values)
+            else:
+                current_group.events.append(event)
+                segment_values.update(values)
 
             if app is not None:
                 last_app = app
@@ -116,6 +153,15 @@ class EventGrouper:
 
         return groups
 
+    def _data_context(self, event: Event) -> Dict[str, str]:
+        """The data-context values an event records (attributes it leaves empty are absent)."""
+        values: Dict[str, str] = {}
+        for key in self.data_context_attributes:
+            value = event.recorded(key)
+            if value is not None:
+                values[key] = value
+        return values
+
     def _get_application_attribute(self, event: Event) -> Optional[str]:
         """The application recorded for an event, or None when the log has none."""
         for attr in self.context_switch_attributes:
@@ -123,26 +169,6 @@ class EventGrouper:
             if value is not None:
                 return value
         return None
-
-    def _events_share_attribute(self, event1: Event, event2: Event) -> bool:
-        """
-        Check if two events share at least one grouping attribute.
-
-        Args:
-            event1: First event
-            event2: Second event
-
-        Returns:
-            True if events share at least one recorded attribute value
-        """
-        for attr in self.group_attributes:
-            val1 = event1.recorded(attr)
-            val2 = event2.recorded(attr)
-
-            if val1 is not None and val1 == val2:
-                return True
-
-        return False
 
     def get_group_summary(self, groups: List[List[Event]]) -> dict:
         """

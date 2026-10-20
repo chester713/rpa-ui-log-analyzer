@@ -9,8 +9,12 @@ from .pattern_matcher import (
 )
 from .output_formatter import RecommendationFormatter
 
+import os as _os
+
+# The pattern files live in <repository>/patterns, wherever the app is started from.
+_PATTERNS_DIR = _os.path.join(_os.path.dirname(_os.path.dirname(_os.path.dirname(_os.path.abspath(__file__)))), "patterns")
 _pattern_loader = PatternLoader()
-PATTERNS = _pattern_loader.load_patterns("patterns")
+PATTERNS = _pattern_loader.load_patterns(_PATTERNS_DIR)
 matcher = PatternMatcher(PATTERNS)
 
 __all__ = [

@@ -50,7 +50,6 @@ app.config["SECRET_KEY"] = _secret_key
 os.makedirs(app.config["UPLOAD_FOLDER"], exist_ok=True)
 os.makedirs("config", exist_ok=True)
 os.makedirs("data", exist_ok=True)
-os.makedirs("skills", exist_ok=True)
 os.makedirs(os.path.join("data", "progressive"), exist_ok=True)
 
 from src.web.progressive import bp as _progressive_bp
@@ -60,28 +59,6 @@ MAX_PREVIEW_ROWS = 100
 MAX_HISTORY_ENTRIES = 200
 MAX_UPLOAD_MB = 16
 LLM_DETECT_SAMPLE_ROWS = 100
-
-# In-memory progress store keyed by analysis_id (one entry per active analysis).
-_analysis_progress: dict = {}
-_progress_lock = threading.Lock()
-PROGRESSIVE_STAGE_KEYS = (
-    "event_grouping",
-    "activity_naming",
-    "action_object_extraction",
-    "pattern_matching",
-    "context_determination",
-    "method_recommendation",
-)
-SENSITIVE_FIELD_TOKENS = (
-    "password",
-    "passwd",
-    "secret",
-    "token",
-    "api_key",
-    "apikey",
-    "authorization",
-)
-
 
 def _read_csv_dedup(filepath: str, max_rows: int | None = None) -> tuple:
     """Open a CSV and return (unique_fieldnames, rows_as_dicts).
@@ -102,17 +79,6 @@ def _read_csv_dedup(filepath: str, max_rows: int | None = None) -> tuple:
     return headers, rows
 
 
-def _redact_row(row: dict) -> dict:
-    redacted = {}
-    for key, value in (row or {}).items():
-        key_l = str(key or "").lower()
-        if any(token in key_l for token in SENSITIVE_FIELD_TOKENS):
-            redacted[key] = "[REDACTED]"
-        else:
-            redacted[key] = value
-    return redacted
-
-
 def get_history():
     history_path = "data/history.json"
     if os.path.exists(history_path):
@@ -129,20 +95,6 @@ def save_history(history):
     history_path = "data/history.json"
     with open(history_path, "w", encoding="utf-8") as f:
         json.dump(history, f, indent=2)
-
-
-def _load_full_log(entry: dict) -> list:
-    """Return full CSV rows for the entry, falling back to the stored preview."""
-    filename = entry.get("filename", "")
-    if filename:
-        filepath = os.path.join(app.config["UPLOAD_FOLDER"], filename)
-        if os.path.exists(filepath):
-            try:
-                _, rows = _read_csv_dedup(filepath)
-                return [{"row_index": i, "values": _redact_row(row)} for i, row in enumerate(rows)]
-            except OSError:
-                pass
-    return entry.get("log_preview", [])
 
 
 @app.route("/")
@@ -252,173 +204,50 @@ def detect_column():
         return jsonify({"error": "An internal error occurred. Please try again."}), 500
 
 
-@app.route("/progress", methods=["GET"])
-def progress():
-    analysis_id = session.get("analysis_id")
-    if not analysis_id:
-        return jsonify({"stage": "waiting", "completed": 0, "total": 0})
-    with _progress_lock:
-        state = dict(_analysis_progress.get(analysis_id, {"stage": "waiting", "completed": 0, "total": 0}))
-    return jsonify(state)
+def _find_entry(history_id):
+    return next((h for h in get_history() if h.get("id") == history_id), None)
 
 
-def _synthesize_recommendations_from_progressive(entry):
-    """Populate entry.recommendations from progressive_artifacts when it's empty."""
-    if entry.get("recommendations"):
-        return
-    mr_recs = (
-        entry.get("progressive_artifacts", {})
-        .get("method_recommendation", {})
-        .get("recommendations", [])
-    )
-    if not mr_recs:
-        return
-    entry["recommendations"] = [
-        {
-            "inferred_activity": r.get("inferred_activity", ""),
-            "activity_action": r.get("activity_action", ""),
-            "activity_object": r.get("activity_object", ""),
-            "events": r.get("events", []),
-            "execution_environment": r.get("execution_environment", ""),
-            "pattern_matched": r.get("pattern_matched"),
-            "method": r.get("method") or r.get("recommended_method"),
-            "methods": r.get("methods") or (
-                [r.get("method") or r.get("recommended_method")]
-                if (r.get("method") or r.get("recommended_method")) else []
-            ),
-            "method_note": r.get("method_note"),
-            "method_category": r.get("method_category"),
-            "confidence": r.get("confidence", 0),
-            "confidence_explanation": None,
-            "context_attributes_used": None,
-            "context_switch": r.get("context_switch", False),
-            "context_switch_from": None,
-            "context_switch_to": None,
-            "inference_evidence": [],
-            "inference_reasoning": "",
-        }
-        for r in mr_recs
-    ]
+def _view_for(entry):
+    """The stored analysis of a history entry, as shown by the workspace and results pages."""
+    from src.web.progressive import build_view
+    from src.web.step_store import StepStore
+
+    aid = entry.get("progressive_aid")
+    if not aid or not StepStore.exists(aid):
+        return None
+    return build_view(StepStore(aid))
 
 
 @app.route("/results/<history_id>")
 def results(history_id):
-    history = get_history()
-    entry = next((h for h in history if h["id"] == history_id), None)
-
+    entry = _find_entry(history_id)
     if entry is None:
         return "Analysis not found", 404
-
-    _synthesize_recommendations_from_progressive(entry)
-
-    # Backward-compatible normalization for older history entries.
-    if "log_columns" not in entry or not entry.get("log_columns"):
-        preview = entry.get("log_preview", [])
-        if preview and isinstance(preview[0], dict):
-            first = preview[0]
-            if "values" in first and isinstance(first["values"], dict):
-                entry["log_columns"] = list(first["values"].keys())
-            else:
-                # Legacy shape used event/attributes only.
-                entry["log_columns"] = ["event", "attributes"]
-                normalized = []
-                for i, row in enumerate(preview):
-                    normalized.append(
-                        {
-                            "row_index": row.get("row_index", i),
-                            "values": {
-                                "event": row.get("event", ""),
-                                "attributes": row.get("attributes", {}),
-                            },
-                        }
-                    )
-                entry["log_preview"] = normalized
-
-    entry["log_preview"] = _load_full_log(entry)
-    return render_template("results.html", entry=entry)
+    return render_template("results.html", entry=entry, view=_view_for(entry))
 
 
 @app.route("/workspace/<history_id>")
 def workspace(history_id):
-    history = get_history()
-    entry = next((h for h in history if h["id"] == history_id), None)
+    from src.web.progressive import STAGES, STAGE_GROUPS, STAGE_LOGIC
 
+    entry = _find_entry(history_id)
     if entry is None:
         return "Analysis not found", 404
-
-    if "progressive_artifacts" not in entry:
-        entry["progressive_artifacts"] = {
-            stage: {}
-            for stage in PROGRESSIVE_STAGE_KEYS
-        }
-    if "progressive_logic" not in entry:
-        entry["progressive_logic"] = {
-            stage: ""
-            for stage in PROGRESSIVE_STAGE_KEYS
-        }
-
-    # Enforce deterministic stage ordering for workspace replay.
-    entry["progressive_artifacts"] = {
-        stage: entry["progressive_artifacts"].get(stage, {})
-        for stage in PROGRESSIVE_STAGE_KEYS
-    }
-    entry["progressive_logic"] = {
-        stage: entry["progressive_logic"].get(stage, "")
-        for stage in PROGRESSIVE_STAGE_KEYS
-    }
-
-    # Preserve log columns and preview for workspace table rendering.
-    if "log_columns" not in entry or not entry.get("log_columns"):
-        preview = entry.get("log_preview", [])
-        if preview and isinstance(preview[0], dict):
-            first = preview[0]
-            if "values" in first and isinstance(first["values"], dict):
-                entry["log_columns"] = list(first["values"].keys())
-            else:
-                entry["log_columns"] = ["event", "attributes"]
-
-    return render_template("workspace.html", entry=entry)
+    return render_template(
+        "workspace.html", entry=entry, view=_view_for(entry),
+        stages=STAGES, stage_groups=STAGE_GROUPS, logic=STAGE_LOGIC,
+    )
 
 
 @app.route("/history")
 def history():
-    history_list = get_history()
-    return render_template("history.html", history=history_list)
+    return render_template("history.html", history=get_history())
 
 
 @app.route("/history/<history_id>")
 def history_detail(history_id):
-    history = get_history()
-    entry = next((h for h in history if h["id"] == history_id), None)
-
-    if entry is None:
-        return "Analysis not found", 404
-
-    _synthesize_recommendations_from_progressive(entry)
-
-    if "log_columns" not in entry or not entry.get("log_columns"):
-        preview = entry.get("log_preview", [])
-        if preview and isinstance(preview[0], dict):
-            first = preview[0]
-            if "values" in first and isinstance(first["values"], dict):
-                entry["log_columns"] = list(first["values"].keys())
-            else:
-                entry["log_columns"] = ["event", "attributes"]
-                normalized = []
-                for i, row in enumerate(preview):
-                    normalized.append(
-                        {
-                            "row_index": row.get("row_index", i),
-                            "values": {
-                                "event": row.get("event", ""),
-                                "attributes": row.get("attributes", {}),
-                            },
-                        }
-                    )
-                entry["log_preview"] = normalized
-
-    entry["log_preview"] = _load_full_log(entry)
-    return render_template("results.html", entry=entry)
+    return redirect(url_for("results", history_id=history_id))
 
 
 if __name__ == "__main__":

@@ -115,6 +115,7 @@ class DataPipeline:
             self.grouper.group_attributes = self.loader.detected_group_columns
         if self.loader.detected_switch_columns:
             self.grouper.context_switch_attributes = self.loader.detected_switch_columns
+        self.grouper.element_attributes = list(self.loader.detected_element_columns or [])
 
         # The refinement and naming prompts show the LLM the same application and
         # context columns the grouper used, so their decisions rest on log data.
@@ -130,9 +131,9 @@ class DataPipeline:
         self.inferrer.context_attributes = context_attributes
         self.inferrer.element_attributes = element_attributes
 
-        # Rule-based pre-segmentation, then an LLM refinement pass that merges
-        # over-segmented adjacent groups sharing one intent. This mirrors the web
-        # pipeline (progressive step 1). The refine call is non-deterministic, so
+        # Step 1: segmentation by software and data context (rules); step 2: the LLM
+        # abstracts UI activities from the segments, dividing and combining them.
+        # This mirrors the web pipeline. The refine call is non-deterministic, so
         # it runs once and the resulting groups are reused for inference,
         # recommendations, and statistics to keep group indices aligned.
         groups = self.grouper.group_events_with_context_switches(events)
@@ -195,11 +196,13 @@ class DataPipeline:
             events = group.events if group else []
             context, deciding = determine_environment(events, environment_columns)
 
-            # Context switches are OS-level operations; the Switch Context pattern
-            # only lists "desktop", so look its method up in that environment
-            # while still reporting the activity's real execution environment.
+            # Switching between applications, windows or browser tabs is an operation of
+            # the desktop, so a Switch Context activity always takes the desktop
+            # environment (step 6 of the approach).
             is_context_switch = activity.activity_type == "context_switch"
-            method_environment = "desktop" if is_context_switch else context
+            if is_context_switch:
+                context, deciding = "desktop", {}
+            method_environment = context
 
             # The pattern is matched by name only. If it has no variant for the
             # environment, the pattern is kept and the method note says why.

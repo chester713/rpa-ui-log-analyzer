@@ -7,7 +7,6 @@ element cannot be deleted from an image) the activity keeps its pattern, gets no
 method, and says why. Web (progressive) and CLI pipelines report the same note.
 """
 
-import uuid
 from pathlib import Path
 
 import pytest
@@ -135,7 +134,7 @@ def test_cli_context_switch_still_uses_the_desktop_method() -> None:
 
     (rec,) = _recommendations(activities, groups)
 
-    assert rec.execution_environment == "web"
+    assert rec.execution_environment == "desktop"
     assert rec.method == "UI Automation manipulation"
     assert rec.method_note is None
 
@@ -167,105 +166,77 @@ def _group(index, attributes):
 
 
 def _run_pipeline(monkeypatch, tmp_path, groups, activities):
-    monkeypatch.setattr("src.web.step_store._STORE_DIR", str(tmp_path / "progressive"))
-    from src.web.step_store import StepStore
+    """Steps 5 to 7 of the web pipeline for stored UI activities (no model call)."""
+    from src.web.progressive import compute_recommendations
 
-    aid, history_id = str(uuid.uuid4()), str(uuid.uuid4())
-    store = StepStore(aid)
-    store.save("meta", {
-        "aid": aid,
-        "history_id": history_id,
-        "filename": "sample.csv",
-        "filepath": str(tmp_path / "sample.csv"),
-        "event_column": "Event",
-    })
-    store.save_step(1, {"groups": groups, "group_count": len(groups), "event_count": len(groups)})
-    store.save_step(2, {"activities": activities})
-
-    stages = ["event_grouping", "activity_naming", "action_object_extraction",
-              "pattern_matching", "context_determination", "method_recommendation"]
-    entry = {
-        "id": history_id,
-        "filename": "sample.csv",
-        "progressive_artifacts": {k: {} for k in stages},
-        "progressive_logic": {k: "" for k in stages},
-        "dfg": {},
-        "progressive_aid": aid,
-    }
-    history = [entry]
-    monkeypatch.setattr("src.web.progressive._get_history", lambda: history)
-    monkeypatch.setattr("src.web.progressive._save_history", lambda h: None)
-
-    response = webapp.app.test_client().get(f"/p/{aid}/compute/method_recommendation")
-    assert response.status_code in (301, 302)
-    artifacts = entry["progressive_artifacts"]
-    return artifacts["pattern_matching"]["matches"], artifacts["method_recommendation"]["recommendations"]
+    step1 = {"groups": groups, "environment_columns": None}
+    return compute_recommendations(step1, {"activities": activities})
 
 
 def test_web_delete_element_on_screen_keeps_pattern_and_explains_missing_method(monkeypatch, tmp_path) -> None:
-    matches, recs = _run_pipeline(
+    (rec,) = _run_pipeline(
         monkeypatch, tmp_path,
         groups=[_group(0, {"x": "10", "y": "20"})],
         activities=[_activity("Delete icon", "Delete Element")],
     )
 
-    assert matches[0]["pattern_matched"] == "Delete Element"
-    assert matches[0]["execution_environment"] == "screen"
-    (rec,) = recs
-    assert rec["pattern_matched"] == "Delete Element"
-    assert rec["activity_action"] == "Delete"
-    assert rec["execution_environment"] == "screen"
+    assert rec["pattern"] == "Delete Element"
+    assert rec["action"] == "Delete"
+    assert rec["environment"] == "screen"
+    assert rec["object_type"] == "visual element"
     assert rec["method"] is None
     assert rec["method_note"] == DELETE_SCREEN_NOTE
 
 
 def test_web_delete_element_on_desktop_still_gets_a_method(monkeypatch, tmp_path) -> None:
-    _, recs = _run_pipeline(
+    (rec,) = _run_pipeline(
         monkeypatch, tmp_path,
         groups=[_group(0, {"application": "Excel"})],
         activities=[_activity("Delete row", "Delete Element")],
     )
 
-    assert recs[0]["method"] == "UI Automation manipulation"
-    assert recs[0]["method_note"] is None
+    assert rec["method"] == "UI Automation manipulation"
+    assert rec["method_note"] is None
 
 
 def test_web_unknown_environment_keeps_pattern_and_says_environment_is_unknown(monkeypatch, tmp_path) -> None:
-    matches, recs = _run_pipeline(
+    (rec,) = _run_pipeline(
         monkeypatch, tmp_path,
         groups=[_group(0, {})],
         activities=[_activity("Activate button", "Activate")],
     )
 
-    assert matches[0]["pattern_matched"] == "Activate"
-    assert recs[0]["execution_environment"] == "unknown"
-    assert recs[0]["method"] is None
-    assert "could not be determined" in recs[0]["method_note"]
+    assert rec["pattern"] == "Activate"
+    assert rec["environment"] == "unknown"
+    assert rec["method"] is None
+    assert "could not be determined" in rec["method_note"]
 
 
 def test_web_unknown_pattern_name_is_reported_as_no_pattern(monkeypatch, tmp_path) -> None:
-    matches, recs = _run_pipeline(
+    (rec,) = _run_pipeline(
         monkeypatch, tmp_path,
         groups=[_group(0, {"application": "Excel"})],
-        activities=[_activity("Teleport", "Teleport Element")],
+        activities=[_activity("Drag file to folder", None)],
     )
 
-    assert matches[0]["pattern_matched"] is None
-    assert recs[0]["method"] is None
-    assert "no pattern matched" in recs[0]["method_note"]
+    assert rec["pattern"] is None
+    assert rec["method"] is None
+    assert "not covered by the pattern collection" in rec["method_note"]
 
 
-def test_web_context_switch_step_still_uses_the_desktop_method(monkeypatch, tmp_path) -> None:
-    _, recs = _run_pipeline(
+def test_web_context_switch_takes_the_desktop_environment(monkeypatch, tmp_path) -> None:
+    (rec,) = _run_pipeline(
         monkeypatch, tmp_path,
         groups=[_group(0, {"browser_url": "https://example.test"})],
         activities=[_activity("Switch context from Excel to Chrome", "Switch Context",
                               activity_type="context_switch")],
     )
 
-    assert recs[0]["execution_environment"] == "web"
-    assert recs[0]["method"] == "UI Automation manipulation"
-    assert recs[0]["method_note"] is None
+    assert rec["environment"] == "desktop"
+    assert rec["object_type"] == "Context"
+    assert rec["methods"] == ["UI Automation manipulation", "Hardware simulation"]
+    assert rec["method_note"] is None
+    assert "operation of the desktop" in rec["environment_note"]
 
 
 # ── templates ───────────────────────────────────────────────────────────────
@@ -273,13 +244,11 @@ def test_web_context_switch_step_still_uses_the_desktop_method(monkeypatch, tmp_
 def test_results_template_explains_missing_method() -> None:
     template = (TEMPLATE_DIR / "results.html").read_text(encoding="utf-8")
 
-    assert "rec.method_note" in template
-    assert "No method recommended (choose one)" in template
+    assert "a.method_note" in template
+    assert "textContent = a.method_note" in template  # inserted as text, never as HTML
 
 
-def test_workspace_template_lists_method_notes() -> None:
+def test_workspace_template_shows_method_notes() -> None:
     template = (TEMPLATE_DIR / "workspace.html").read_text(encoding="utf-8")
 
-    assert 'id="mrNotesPane"' in template
-    assert "note: rec.method_note || ''" in template
-    assert "li.textContent = " in template  # notes are inserted as text, never as HTML
+    assert "esc(a.method_note" in template

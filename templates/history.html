@@ -51,7 +51,7 @@
                     <tr>
                         <td>{{ entry.timestamp[:19] }}</td>
                         <td>{{ entry.filename }}</td>
-                        <td>{{ entry.activities|length }} activities</td>
+                        <td>{{ entry.activity_count or (entry.activities|length if entry.activities else 0) }} UI activities</td>
                         <td>
                             <a href="/workspace/{{ entry.id }}">Workspace</a>
                             &nbsp;·&nbsp;

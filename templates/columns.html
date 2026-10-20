@@ -140,7 +140,7 @@
                 return;
             }
 
-            window.location.href = '/p/start-progressive?event_column=' + encodeURIComponent(selectedColumn);
+            window.location.href = '/p/start-progressive?event_column=' + encodeURIComponent(selectedColumn) + '&llm_column=' + encodeURIComponent(detectedColumn || '');
         };
     </script>
 </body>

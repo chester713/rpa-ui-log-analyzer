@@ -157,6 +157,8 @@ class ActivityInferrer:
                 pattern = known[pattern.strip().lower()]
             target = llm_result.get("target")
             target = str(target).strip() if isinstance(target, str) and target.strip() else None
+            context = llm_result.get("context")
+            context = str(context).strip() if isinstance(context, str) and context.strip() else None
             mains.append(Activity(
                 name=activity_name,
                 confidence=llm_result.get("confidence", 0.3),
@@ -168,19 +170,26 @@ class ActivityInferrer:
                 group_index=group_idx,
                 pattern_name=pattern,
                 target=target,
-                target_id=self._target_identity(group.events, target),
+                target_id=self._target_identity(group.events, target, context),
+                context=context,
             ))
 
         return add_implicit_activities(normalised, mains, self.application_attributes)
 
-    def _target_identity(self, events: List[Event], target: Optional[str]) -> Optional[str]:
-        """The identity of an activity's target: a recorded element identifier, else its name."""
+    def _target_identity(
+        self, events: List[Event], target: Optional[str], context: Optional[str] = None
+    ) -> Optional[str]:
+        """The identity of an activity's target, used to tell whether two activities act on
+        the same element: the value of an element attribute recorded by any of its events,
+        else (when the log records none) the target object and context named by the LLM."""
         for event in events:
             for key in self.element_attributes:
                 value = event.recorded(key)
                 if value is not None:
                     return f"{key}={value}"
-        return target.lower() if target else None
+        if not target:
+            return None
+        return " ".join(part for part in (target, context) if part).lower()
 
     def _call_llm_for_batch(self, indexed_groups: list) -> list:
         """Fan-out worker: one LLM call for a batch of groups. Returns [(group_idx, result_dict), ...]."""
@@ -267,9 +276,10 @@ Analyze the following {n} event group(s). Return a JSON ARRAY with exactly {n} o
 
 Each group is one UI activity: one action on one target. For each group return this JSON structure:
 {{
-  "activity_name": "Verb + object in a UNIQUE, context-specific phrasing aligned with the matched pattern. Include the concrete detail that sets this interaction apart from similar ones — the specific field/element label, cell reference, value entered, URL, or page (e.g. 'Write \"John\" into First Name field', 'Activate Submit button on registration form', 'Read cell B2 from Forecast sheet')",
+  "activity_name": "Action + object + context: the action of the chosen pattern (e.g. Write, Read, Activate, Focus), or the recorded action if no pattern fits, followed by the target object and the context it resides in (e.g. 'Write First Name field on rpachallenge.com in Edge', 'Read cell A2 in Sheet 1 of challenge.xlsx in Excel', 'Activate Submit button on rpachallenge.com in Edge', 'Open rpachallenge.com in Edge'). Do not include input values such as the text that was typed or pasted.",
   "pattern": "One pattern name from the reference above, chosen by the semantic meaning of the interaction, not the exact words in the log (e.g. a click on a button activates it; a click on a text field focuses it). Use null if no pattern fits the interaction — never force a pattern.",
-  "target": "The specific UI element the action is performed on, named concretely with its label and location (e.g. 'First Name field on registration form', 'Submit button on registration form', 'cell B2 in Forecast sheet'), or null for page- or application-level actions without a target element (opening a URL, scrolling a page, refreshing, switching application)",
+  "target": "The target object: the specific UI element the action is performed on, named by its label (e.g. 'First Name field', 'Submit button', 'cell A2'), or null for page- or application-level actions without a target element (opening a URL, scrolling a page, refreshing a page, switching application)",
+  "context": "The context the target resides in, phrased to follow the object: the application and, within it, the webpage, window, workbook or worksheet (e.g. 'on rpachallenge.com in Edge', 'in Sheet 1 of challenge.xlsx in Excel')",
   "evidence": ["2-4 concise observations from events/attributes"],
   "confidence": 0.9,
   "reasoning": "One sentence summary"
@@ -279,11 +289,10 @@ Implicit activities (locating an element first, focusing a field before writing,
 
 CRITICAL OUTPUT RULES:
 1. Return a valid JSON ARRAY with EXACTLY {n} object(s) — one per group, in the same order.
-2. "activity_name" is MANDATORY in every object. Never omit it. If the events are ambiguous or repetitive, still provide a best-guess name using verb+object format (e.g. "Read cell value from spreadsheet", "Interact with page element").
-3. Every "activity_name" MUST be UNIQUE across the array. When groups perform the same kind of action, tell them apart using concrete context from their own events/attributes — the specific field or element label, cell reference, value, URL, page, or step — so that no two names are identical (e.g. "Write \"John\" into First Name field" vs "Write \"Smith\" into Last Name field"; "Read cell A2 from Sheet1" vs "Read cell A3 from Sheet1"). Never disambiguate with bare counters like "(2)".
-4. Output raw JSON only — no markdown fences, no explanation text before or after the array.
+2. "activity_name" is MANDATORY in every object. Never omit it. If the events are ambiguous, still name the activity by its recorded action, object and context.
+3. Output raw JSON only — no markdown fences, no explanation text before or after the array.
 
-[{{"activity_name": "...", "pattern": "...", "target": "...", "evidence": [...], "confidence": 0.9, "reasoning": "..."}}, ...]"""
+[{{"activity_name": "...", "pattern": "...", "target": "...", "context": "...", "evidence": [...], "confidence": 0.9, "reasoning": "..."}}, ...]"""
 
     def _parse_batch_response(self, raw: str, n: int) -> List[dict]:
         """Parse a JSON array response from a batch prompt. Returns exactly n dicts.
@@ -314,12 +323,32 @@ CRITICAL OUTPUT RULES:
 
 # ── implicit activities (step 4 of the approach) ─────────────────────────────
 
-# Patterns whose action is performed on a specific target element: the bot has to
-# locate that element first (Find Element).
+# Find is required before every action that has a target element (step 4). These
+# patterns always act on a target element...
 ELEMENT_TARGETING_PATTERNS = {
     "read element", "observe", "write element", "delete element",
     "disable element", "activate", "focus", "hover",
 }
+# ...these act on a target element when they have one (scrolling a list or refreshing a
+# control), but not when they act on a whole page or window.
+ELEMENT_TARGETING_WHEN_NAMED = {"scroll", "refresh"}
+# Open creates a new instance, Switch Context acts on a context and Find locates the
+# element itself, so none of them is preceded by a Find.
+
+
+def _acts_on_target_element(activity: Activity) -> bool:
+    pattern = (activity.pattern_name or "").strip().lower()
+    return pattern in ELEMENT_TARGETING_PATTERNS or (
+        pattern in ELEMENT_TARGETING_WHEN_NAMED and bool(activity.target)
+    )
+
+
+def _implicit_name(action: str, activity: Activity) -> str:
+    """Action + object + context for an implicit activity, from the activity it precedes."""
+    parts = [action, activity.target or "the target element"]
+    if activity.context:
+        parts.append(activity.context)
+    return " ".join(parts)
 
 
 def _application_at(events: List[Event], attributes: List[str], last: bool) -> Optional[str]:
@@ -341,8 +370,9 @@ def add_implicit_activities(groups, mains: List[Activity], application_attribute
     1. Switch context — the activity is recorded in a different application from the
        last application recorded before it (a missing value is no evidence, so the
        last recorded application is carried forward).
-    2. Find element — the activity's pattern acts on a specific target element and
-       the preceding activity does not already target the same element.
+    2. Find element — the activity acts on a target element (see
+       ``_acts_on_target_element``) and the preceding activity does not already
+       target the same element.
     3. Focus — the activity writes into an element and the preceding activity does not
        focus that element.
 
@@ -356,13 +386,16 @@ def add_implicit_activities(groups, mains: List[Activity], application_attribute
         events = group.events if hasattr(group, "events") else group
         source_events = main.source_events
         pattern = (main.pattern_name or "").strip().lower()
-        label = main.target or "the target element"
 
         start_app = _application_at(events, application_attributes, last=False)
         if start_app is not None and last_app is not None and start_app != last_app:
             enriched.append(Activity(
                 name=f"Switch context from {last_app} to {start_app}",
                 confidence=1.0,
+                reasoning=(
+                    f"The activity is recorded in {start_app} and the preceding one in {last_app}, "
+                    "so the bot must switch its active application first."
+                ),
                 source_events=source_events,
                 activity_type="context_switch",
                 is_implicit=True,
@@ -370,12 +403,16 @@ def add_implicit_activities(groups, mains: List[Activity], application_attribute
                 pattern_name="Switch Context",
             ))
 
-        if pattern in ELEMENT_TARGETING_PATTERNS:
+        if _acts_on_target_element(main):
             previous = enriched[-1] if enriched else None
             if not (previous is not None and main.target_id and previous.target_id == main.target_id):
                 enriched.append(Activity(
-                    name=f"Find {label}",
+                    name=_implicit_name("Find", main),
                     confidence=1.0,
+                    reasoning=(
+                        f"{main.pattern_name} acts on a target element that the preceding activity "
+                        "does not target, so the bot must locate the element first."
+                    ),
                     source_events=source_events,
                     activity_type="prerequisite",
                     is_implicit=True,
@@ -383,6 +420,7 @@ def add_implicit_activities(groups, mains: List[Activity], application_attribute
                     pattern_name="Find Element",
                     target=main.target,
                     target_id=main.target_id,
+                    context=main.context,
                 ))
 
         if pattern == "write element":
@@ -395,8 +433,12 @@ def add_implicit_activities(groups, mains: List[Activity], application_attribute
             )
             if not focused:
                 enriched.append(Activity(
-                    name=f"Focus {label}",
+                    name=_implicit_name("Focus", main),
                     confidence=1.0,
+                    reasoning=(
+                        "Writing requires the target element to be focused for input, and the "
+                        "preceding activity does not focus it."
+                    ),
                     source_events=source_events,
                     activity_type="prerequisite",
                     is_implicit=True,
@@ -404,6 +446,7 @@ def add_implicit_activities(groups, mains: List[Activity], application_attribute
                     pattern_name="Focus",
                     target=main.target,
                     target_id=main.target_id,
+                    context=main.context,
                 ))
 
         enriched.append(main)

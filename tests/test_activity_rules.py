@@ -309,3 +309,37 @@ def test_boundary_evidence_carries_context_values_forward() -> None:
     LLMGroupRefiner(llm, application_attributes=["app"], context_attributes=["wb", "url"]).refine(groups)
 
     assert "wb NOT RECORDED in GROUP 1; last recorded c.xlsx in GROUP 0, GROUP 2 has c.xlsx (same as that)" in llm.prompts[0]
+
+
+def test_find_precedes_scroll_and_refresh_only_when_they_act_on_an_element() -> None:
+    groups = [EventGroup(events=[Event("scroll", {"app": "Edge"}, 0)]),
+              EventGroup(events=[Event("scroll", {"app": "Edge"}, 1)]),
+              EventGroup(events=[Event("open", {"app": "Edge"}, 2)])]
+    mains = [_main(0, "Scroll", None, None), _main(1, "Scroll", "Results list", "results list"), _main(2, "Open")]
+
+    assert _sequence(groups, mains) == [
+        ("main", "Scroll"),
+        ("prerequisite", "Find Element"),
+        ("main", "Scroll"),
+        ("main", "Open"),
+    ]
+
+
+def test_implicit_activities_are_named_by_action_object_and_context() -> None:
+    groups = [EventGroup(events=[Event("paste", {"app": "Edge"}, 0)])]
+    main = _main(0, "Write Element", "First Name field", "id=lPupZ")
+    main.context = "on rpachallenge.com in Edge"
+
+    names = [a.name for a in add_implicit_activities(groups, [main], ["app"])]
+
+    assert names[:2] == ["Find First Name field on rpachallenge.com in Edge",
+                         "Focus First Name field on rpachallenge.com in Edge"]
+
+
+def test_naming_prompt_asks_for_action_object_context_without_values_or_uniqueness() -> None:
+    prompt = ActivityInferrer(None)._build_batch_prompt([(0, EventGroup(events=[Event("Paste", {}, 0)]), None)])
+
+    assert "Action + object + context" in prompt
+    assert "Do not include input values" in prompt
+    assert '"context"' in prompt
+    assert "UNIQUE" not in prompt

@@ -52,16 +52,16 @@ def test_missing_application_does_not_split_events_that_share_a_url() -> None:
     assert not groups[0].is_context_switch
 
 
-def test_event_with_no_attributes_is_its_own_group_but_not_a_switch() -> None:
+def test_event_with_no_attributes_stays_in_the_segment_and_is_not_a_switch() -> None:
     groups = _groups([
         Event("select", {"app": "Excel"}, 0),
         Event("paste", {}, 1),
         Event("click", {"app": "Excel"}, 2),
     ])
 
-    assert _names(groups) == [["select"], ["paste"], ["click"]]
-    assert not any(g.is_context_switch for g in groups)
-    assert all(g.previous_app is None and g.current_app is None for g in groups)
+    # Nothing recorded is no evidence of a change of software or data context.
+    assert _names(groups) == [["select", "paste", "click"]]
+    assert not groups[0].is_context_switch
 
 
 def test_switch_is_found_against_the_last_recorded_application() -> None:
@@ -71,10 +71,11 @@ def test_switch_is_found_against_the_last_recorded_application() -> None:
         Event("open", {"app": "Chrome"}, 2),
     ])
 
-    assert _names(groups) == [["select"], ["paste"], ["open"]]
-    assert groups[1].is_context_switch  # the group that closed when Chrome appeared
-    assert groups[2].previous_app == "Excel"  # not None: the blank event is skipped
-    assert groups[2].current_app == "Chrome"
+    assert _names(groups) == [["select", "paste"], ["open"]]
+    assert groups[0].is_context_switch  # the segment that closed when Chrome appeared
+    assert groups[1].previous_app == "Excel"  # not None: the blank event is skipped
+    assert groups[1].current_app == "Chrome"
+    assert groups[1].boundary == "application changed: Excel \u2192 Chrome"
 
 
 def test_no_switch_before_two_different_applications_have_been_recorded() -> None:
@@ -105,20 +106,41 @@ def test_literal_none_is_not_an_application() -> None:
     assert _names(groups) == [["select", "paste", "click"]]
 
 
-def test_literal_none_is_not_a_shared_value() -> None:
-    groups = _groups([Event("a", {"url": "None"}, 0), Event("b", {"url": "None"}, 1)])
+def test_literal_none_is_not_a_change_of_data_context() -> None:
+    groups = _groups([
+        Event("a", {"url": "u1"}, 0),
+        Event("b", {"url": "None"}, 1),
+        Event("c", {"url": "u1"}, 2),
+    ])
 
-    assert len(groups) == 2
+    assert _names(groups) == [["a", "b", "c"]]
+
+
+def test_a_change_of_data_context_starts_a_segment_within_one_application() -> None:
+    groups = _groups(
+        [
+            Event("click", {"app": "Edge", "url": "u1", "el": "first"}, 0),
+            Event("paste", {"app": "Edge", "url": "u1"}, 1),
+            Event("change", {"app": "Edge", "url": "u1", "el": "first"}, 2),
+            Event("click", {"app": "Edge", "url": "u1", "el": "last"}, 3),
+            Event("open", {"app": "Edge", "url": "u2"}, 4),
+        ],
+        group_attributes=["app", "url"], context_switch_attributes=["app"], element_attributes=["el"],
+    )
+
+    assert _names(groups) == [["click", "paste", "change"], ["click"], ["open"]]
+    assert [g.boundary for g in groups] == [None, "el changed: first \u2192 last", "url changed: u1 \u2192 u2"]
+    assert not any(g.is_context_switch for g in groups)
 
 
 def test_application_column_can_be_any_detected_name() -> None:
     events = [Event("a", {"Process Name": "EXCEL.EXE"}, 0), Event("b", {"Process Name": "chrome.exe"}, 1)]
 
-    # Default switch attributes do not know this column: the events split (nothing links
-    # them) but the boundary is not recognised as an application change.
+    # Default switch attributes do not know this column: nothing the grouper knows was
+    # recorded, so there is no evidence of a change and no application switch.
     default = _groups(events)
-    assert len(default) == 2
-    assert default[1].previous_app is None
+    assert len(default) == 1
+    assert default[0].previous_app is None
 
     detected = _groups(events, context_switch_attributes=["Process Name"])
     assert len(detected) == 2
@@ -129,7 +151,8 @@ def test_application_column_can_be_any_detected_name() -> None:
 # ── refinement prompt ───────────────────────────────────────────────────────
 
 def _prompt(events, **refiner_kwargs):
-    return LLMGroupRefiner(None, **refiner_kwargs)._build_prompt(_groups(events))
+    """The refinement prompt for one candidate segment per event."""
+    return LLMGroupRefiner(None, **refiner_kwargs)._build_prompt([EventGroup(events=[e]) for e in events])
 
 
 def test_refinement_prompt_leaves_the_decision_to_the_llm() -> None:
@@ -313,7 +336,7 @@ def test_naming_prompt_asks_for_the_target_and_leaves_implicit_activities_to_rul
 
 # ── the columns identified at load time reach both prompts ──────────────────
 
-_CSV = "event,Process Name,Page\nselect,EXCEL.EXE,\npaste,,\nopen,chrome.exe,https://example.test\n"
+_CSV = "event,Process Name,Page\nselect,EXCEL.EXE,p1\npaste,,p2\nopen,chrome.exe,https://example.test\n"
 
 
 class _RecordingLLM:

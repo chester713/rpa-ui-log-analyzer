@@ -2,7 +2,7 @@
 
 An AI-powered recommendation system that analyzes UI interaction logs (CSV format) and suggests appropriate RPA automation methods based on a library of 13 UI interaction patterns.
 
-Upload a UI event log and the tool infers what the user was doing at each step, matches each inferred activity to an RPA pattern, and recommends a prioritised list of applicable automation methods (DOM manipulation, UI Automation, hardware simulation, etc.) for the activity's execution environment.
+Upload a UI log and the tool identifies the UI activities a bot has to perform, matches each to an RPA UI interaction pattern, and recommends a prioritised list of applicable automation methods (DOM manipulation, UI Automation, hardware simulation, etc.) for the activity's execution environment.
 
 ## Quick Start
 
@@ -21,34 +21,30 @@ python app.py
 python src_cli.py sample.csv
 ```
 
-> **An LLM is required.** The prototype uses a default hosted LLM (Gemini), so users never choose a model or enter a key in the UI — whoever runs the app supplies `GEMINI_API_KEY` once. Activity inference is performed by the LLM — there is no keyword/rule-based fallback. If the key is missing or the model fails, the tool surfaces an error rather than degrading to heuristics.
+> **An LLM is required.** The prototype uses a default hosted LLM (Gemini), so users never choose a model or enter a key in the UI — whoever runs the app supplies `GEMINI_API_KEY` once. The LLM takes the place of the subject-matter expert in the approach — there is no keyword/rule-based fallback. If the key is missing or the model fails, the tool surfaces an error rather than degrading to heuristics.
 
 ## Recommendation Pipeline
 
-The pipeline implements a two-stage recommendation approach: **UI activity inference** followed by **method recommendation**.
+The prototype implements the seven steps of the pattern-guided automation method recommendation approach, in two stages. Business tasks (what the process is for) are out of scope: the approach works at the level of UI activities.
 
-In UI activity inference, consecutive UI events are grouped by their collective intent — events that together constitute a single coherent interaction belong in the same group — and the UI activity that produced each group is inferred and named using the pattern vocabulary. Business tasks (what the process is for) are out of scope: the approach works at the level of UI activities and actions. In method recommendation, the matched pattern and the detected execution environment together determine a prioritised list of applicable automation methods, ordered content-level (DOM) → accessibility-level (UI Automation) → visual/input-level (visual recognition, hardware simulation).
-
-The tool runs each log through six sequential steps:
+**Stage 1 — UI activity identification**
 
 | # | Step | How |
 |---|------|-----|
-| 1 | **Event Grouping** | An LLM reads the CSV header and sample rows to identify which columns carry context — the application, webpage, URL, element, etc. (column names differ between loggers, so none are hardcoded). Consecutive events that share a value in one of those columns are pre-segmented into candidate groups, and a change of the recorded application value closes the current group (a candidate boundary — an event with no application value is not treated as a change, and later events are compared with the last recorded application). An LLM second pass then turns the candidate groups into UI activities, in batches of 10 groups: it sees every event, numbered, with its target element, and returns runs of consecutive event numbers, one per UI activity. It may **divide** a group (clicking a text field, which focuses it, is a separate activity from pasting into it) and **combine** events of directly adjacent groups (a paste and the value-changed event it causes form one Write). Between adjacent groups it is shown the application-related attributes (then URL, window and element values) of both sides, carrying the last recorded application across a group that recorded none. | Rule-based + LLM |
-| 2 | **Activity Naming** | Groups are sent to an LLM in batches of 5 (processed sequentially to respect rate limits). For each group the LLM returns a unique, context-specific activity name aligned with the pattern vocabulary, the name of the RPA pattern that fits (or `null` when no pattern fits — the activity is then reported as not covered by the collection), the concrete target element (or `null` for page-level actions), supporting evidence, and a confidence score. Implicit Switch context, Find and Focus activities are then inserted by fixed rules (see below). | LLM + Rule-based |
-| 3 | **Action / Object Extraction** | The Action is read from the pattern the LLM assigned in step 2. The Object type follows from the execution environment — *HTML element* (web), *UI element* (desktop), *visual element* (screen) — except for Switch Context, which acts on a *Context*; the concrete target (e.g. *First Name field*) comes from step 2. No separate LLM call is made: log-level verbs (click/press/tap, type/paste/fill, etc.) were already resolved to the pattern vocabulary by the LLM when it named the activity. An unrecognised pattern name yields no pair rather than a guess. | Lookup |
-| 4 | **Pattern Matching** | The pattern name assigned in step 2 is resolved (case-insensitively) against the RPA UI Interaction Pattern Library. Matching is by name only: whether the pattern can be carried out in the activity's execution environment is checked in step 6, so an activity keeps its pattern even when the pattern has no variant for that environment. If the name is missing or unknown, the activity is left without a pattern. No LLM call is made. | Lookup |
-| 5 | **Context Identification** | When the log is loaded, the LLM identifies which columns indicate each environment — columns describing an HTML element or browser location → **web**; a native application's interface or document structure → **desktop**; raw screen coordinates → **screen** — by what the column describes, not its name. Each activity's environment is the highest-priority one (web > desktop > screen) for which one of its events recorded a value in such a column; otherwise *unknown*. | LLM (column roles, at load) + Rule-based |
-| 6 | **Method Recommendation** | The matched pattern's applicable methods for the identified environment are listed in priority order, at most three (e.g. Write Element + web → *DOM manipulation*, *UI Automation manipulation*, *Hardware simulation*; + desktop → *UI Automation manipulation*, *Hardware simulation*; + screen → *Hardware simulation*). If the pattern has no applicable variant (e.g. Delete Element on screen) or the environment could not be determined, no method is recommended and the reason is shown instead. | Rule-based |
+| 1 | **Segment events by context** | When the log is loaded, an LLM identifies the role of each attribute by what it describes, not its name: the application (software context), the further context such as webpage, window or worksheet (data context), the target element, and the attributes indicating each execution environment. The activity-name attribute is proposed by the LLM and confirmed or changed by the analyst. Consecutive events then stay in one interaction segment while they share their software context; within it, a change of a data-context value (webpage, worksheet, UI element) starts a new segment. A value that was not recorded is no evidence of a change. | LLM (attribute roles) + rules |
+| 2 | **Abstract higher-level UI activities** | In place of the SME, an LLM (prompt P3) receives the events of up to 10 segments, numbered and with their target elements, plus per-attribute evidence between adjacent segments (same / changed / not recorded), and returns runs of consecutive events, one per UI activity. It may divide a segment (a click that focuses a text field is a UI activity of its own) and combine adjacent segments (a paste and the field change it causes form one UI activity). The code only checks that runs are consecutive and cover every event once. | LLM |
+| 3 | **Normalise UI activities** | In place of the SME, an LLM (prompt P4, batches of 5) returns for each UI activity its pattern — whose action is the normalised action — or `null` (not covered by the collection), its name in the form **action + object + context** (e.g. *Write First Name field on rpachallenge.com in Edge*, no input values), its target object and context, evidence and confidence. A pattern name outside the collection stops the analysis. | LLM |
+| 4 | **Add implicit activities** | Fixed rules, in this order: **Switch context** (recorded in a different application from the last recorded one), **Find** (the activity acts on a target element — Read, Observe, Write, Delete, Disable, Activate, Hover, Focus, and Scroll / Refresh when they act on an element — unless the preceding activity targets the same element), **Focus** (before a Write unless the preceding activity focuses that element). | Rules |
 
-*Lookup* steps make no model call: they read what the LLM already decided in step 2. The LLM is called for four things only — suggesting the event column, identifying the column roles (application, grouping, environment and element columns, in one call), forming UI activities from the candidate groups, and naming activities.
+**Stage 2 — Method recommendation**
 
-Implicit activities are inserted by **fixed rules**, applied after activity naming in this order to each activity, each rule seeing the activities already inserted:
+| # | Step | How |
+|---|------|-----|
+| 5 | **Match patterns** | Each UI activity matches the pattern of its action (returned with the normalisation in step 3); implicit activities match the pattern they were inserted for. | Lookup |
+| 6 | **Determine environment and object type** | The richest environment indicated by the attributes recorded for the activity's events (web > desktop > screen), or *unknown* if none is recorded. It determines the object type: HTML element, UI element or visual element. Find and Focus take the environment of the activity they precede; Switch Context always takes the desktop environment. | Rules |
+| 7 | **Recommend prioritised methods** | The pattern's applicable methods, in order content-level (DOM) → accessibility-level (UI Automation) → visual recognition / hardware simulation, at most three. If there is none (e.g. Delete Element on screen, unknown environment, not covered), the reason is shown. | Rules |
 
-1. **Switch Context** — the activity is recorded in a different application from the last application recorded before it ("Switch context from A to B"). A missing application value is no evidence, and a URL change within one application is not a switch.
-2. **Find Element** — the activity's pattern acts on a specific element (Read Element, Observe, Write Element, Delete Element, Disable Element, Activate, Focus, Hover), unless the preceding activity already targets the same element (same value in an element column, else the same target name).
-3. **Focus** — the activity writes into an element (Write Element) and the preceding activity does not focus that element.
-
-So an element is found, then focused, then written to, and one Find serves both the Focus and the Write.
+Every step's output is stored per analysis (`data/progressive/<id>/`), and the workspace and results pages are built from these files.
 
 ## RPA UI Interaction Pattern Library
 
@@ -72,25 +68,25 @@ The exact wording of a method varies slightly between pattern files, and the det
 
 ## Web UI
 
-The web interface (`python app.py`, port 5001) provides a guided six-page flow:
+The web interface (`python app.py`, port 5001) provides a guided flow:
 
-1. **Welcome** (`/`) — overview of the recommendation approach and pipeline.
+1. **Welcome** (`/`) — overview of the approach and its seven steps.
 2. **Upload** (`/upload`) — CSV file upload (`.csv`, up to 16 MB).
-3. **Column Selection** (`/select-column`) — the LLM suggests the event column; click any column header to override it.
-4. **Guided Analysis** (`/workspace/<id>`) — step-by-step walkthrough of all six pipeline stages with the data produced at each step and the logic behind each decision.
-5. **Results** (`/results/<id>`) — three linked panels plus a graph:
-   - **Original Log** — every row of the uploaded CSV (values in columns whose names look sensitive — password, secret, token, API key — are shown as `[REDACTED]`); click a row to inspect its inferred activity.
-   - **Inferred Activities** — the activity sequence, labelled *Recorded*, *Prerequisite* (Find) or *Switch* (context switch); click one to see its details.
-   - **Pattern & Method** — the matched pattern, the prioritised list of recommended methods (or the reason there is none), the context attributes that decided the environment, and the LLM's confidence score and evidence for the activity (implicit Find / Switch steps are inserted from the LLM's flags and show *n/a*). The **method dropdown** defaults to the top-priority method and lets you override it (Extraction: DOM parsing, UI Automation tree parsing, visual recognition, hardware simulation; Modification: DOM manipulation, UI Automation manipulation, hardware simulation); the override is kept in the page only and is reflected in the export.
-   - **Direct-Follow Graph (DFG)** — the activity sequence as a directly-follows graph with zoom controls; clicking a node selects the matching activity and log rows.
-   - **Export CSV** — downloads the original log with five columns appended: `inferred_activity`, `execution_context`, `matched_pattern`, `recommended_method` (the top-priority method, or the override) and `prioritised_methods` (the full list, `>`-separated).
-6. **History** (`/history`) — past analyses stored in `data/history.json`, each linking to its workspace and results.
+3. **Activity-name attribute** (`/select-column`) — the LLM proposes the attribute holding the activity names; click any attribute to change it (a prototype feature for when the LLM is wrong).
+4. **Guided Analysis** (`/workspace/<id>`) — the seven steps of the approach, one page each, with the output of every step (including the rule-based segments of step 1) and the logic behind it. Step 3 runs the second LLM call when it is opened.
+5. **Results** (`/results/<id>`):
+   - **Recorded UI log** — every row of the uploaded CSV (values in attributes whose names look sensitive are shown as `[REDACTED]`); click an event to select its UI activity.
+   - **Sequence of UI activities** — recorded and implicit (Switch, Find, Focus) activities in order, with the selected method.
+   - **Pattern & Method** — pattern, object type and target, execution environment with the attributes that decided it, the prioritised methods with a **drop-down to select another method**, the reason when there is no method, and the LLM's confidence and evidence for recorded activities.
+   - **Directly-follows graph** — the sequence of UI activities; each occurrence is a node of its own, so the graph is a single path (UI interaction, not control flow).
+   - **Export CSV** — the entire log, with each implicit activity inserted as a row before the UI activity it precedes, and columns `activity_no`, `activity_type`, `ui_activity`, `pattern`, `action`, `object_type`, `target`, `execution_environment`, `selected_method` (the recommendation or your selection), `prioritised_methods` and `method_note`.
+6. **History** (`/history`) — past analyses, each linking to its workspace and results.
 
 ### LLM Configuration
 
 #### LLM used
 
-The LLM is called for four things — suggesting the event column, identifying the column roles (application and grouping columns, and the columns that indicate each execution environment), refining event groups, and naming activities (which also assigns each activity's pattern, prerequisite Find step, context-switch flag, evidence and confidence). Action/object extraction, pattern matching, the per-activity environment decision and method recommendation make no model call. All four LLM tasks use this model by default:
+The LLM is called for four things — proposing the activity-name attribute (P1), identifying the roles of the other attributes (P2), abstracting UI activities (P3, step 2) and normalising them (P4, step 3). Steps 1 and 4 to 7 make no model call. All four LLM tasks use this model by default:
 
 | Setting | Value |
 |---------|-------|
@@ -143,15 +139,17 @@ The CLI runs the same pipeline as the web app. Grouping columns are identified b
 
 ## Known Limitations
 
-- **Context-based pre-segmentation is only a starting point** — Candidate groups are formed from shared values in the context columns; the LLM then divides and combines them by intent. Events on either side of a batch edge (every 10 candidate groups) are never combined.
+- **Segments are a starting point** — Step 1 segments by software and data context; the LLM then divides and combines the segments by intent. Segments are sent to the LLM in batches of 10, so events on either side of a batch boundary are never combined into one UI activity.
 
-- **Events without an application value** — Some loggers leave the application column empty for certain events such as `Paste` or keyboard shortcuts. A missing value is treated as "no information", never as a different application: the event stays with its neighbours when it shares a URL, element ID or another grouping value with them, and later events are compared with the last recorded application. An event that shares nothing — for instance one with no attributes at all — becomes a group of its own, and only the LLM refinement pass can merge it back.
+- **Values that were not recorded** — Some loggers leave attributes empty for events such as `Paste`. A missing value is treated as "no information", never as a change: the event stays in the current segment, and later events are compared with the last recorded value.
+
+- **Same element without element attributes** — Whether two activities act on the same element (for the Find and Focus rules) is decided from the element attributes the events record; if the log records none, the target object and context named by the LLM are compared, and differently phrased names can produce an extra Find.
 
 - **The LLM decides the UI activities; switches follow the recorded application** — The code does not override how the LLM divides and combines events; it only checks that each UI activity is a run of consecutive events and that every event is covered once. Context switches are detected from the application column only: a switch between windows or browser tabs of the same application is not detected unless the log records it as an event of its own.
 
-- **SME judgement is simulated by LLM** — The recommendation approach as described relies on a Subject Matter Expert (SME) to judge the collective intent of consecutive events and then to normalise the resulting UI activities to the pattern vocabulary. In this prototype that judgement is approximated by LLM inference; implicit activities follow fixed rules. The LLM may misinterpret activities in unfamiliar domains or where log attributes are sparse.
+- **SME judgement is simulated by LLM** — The recommendation approach as described relies on a Subject Matter Expert (SME) to judge the collective intent of consecutive events and then to normalise the resulting UI activities to the pattern vocabulary. In this prototype that judgement is approximated by an LLM; implicit activities follow fixed rules. The LLM may misinterpret activities in unfamiliar domains or where log attributes are sparse.
 
-- **LLM is mandatory; output quality depends on it** — There is no keyword/heuristic fallback. Column identification, forming UI activities, activity naming and pattern assignment are LLM-driven (action/object extraction and pattern matching only look up the pattern the LLM assigned; implicit activities follow fixed rules), so results vary with the model and the clarity of the log. Robustness is pursued by tightening the prompts rather than by adding rule-based safety nets.
+- **LLM is mandatory; output quality depends on it** — There is no keyword/heuristic fallback. Attribute roles, abstraction (step 2) and normalisation (step 3) are LLM-driven (pattern matching only looks up the pattern returned with the normalisation; segmentation, implicit activities, environment and methods follow fixed rules), so results vary with the model and the clarity of the log. Robustness is pursued by tightening the prompts rather than by adding rule-based safety nets.
 
 ## Project Structure
 
@@ -163,16 +161,14 @@ sample.csv             # small example UI log
 src/
 ├── parser/            # CSV loading, BOM and duplicate-header handling, LLM-powered detection of the event and context columns
 ├── models/            # Event, Activity, Pattern, MethodRecommendation data classes
-├── inference/         # EventGrouper + LLMGroupRefiner (grouping), ActivityInferrer (LLM)
+├── inference/         # EventGrouper (step 1), LLMGroupRefiner (step 2), ActivityInferrer (step 3) and the implicit-activity rules (step 4)
 ├── mapping/           # EventActivityMapper — wires grouper and inferrer together
 ├── matching/          # PatternLoader, PatternMatcher, RecommendationFormatter, pattern library wiring
-├── process_mining/    # Directly-Follows Graph (DFG) builder
 ├── pipeline/          # DataPipeline — end-to-end orchestrator used by the CLI
-├── web/               # Guided-analysis pipeline used by the web app (computes each stage on demand, caches results per analysis)
+├── web/               # The seven steps for the web app; stores each step's output per analysis and builds the pages from it
 └── llm/               # LLMClient for OpenAI-compatible endpoints (default: Gemini)
 
 patterns/              # 13 pattern definition files (*.md) — read at startup
-skills/                # design notes on the pattern library and recommendation logic (not read by the code)
 templates/             # Jinja2 HTML templates for all web pages
 config/                # llm_config.example.json (template; copy to llm_config.json)
 data/                  # runtime artifacts (git-ignored):
@@ -189,7 +185,6 @@ tests/                 # pytest test suite
 - Python 3.10+ (developed and tested on 3.12)
 - `flask>=2.0.0` — web application
 - `requests>=2.28.0` — LLM API client
-- `pm4py>=2.7.0` — process mining / DFG generation (a built-in DFG builder is used if pm4py is unavailable)
 - `python-dotenv>=1.0.0` — loads environment variables from `.env`
 - A Gemini API key for the default model `gemini-3.1-flash-lite` (see [LLM Configuration](#llm-configuration))
 

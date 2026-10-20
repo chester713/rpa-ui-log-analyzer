@@ -94,7 +94,7 @@
         <!-- Hero -->
         <section class="card">
             <h1>Welcome to RPA UI Log Analyzer</h1>
-            <p class="subtitle">This prototype applies RPA UI interaction patterns to help automation designers move beyond simple click/keystroke replay. Upload a UI event log (CSV) and the tool will infer human-intent activities, match them to recognised RPA patterns, and recommend the appropriate automation method for each — broken down by execution environment. The analysis runs as a guided, step-by-step workflow and visualises the activity sequence as a directly-follows graph.</p>
+            <p class="subtitle">This prototype applies RPA UI interaction patterns to help automation designers move beyond replaying recorded clicks and keystrokes. Upload a UI log (CSV) and it identifies the UI activities a bot has to perform, matches each to a pattern, and recommends a prioritised list of automation methods for its execution environment. The analysis runs step by step, following the seven steps of the pattern-guided automation method recommendation approach, and shows the sequence of UI activities as a directly-follows graph.</p>
             <div class="actions">
                 <a class="btn btn-primary" href="/upload">Continue to Upload</a>
                 <a class="btn btn-secondary" href="/history">View Analysis History</a>
@@ -103,21 +103,18 @@
 
         <!-- Pipeline -->
         <section class="card">
-            <h2>Recommendation Pipeline</h2>
-            <p class="section-intro">The pipeline implements a two-stage recommendation approach. In <strong>UI activity inference</strong> (steps 1–3), consecutive UI events are grouped by their collective intent and the UI activity that produced each group is inferred and named using the pattern vocabulary. In <strong>method recommendation</strong> (steps 4–6), the matched pattern and execution environment determine a prioritised list of automation methods: content-level (DOM) → accessibility-level (UI Automation) → visual/input-level (visual recognition, hardware simulation).</p>
-            <p class="section-intro">Steps marked <span class="badge badge-llm">LLM</span> send data to a language model; steps marked <span class="badge badge-rule">Rule-based</span> use deterministic logic; steps marked <span class="badge badge-lookup">Lookup</span> make no model call — they read what the LLM already decided in step 2. An LLM is required — the pipeline has <strong>no rule-based fallback</strong>, so if the model is unavailable the analysis surfaces an error rather than producing degraded results.</p>
+            <h2>Stage 1: UI activity identification</h2>
+            <p class="section-intro">Steps marked <span class="badge badge-llm">LLM</span> send data from the log to a language model, which takes the place of a subject-matter expert; <span class="badge badge-rule">Rule-based</span> steps apply fixed rules; <span class="badge badge-lookup">Lookup</span> steps make no model call. There is no fallback: if the model is unavailable or returns an invalid answer, the analysis stops with an error rather than producing degraded results.</p>
             <div class="steps">
-
                 <div class="step">
                     <div class="step-connector"></div>
                     <div class="step-num">1</div>
                     <div class="step-body">
                         <div class="step-header">
-                            <span class="step-title">Event Grouping</span>
+                            <span class="step-title">Segment events by context</span>
                             <span class="badge badge-rule">Rule-based</span>
-                            <span class="badge badge-llm">LLM abstraction</span>
                         </div>
-                        <p class="step-desc">Consecutive events are grouped into <em>interaction segments</em> based on their collective intent — events that together constitute a single coherent interaction belong in the same group. The LLM first reads the CSV header and sample rows to identify which columns carry context (for example the application, webpage, URL, or element — column names differ between loggers). A shared value in one of these columns serves as supporting evidence for grouping, and a change of the recorded application value closes the current group and starts a new one — a <strong>candidate application boundary</strong> (an event with no application value is not treated as a change). An LLM second pass then turns these candidate groups into <strong>UI activities</strong> — one action on one target each: it sees the numbered events with their target elements and may <strong>divide</strong> a group (clicking a text field focuses it; pasting into it writes) or <strong>combine</strong> events of adjacent groups (a paste and the value-changed event it causes form one Write). It is shown the application-related attributes (then URL, window and element values) on both sides of every boundary; a changed application counts strongly against combining.</p>
+                        <p class="step-desc">When the log is loaded, an LLM identifies the role of each attribute by what it describes, not by its name: the application (software context), the further context such as webpage, window or worksheet (data context), the target element, and the attributes indicating each execution environment. The activity-name attribute is proposed by the LLM and confirmed or changed by you. Consecutive events then stay in one <em>interaction segment</em> as long as they share their software context; within it, a change of webpage, worksheet or UI element starts a new segment. A value that was not recorded is no evidence of a change.</p>
                     </div>
                 </div>
 
@@ -126,10 +123,10 @@
                     <div class="step-num">2</div>
                     <div class="step-body">
                         <div class="step-header">
-                            <span class="step-title">Activity Naming</span>
+                            <span class="step-title">Abstract higher-level UI activities</span>
                             <span class="badge badge-llm">LLM</span>
                         </div>
-                        <p class="step-desc">Each interaction segment is sent to an LLM (batched in groups of 5, processed sequentially to respect rate limits). The LLM interprets the group's collective intent and assigns an <strong>activity name</strong> — verb + object aligned with the pattern vocabulary, made <strong>unique and context-specific</strong> by including the concrete detail that sets the interaction apart (e.g. 'Write "John" into First Name field' versus 'Write "Smith" into Last Name field'), so no two activities share a name. It also returns the <strong>best-matching RPA pattern name</strong> (or none, when no pattern fits — the activity is then reported as not covered by the collection), the concrete <strong>target element</strong>, supporting <strong>evidence</strong> observations, and a <strong>confidence score</strong>. Implicit activities are then inserted by fixed rules (below).</p>
+                        <p class="step-desc">In place of a subject-matter expert, an LLM decides which consecutive events share one intent and form one UI activity: one action on one target. Repetitions of an action and events that only record its effect (such as the change of a field when it loses focus) belong to that action; clicking a text field before pasting into it is a UI activity of its own. Segments may be divided and adjacent segments combined, but not across a changed application.</p>
                     </div>
                 </div>
 
@@ -138,10 +135,10 @@
                     <div class="step-num">3</div>
                     <div class="step-body">
                         <div class="step-header">
-                            <span class="step-title">Action / Object Extraction</span>
-                            <span class="badge badge-lookup">Lookup</span>
+                            <span class="step-title">Normalise UI activities</span>
+                            <span class="badge badge-llm">LLM</span>
                         </div>
-                        <p class="step-desc">The <strong>Action</strong> and <strong>Object</strong> are taken directly from the RPA pattern the LLM assigned in the previous step — every pattern carries a canonical Action/Object pair in the AOMC (Action-Object-Method-Context) vocabulary (e.g. <em>Activate / Element</em>, <em>Write / Element</em>). Application-specific log verbs ("click / press / tap", "type / paste / fill", "getCell", …) were already resolved to that shared vocabulary by the LLM when it chose the pattern in step 2, so this step makes no model call and uses no hardcoded keyword map.</p>
+                        <p class="step-desc">An LLM normalises each UI activity to the vocabulary of the 13 RPA UI interaction patterns, by the meaning of the interaction rather than the words of the log, and names it by <strong>action + object + context</strong> (e.g. <em>Write First Name field on rpachallenge.com in Edge</em>). It returns the pattern, whose action is the normalised action, or none — the UI activity is then reported as not covered by the collection.</p>
                     </div>
                 </div>
 
@@ -150,62 +147,72 @@
                     <div class="step-num">4</div>
                     <div class="step-body">
                         <div class="step-header">
-                            <span class="step-title">Pattern Matching</span>
-                            <span class="badge badge-lookup">Lookup</span>
+                            <span class="step-title">Add implicit activities</span>
+                            <span class="badge badge-rule">Rule-based</span>
                         </div>
-                        <p class="step-desc">The activity is matched to a pattern in the RPA UI Interaction Pattern Library using the <strong>pattern name the LLM assigned</strong> in step 2, by a case-insensitive name match only. Whether the pattern can be carried out in the identified execution environment is checked in step 6, so an activity keeps its pattern even when that pattern has no variant for the environment. This step makes no model call and has <strong>no rule-based fallback</strong>: if the LLM did not supply a usable pattern, the recommendation is left without a pattern assignment rather than guessed from keywords.</p>
+                        <p class="step-desc">UI activities a bot must perform but the log does not record are inserted by three rules, in this order: Switch context, Find, Focus (see below).</p>
                     </div>
                 </div>
+            </div>
+        </section>
 
+        <section class="card">
+            <h2>Stage 2: Method recommendation</h2>
+            <div class="steps">
                 <div class="step">
                     <div class="step-connector"></div>
                     <div class="step-num">5</div>
                     <div class="step-body">
                         <div class="step-header">
-                            <span class="step-title">Context Identification</span>
-                            <span class="badge badge-rule">Rule-based</span>
-                            <span class="badge badge-llm">LLM columns</span>
+                            <span class="step-title">Match patterns</span>
+                            <span class="badge badge-lookup">Lookup</span>
                         </div>
-                        <p class="step-desc">When the log is loaded, the LLM reads the CSV header and sample rows and identifies which columns indicate each execution environment, by what the column describes rather than its name (column names differ between loggers). Each UI activity's environment is then decided in priority order:</p>
-                        <p class="step-desc" style="margin-top:6px;">
-                            1. <strong>Web</strong> — if any of its events recorded a value in a web column (properties of an HTML/DOM element or browser location, e.g. XPath, tag, URL).<br>
-                            2. <strong>Desktop</strong> — otherwise, if any event recorded a desktop column (native application UI or document structure, e.g. application, window title, workbook, cell).<br>
-                            3. <strong>Screen (visual)</strong> — otherwise, if any event recorded a screen column (raw coordinates).<br>
-                            4. <strong>Unknown</strong> — if none was recorded.
-                        </p>
+                        <p class="step-desc">Each UI activity matches the pattern of its normalised action; implicit activities match the pattern they were inserted for. No model call is made.</p>
                     </div>
                 </div>
 
                 <div class="step">
+                    <div class="step-connector"></div>
                     <div class="step-num">6</div>
                     <div class="step-body">
                         <div class="step-header">
-                            <span class="step-title">Method Recommendation</span>
+                            <span class="step-title">Determine environment and object type</span>
                             <span class="badge badge-rule">Rule-based</span>
                         </div>
-                        <p class="step-desc">The matched pattern carries a <code>Method</code> field listing its variants, separated by " / " (e.g. "HTML DOM manipulation (Web) / UI Automation manipulation (Desktop) / Hardware simulation (Visual)"). Applicability is cumulative: a web activity can use content-, accessibility- and visual/input-level methods, a desktop activity accessibility- and visual/input-level methods, and a screen activity visual/input-level methods only. The applicable variants form a <strong>prioritised list</strong> of at most three methods, content-level first. If the pattern defines no applicable variant for the identified environment (for example <em>Delete Element</em> on screen — an element cannot be deleted from an image), no method is recommended and the reason is shown instead.</p>
+                        <p class="step-desc">The execution environment is the richest one indicated by the attributes recorded for the UI activity's events: web, then desktop, then screen. It determines the object type: HTML, UI or visual element. Switch Context always takes the desktop environment; if no environment attribute is recorded, the environment is unknown.</p>
                     </div>
                 </div>
 
+                <div class="step">
+                    <div class="step-connector"></div>
+                    <div class="step-num">7</div>
+                    <div class="step-body">
+                        <div class="step-header">
+                            <span class="step-title">Recommend prioritised methods</span>
+                            <span class="badge badge-rule">Rule-based</span>
+                        </div>
+                        <p class="step-desc">The applicable methods of the pattern are listed in priority order — content-level (DOM), then accessibility-level (UI Automation), then visual recognition and hardware simulation — at most three. On the results page you can select another method for each activity; the export uses your selection.</p>
+                    </div>
+                </div>
             </div>
         </section>
 
         <!-- Implicit activities -->
         <section class="card">
-            <h2>Implicit Activities</h2>
-            <p class="section-intro">Three types of activity are inserted into the sequence by fixed rules, applied in this order — they are not recorded in the log but are necessary for a realistic RPA bot design. An element is found, then focused, then written to.</p>
+            <h2>Implicit Activities (step 4)</h2>
+            <p class="section-intro">Three rules insert activities that are not recorded but that a bot must perform, applied in this order to each UI activity. An element is therefore found, then focused, then written to.</p>
             <div class="implicit-grid">
                 <div class="implicit-item">
-                    <h3>Context Switch <span class="badge badge-rule">Rule</span></h3>
-                    <p>When an activity is recorded in a different application from the last recorded one (e.g. Excel → Edge), a "Switch context from A to B" step is inserted before it. A missing application value is no evidence, and navigating to another page within the same application is <em>not</em> a switch.</p>
+                    <h3>Switch context <span class="badge badge-rule">Rule</span></h3>
+                    <p>When a UI activity is recorded in a different application from the last recorded one (e.g. Excel → Edge), a "Switch context from A to B" activity is inserted. A missing application value is no evidence, and a different webpage within the same application is <em>not</em> a switch. Switching always takes place on the desktop.</p>
                 </div>
                 <div class="implicit-item">
-                    <h3>Find Element <span class="badge badge-rule">Rule</span></h3>
-                    <p>When an activity acts on a specific element (read, observe, write, delete, disable, activate, focus, hover), the bot must <em>locate</em> it first: a "Find [element]" step is inserted, unless the preceding activity already targets the same element. Page-level actions (open a URL, scroll, refresh) get no Find step.</p>
+                    <h3>Find <span class="badge badge-rule">Rule</span></h3>
+                    <p>Every action on a target element requires the bot to locate it first: Read, Observe, Write, Delete, Disable, Activate, Hover and Focus, and Scroll and Refresh when they act on an element rather than a whole page. A Find is inserted unless the preceding activity targets the same element. Open, Switch Context and Find need no Find.</p>
                 </div>
                 <div class="implicit-item">
                     <h3>Focus <span class="badge badge-rule">Rule</span></h3>
-                    <p>Writing into an element requires it to have input focus: a "Focus [element]" step is inserted before a Write activity unless the preceding activity focuses that element. It is essential when the bot uses hardware simulation.</p>
+                    <p>Writing into an element requires it to be focused for input: a Focus activity is inserted before a Write activity unless the preceding activity focuses that element.</p>
                 </div>
             </div>
         </section>
@@ -213,7 +220,7 @@
         <!-- Patterns -->
         <section class="card">
             <h2>RPA UI Interaction Pattern Library (13 patterns)</h2>
-            <p class="section-intro">All activities are matched against the 13 RPA UI Interaction Patterns below. Each pattern has a fixed <strong>Action</strong> and <strong>Object</strong>, one or more supported execution environments, and a category.</p>
+            <p class="section-intro">All UI activities are normalised to the 13 RPA UI Interaction Patterns below. Each pattern has a fixed <strong>Action</strong> and <strong>Object</strong>, one or more supported execution environments, and a category.</p>
 
             <div class="pattern-category">
                 <div class="category-label cat-extraction">Extraction — read or locate data without modifying the UI</div>
@@ -250,7 +257,7 @@
         <!-- Method computation -->
         <section class="card">
             <h2>Method Computation by Execution Environment</h2>
-            <p class="section-intro">The recommended automation method depends on both the matched pattern and the identified execution environment. The table below summarises the top-priority method for each environment; lower-level methods follow it in the prioritised list (e.g. web: DOM → UI Automation → visual recognition / hardware simulation).</p>
+            <p class="section-intro">The recommended automation method depends on both the matched pattern and the identified execution environment. The table below summarises the first method recommended in each environment; lower-level methods follow it in the prioritised list (e.g. web: DOM → UI Automation → visual recognition / hardware simulation).</p>
             <table class="method-table">
                 <thead>
                     <tr>
@@ -263,19 +270,19 @@
                 <tbody>
                     <tr>
                         <td><span class="env-badge env-web">Web</span></td>
-                        <td>Columns describing an HTML element or browser location (identified by the LLM)</td>
+                        <td>Attributes describing an HTML element or browser location (identified by the LLM)</td>
                         <td>HTML DOM parsing</td>
                         <td>HTML DOM manipulation</td>
                     </tr>
                     <tr>
                         <td><span class="env-badge env-desktop">Desktop</span></td>
-                        <td>Columns describing a native application UI or document (identified by the LLM)</td>
+                        <td>Attributes describing a native application interface or document (identified by the LLM)</td>
                         <td>UI Automation (UIA) tree parsing</td>
                         <td>UI Automation (UIA) manipulation</td>
                     </tr>
                     <tr>
                         <td><span class="env-badge env-screen">Screen</span></td>
-                        <td>Columns holding raw screen coordinates (identified by the LLM)</td>
+                        <td>Attributes holding screen coordinates (identified by the LLM)</td>
                         <td>Visual recognition</td>
                         <td>Hardware simulation</td>
                     </tr>
