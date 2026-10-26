@@ -86,18 +86,23 @@ The web interface (`python app.py`, port 5001) provides a guided flow:
 
 #### LLM used
 
-The LLM is called for four things — proposing the activity-name attribute (P1), identifying the roles of the other attributes (P2), abstracting UI activities (P3, step 2) and normalising them (P4, step 3). Steps 1 and 4 to 7 make no model call. All four LLM tasks use this model by default:
+The LLM is called for four things — proposing the activity-name attribute (P1), identifying the roles of the other attributes (P2), abstracting UI activities (P3, step 2) and normalising them (P4, step 3). Steps 1 and 4 to 7 make no model call. All four LLM tasks use the main model below; the backup model is used only in the situation described under *Backup model*.
 
 | Setting | Value |
 |---------|-------|
 | **Model** | `gemini-3.1-flash-lite` (Google Gemini) |
+| **Backup model** | `gemini-3.5-flash-lite` (same endpoint and key) |
 | **Endpoint** | `https://generativelanguage.googleapis.com/v1beta/openai/chat/completions` (Gemini's OpenAI-compatible API) |
 | **API key** | `GEMINI_API_KEY` environment variable, or `api_key` in `config/llm_config.json` |
 | **Temperature** | `0` |
 | **Max output tokens** | `2000` per request |
-| **Timeout / retries** | 30 s per request; up to 2 retries with exponential backoff on timeouts, connection errors, and HTTP 429 |
+| **Timeout / retries** | 30 s per request; up to 2 retries with exponential backoff on timeouts, connection errors, HTTP 429 and temporary server errors (500, 502, 503, 504) |
 
-These defaults are defined in `src/llm/client.py` and mirrored in `config/llm_config.example.json`. Results from this prototype should be attributed to this model unless the configuration was overridden.
+These defaults are defined in `src/llm/client.py` and mirrored in `config/llm_config.example.json`. Results should be attributed to the model recorded with each analysis: the main model, unless the backup was used (see below). The model is shown in the results header, the workspace, the history table and the CLI output.
+
+#### Backup model
+
+The first task of every analysis — proposing the activity-name attribute (P1) when the log is uploaded — decides which model is used. If the main model cannot complete it because of a temporary provider problem (overload or server error, rate limit or quota, timeout — after the retries above), the task is retried once on the backup model. From then on, every later LLM task of that analysis (attribute roles P2, abstraction P3, normalisation P4) stays on the model that answered, so an analysis is never split across models. A failure in a later step is not switched; it is reported as an error. A wrong key or a rejected request does not trigger the switch (the backup would fail too), and there is no fallback to a rule-based method. The CLI JSON records the model in `statistics.llm_model` and `statistics.llm_backup_used`. Set `"backup_model": ""` in the config to switch the backup off.
 
 #### Configuration
 
@@ -114,13 +119,14 @@ cp config/llm_config.example.json config/llm_config.json
   "provider": "custom",
   "endpoint": "https://generativelanguage.googleapis.com/v1beta/openai/chat/completions",
   "api_key": "YOUR_API_KEY",
-  "model": "gemini-3.1-flash-lite"
+  "model": "gemini-3.1-flash-lite",
+  "backup_model": "gemini-3.5-flash-lite"
 }
 ```
 
-Any field left empty falls back to the default above. The client speaks the OpenAI chat-completions protocol, so `endpoint`, `api_key`, and `model` can be pointed at another compatible provider (OpenAI, Groq, OpenRouter, a local server), but `gemini-3.1-flash-lite` is the documented default. (The `provider` field is retained as `"custom"` for backward compatibility.)
+Any field you leave out falls back to the default above (an empty `"backup_model"` switches the backup off). The client speaks the OpenAI chat-completions protocol, so `endpoint`, `api_key`, and `model` can be pointed at another compatible provider (OpenAI, Groq, OpenRouter, a local server), but `gemini-3.1-flash-lite` is the documented default. (The `provider` field is retained as `"custom"` for backward compatibility.)
 
-There is **no rule-based fallback**: if the configured LLM is missing or fails, the tool reports the error rather than producing degraded results. This is deliberate — the prototype is meant to reflect the LLM-driven approach directly.
+There is **no rule-based fallback**: if the configured LLM is missing or fails, the tool reports the error rather than producing degraded results. This is deliberate — the prototype is meant to reflect the LLM-driven approach directly. The web pages and the CLI state the cause in plain language, including the provider's own explanation — for example an overloaded model (HTTP 503, usually temporary), a quota limit (429) or a rejected key (401/403); the full provider response is written to the server log.
 
 ## CLI Usage
 
