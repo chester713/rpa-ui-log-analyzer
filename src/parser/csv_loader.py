@@ -5,6 +5,7 @@ import json
 import logging
 import re
 from typing import List, Dict, Any, Optional
+from ..llm.client import LLMError
 from ..models.event import Event
 
 _logger = logging.getLogger(__name__)
@@ -210,12 +211,29 @@ Format:
         clean = (response or "").strip()
         if clean.startswith("```"):
             clean = re.sub(r"```[a-z]*\n?", "", clean).strip("`").strip()
-        parsed = json.loads(clean)
+        try:
+            parsed = json.loads(clean)
+        except json.JSONDecodeError as exc:
+            raise LLMError(
+                "The language model did not return valid JSON when identifying the roles of the "
+                f"log's attributes ({exc.msg}). Please try again."
+            ) from exc
+        if not isinstance(parsed, dict):
+            raise LLMError(
+                "The language model returned an unexpected format when identifying the roles of "
+                "the log's attributes. Please try again."
+            )
+
         def _role(name: str, default):
             # The prompt asks for "<role>_attributes"; "<role>_columns" is accepted as well.
             value = parsed.get(f"{name}_attributes", parsed.get(f"{name}_columns", default))
             return value if value is not None else default
 
+        if not isinstance(_role("switch", []), list) or not isinstance(_role("group", []), list):
+            raise LLMError(
+                "The language model returned an unexpected format when identifying the roles of "
+                "the log's attributes. Please try again."
+            )
         switch_cols = [c for c in _role("switch", []) if c in candidates]
         group_cols = [c for c in _role("group", []) if c in candidates]
         for c in switch_cols:

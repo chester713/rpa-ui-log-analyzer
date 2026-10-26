@@ -10,6 +10,7 @@ import uuid
 import csv
 import warnings
 from datetime import datetime
+from urllib.parse import quote
 from flask import Flask, render_template, request, jsonify, redirect, url_for, session
 from werkzeug.utils import secure_filename
 
@@ -102,6 +103,26 @@ def index():
     return render_template("welcome.html")
 
 
+def _remember_llm_choice(llm_client) -> None:
+    """Record which model this analysis uses.
+
+    The first task (selecting the event column) may have switched to the backup model.
+    Later requests build their own client, so they read this to stay on the same model.
+    """
+    model = getattr(llm_client, "model", None)
+    if model:
+        session["llm_model"] = model
+        session["llm_backup_used"] = bool(getattr(llm_client, "used_backup", False))
+
+
+def _upload_error(message: str, llm: bool = False):
+    """Send the user back to the upload page, which shows ``message`` in its red box.
+
+    Model problems use ``llm_error`` (shown as "LLM error: …"); anything else ``error``.
+    """
+    return redirect(f"/upload?{'llm_error' if llm else 'error'}={quote(message)}")
+
+
 @app.route("/upload")
 def upload():
     return render_template("index.html")
@@ -127,11 +148,11 @@ def select_column():
         )
         file.save(filepath)
 
+        from src.llm.client import LLMError, get_llm_client
+        from src.parser.csv_loader import CSVLoader
+
         try:
             columns, rows = _read_csv_dedup(filepath, max_rows=MAX_PREVIEW_ROWS)
-
-            from src.llm.client import get_llm_client
-            from src.parser.csv_loader import CSVLoader
 
             llm_client = get_llm_client()
             loader = CSVLoader(llm_client)
@@ -141,6 +162,7 @@ def select_column():
 
             session["uploaded_file"] = filepath
             session["filename"] = filename
+            _remember_llm_choice(llm_client)
 
             return render_template(
                 "columns.html",
@@ -151,9 +173,19 @@ def select_column():
                 filename=filename,
             )
 
+        except LLMError as exc:
+            # A model problem (missing key, provider overloaded, quota, ...): say what it is.
+            _logger.warning("LLM error during column detection in /select-column: %s", exc)
+            return _upload_error(str(exc), llm=True)
+        except UnicodeDecodeError:
+            _logger.warning("Uploaded file is not valid UTF-8", exc_info=True)
+            return _upload_error(
+                "The file could not be read as UTF-8 text. Save it as \"CSV UTF-8\" "
+                "(in Excel: Save As > CSV UTF-8) and upload it again."
+            )
         except Exception:
             _logger.exception("Error during column detection in /select-column")
-            return jsonify({"error": "An internal error occurred. Please try again."}), 500
+            return _upload_error("An internal error occurred while reading the file. Please try again.")
 
     return redirect("/upload")
 
@@ -175,11 +207,11 @@ def detect_column():
     filepath = os.path.join(app.config["UPLOAD_FOLDER"], f"{uuid.uuid4()}_{filename}")
     file.save(filepath)
 
+    from src.llm.client import LLMError, get_llm_client
+    from src.parser.csv_loader import CSVLoader
+
     try:
         columns, preview_rows = _read_csv_dedup(filepath, max_rows=LLM_DETECT_SAMPLE_ROWS)
-
-        from src.llm.client import get_llm_client
-        from src.parser.csv_loader import CSVLoader
 
         llm_client = get_llm_client()
         loader = CSVLoader(llm_client)
@@ -189,6 +221,7 @@ def detect_column():
 
         session["uploaded_file"] = filepath
         session["filename"] = filename
+        _remember_llm_choice(llm_client)
 
         return jsonify(
             {
@@ -199,6 +232,9 @@ def detect_column():
             }
         )
 
+    except LLMError as exc:
+        _logger.warning("LLM error during column detection in /detect-column: %s", exc)
+        return jsonify({"error": str(exc), "llm_error": True}), 502
     except Exception:
         _logger.exception("Error during column detection in /detect-column")
         return jsonify({"error": "An internal error occurred. Please try again."}), 500

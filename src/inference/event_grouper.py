@@ -445,7 +445,12 @@ Return only valid JSON. No explanation."""
         arr_match = re.search(r'\[.*\]', text, re.DOTALL)
         if not arr_match:
             raise ValueError("The LLM did not return a valid group structure. Please try again.")
-        parsed = json.loads(arr_match.group())
+        try:
+            parsed = json.loads(arr_match.group())
+        except json.JSONDecodeError as exc:
+            raise ValueError(
+                "The LLM returned malformed JSON for group refinement. Please try again."
+            ) from exc
         if not isinstance(parsed, list):
             raise ValueError("The LLM returned an unexpected response format for group refinement. Please try again.")
 

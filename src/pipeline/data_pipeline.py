@@ -47,8 +47,12 @@ class PipelineResult:
 
     def summary(self) -> str:
         """Generate human-readable summary."""
-        lines = [
-            "=== RPA UI Log Analyzer Results ===",
+        lines = ["=== RPA UI Log Analyzer Results ==="]
+        model = self.statistics.get("llm_model")
+        if model:
+            note = " (backup model; the main model was unavailable)" if self.statistics.get("llm_backup_used") else ""
+            lines.append(f"Model: {model}{note}")
+        lines += [
             f"Total activities inferred: {len(self.activities)}",
             f"Total event-to-activity mappings: {len(self.mappings)}",
             f"Total recommendations: {len(self.recommendations)}",
@@ -161,6 +165,10 @@ class DataPipeline:
                 [g.events for g in groups]
             ),
             "mapping_stats": self.mapper.get_mapping_summary(mappings),
+            # Which model produced this result: the first task may have switched to the
+            # backup model, and every later step of the run stayed on it.
+            "llm_model": getattr(self.llm_client, "model", None),
+            "llm_backup_used": bool(getattr(self.llm_client, "used_backup", False)),
         }
 
         return PipelineResult(

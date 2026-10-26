@@ -5,7 +5,7 @@ import json
 import sys
 from pathlib import Path
 from src.pipeline.data_pipeline import DataPipeline
-from src.llm.client import get_llm_client
+from src.llm.client import LLMError, get_llm_client
 
 
 def main():
@@ -78,7 +78,7 @@ Examples:
 
         sys.exit(0)
 
-    except ValueError as e:
+    except (ValueError, LLMError) as e:
         print(f"Error: {e}", file=sys.stderr)
         sys.exit(1)
     except Exception as e:

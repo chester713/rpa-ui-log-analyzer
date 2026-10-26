@@ -97,13 +97,14 @@
             }
         });
         
-        // Show LLM error if redirected back from a failed analysis.
+        // Show the reason if the server redirected back after a failed upload or analysis.
         (function() {
             const params = new URLSearchParams(window.location.search);
             const llmError = params.get('llm_error');
-            if (llmError) {
+            const message = llmError ? 'LLM error: ' + llmError : params.get('error');
+            if (message) {
                 const el = document.getElementById('error');
-                if (el) { el.textContent = 'LLM error: ' + llmError; el.style.display = 'block'; }
+                if (el) { el.textContent = message; el.style.display = 'block'; }
                 history.replaceState(null, '', window.location.pathname);
             }
         })();

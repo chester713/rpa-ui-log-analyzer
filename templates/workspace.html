@@ -102,7 +102,7 @@
     <div class="topbar">
         <div>
             <h1>Guided Analysis Workspace</h1>
-            <p class="meta">File: {{ entry.filename }} · Date: {{ entry.timestamp }}</p>
+            <p class="meta">File: {{ entry.filename }} · Date: {{ entry.timestamp }}{% if entry.llm_model %} · Model: {{ entry.llm_model }}{% if entry.llm_backup_used %} (backup model){% endif %}{% endif %}</p>
         </div>
         <a class="btn btn-primary" href="/results/{{ entry.id }}">Open Analysis Results</a>
     </div>

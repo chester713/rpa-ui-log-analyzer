@@ -70,7 +70,7 @@
     <div class="topbar">
         <div>
             <h1>Analysis Results</h1>
-            <div class="meta">File: {{ entry.filename }} · Date: {{ entry.timestamp }} · Activity-name attribute: {{ entry.event_column or 'N/A' }}</div>
+            <div class="meta">File: {{ entry.filename }} · Date: {{ entry.timestamp }} · Activity-name attribute: {{ entry.event_column or 'N/A' }}{% if entry.llm_model %} · Model: {{ entry.llm_model }}{% if entry.llm_backup_used %} (backup model){% endif %}{% endif %}</div>
         </div>
         {% if view and view.activities %}<button class="export-btn" id="exportBtn">Export CSV</button>{% endif %}
     </div>

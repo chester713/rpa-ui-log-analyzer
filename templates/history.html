@@ -43,6 +43,7 @@
                         <th>Date</th>
                         <th>File</th>
                         <th>Activities</th>
+                        <th>Model</th>
                         <th>Actions</th>
                     </tr>
                 </thead>
@@ -52,6 +53,7 @@
                         <td>{{ entry.timestamp[:19] }}</td>
                         <td>{{ entry.filename }}</td>
                         <td>{{ entry.activity_count or (entry.activities|length if entry.activities else 0) }} UI activities</td>
+                        <td>{{ entry.llm_model or '—' }}{% if entry.llm_backup_used %} (backup){% endif %}</td>
                         <td>
                             <a href="/workspace/{{ entry.id }}">Workspace</a>
                             &nbsp;·&nbsp;

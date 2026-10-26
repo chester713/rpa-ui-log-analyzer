@@ -271,7 +271,10 @@ def _compute_step1(store):
     from src.llm.client import get_llm_client
 
     meta = store.load("meta")
-    llm_client = get_llm_client()
+    # The model was chosen when the event column was selected at upload (that first task
+    # may have switched to the backup model). Stay on it for every later step; only if
+    # none was recorded does this client start on the main model.
+    llm_client = get_llm_client(model=meta.get("llm_model"))
     loader = CSVLoader(llm_client)
     if meta.get("event_column"):
         loader._force_column = meta["event_column"]
@@ -319,6 +322,9 @@ def _compute_step1(store):
         "context_attributes": context_attributes,
         "environment_columns": loader.detected_environment_columns,
         "element_columns": element_attributes,
+        # The model this analysis runs on (every later step stays on it).
+        "llm_model": getattr(llm_client, "model", None),
+        "llm_backup_used": bool(getattr(llm_client, "used_backup", False)),
     }
 
 
@@ -383,8 +389,11 @@ def _run_step2_thread(aid):
             with _step2_lock:
                 _step2_progress[aid].update({"completed": completed, "total": total})
 
+        # Same model as every earlier step of this analysis; never switch mid-analysis.
+        meta = store.load("meta")
+        llm_client = get_llm_client(model=meta.get("llm_model"), allow_failover=False)
         inferrer = ActivityInferrer(
-            get_llm_client(),
+            llm_client,
             progress_callback=_on_progress,
             patterns=PATTERNS,
             application_attributes=step1.get("application_attributes"),
@@ -519,14 +528,19 @@ def start_progressive():
     shutil.copy2(filepath, prog_filepath)
 
     store = StepStore(aid)
-    store.save("meta", {
+    meta = {
         "aid": aid,
         "history_id": history_id,
         "filename": filename,
         "filepath": prog_filepath,
         "event_column": event_column,
         "llm_column": llm_column,
-    })
+        # The model that answered the first task at upload (it may be the backup model).
+        # Every later step of this analysis stays on it.
+        "llm_model": session.get("llm_model"),
+        "llm_backup_used": bool(session.get("llm_backup_used", False)),
+    }
+    store.save("meta", meta)
 
     try:
         step1_data = _compute_step1(store)
@@ -535,6 +549,11 @@ def start_progressive():
         return redirect(f"/upload?llm_error={_urlquote(str(exc))}")
     store.save_step(1, step1_data)
 
+    # If no model had been recorded, step 1's client decided it; keep that for step 3.
+    meta["llm_model"] = step1_data.get("llm_model")
+    meta["llm_backup_used"] = bool(step1_data.get("llm_backup_used", False))
+    store.save("meta", meta)
+
     history_entry = {
         "id": history_id,
         "timestamp": datetime.now().isoformat(),
@@ -542,6 +561,9 @@ def start_progressive():
         "event_column": event_column,
         "progressive_aid": aid,
         "activity_count": 0,
+        # Which model produced this analysis (for attribution in results and history).
+        "llm_model": meta["llm_model"],
+        "llm_backup_used": meta["llm_backup_used"],
     }
     with _history_lock:
         history = _get_history()
