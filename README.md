@@ -71,7 +71,7 @@ The exact wording of a method varies slightly between pattern files, and the det
 The web interface (`python app.py`, port 5001) provides a guided flow:
 
 1. **Welcome** (`/`) — overview of the approach and its seven steps.
-2. **Upload** (`/upload`) — CSV file upload (`.csv`, up to 16 MB).
+2. **Upload** (`/upload`) — CSV file upload (`.csv`, UTF-8, up to 16 MB). A file that is not UTF-8 is rejected with a hint to save it as "CSV UTF-8" (in Excel: Save As).
 3. **Activity-name attribute** (`/select-column`) — the LLM proposes the attribute holding the activity names; click any attribute to change it (a prototype feature for when the LLM is wrong).
 4. **Guided Analysis** (`/workspace/<id>`) — the seven steps of the approach, one page each, with the output of every step (including the rule-based segments of step 1) and the logic behind it. Step 3 runs the second LLM call when it is opened.
 5. **Results** (`/results/<id>`):
@@ -153,6 +153,8 @@ The CLI runs the same pipeline as the web app. Grouping columns are identified b
 
 - **The LLM decides the UI activities; switches follow the recorded application** — The code does not override how the LLM divides and combines events; it only checks that each UI activity is a run of consecutive events and that every event is covered once. Context switches are detected from the application column only: a switch between windows or browser tabs of the same application is not detected unless the log records it as an event of its own.
 
+- **Coverage is bounded by the pattern collection** — An action no pattern covers is reported as not covered: it keeps no pattern and gets no method, rather than being assigned to the closest pattern. The collection has no Close pattern, for instance, so closing a window or workbook is not matched. The LLM is told never to force a pattern, but it can occasionally still name such an action after a pattern that merely resembles it (a window-closing event named as a deletion). Extending the collection — a new file in `patterns/` — is how to cover more actions; the approach itself does not change.
+
 - **SME judgement is simulated by LLM** — The recommendation approach as described relies on a Subject Matter Expert (SME) to judge the collective intent of consecutive events and then to normalise the resulting UI activities to the pattern vocabulary. In this prototype that judgement is approximated by an LLM; implicit activities follow fixed rules. The LLM may misinterpret activities in unfamiliar domains or where log attributes are sparse.
 
 - **LLM is mandatory; output quality depends on it** — There is no keyword/heuristic fallback. Attribute roles, abstraction (step 2) and normalisation (step 3) are LLM-driven (pattern matching only looks up the pattern returned with the normalisation; segmentation, implicit activities, environment and methods follow fixed rules), so results vary with the model and the clarity of the log. Robustness is pursued by tightening the prompts rather than by adding rule-based safety nets.
@@ -200,7 +202,7 @@ tests/                 # pytest test suite
 pytest
 ```
 
-All tests run offline except `test_cli_output_json_contract`, which runs the real CLI end to end and therefore needs `GEMINI_API_KEY` and network access.
+All tests run offline except `test_cli_output_json_contract`, which runs the real CLI end to end and therefore needs `GEMINI_API_KEY` and network access. The CLI does not read `.env`: in a full `pytest` run the key is picked up from `.env` because the web-app tests import the app, but running that test alone needs the variable exported in your shell.
 
 ## License
 
