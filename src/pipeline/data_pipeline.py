@@ -31,6 +31,7 @@ class PipelineResult:
                     "name": a.name,
                     "confidence": a.confidence,
                     "evidence": a.evidence,
+                    "reasoning": a.reasoning,
                     "source_events": a.source_events,
                 }
                 for a in self.activities
@@ -165,6 +166,15 @@ class DataPipeline:
                 [g.events for g in groups]
             ),
             "mapping_stats": self.mapper.get_mapping_summary(mappings),
+            # What the LLM decided about the log's attributes (prompts P1 and P2), as step 1
+            # of the web workspace shows it.
+            "attribute_roles": {
+                "activity_name": self.loader.detected_column,
+                "application": application_attributes,
+                "data_context": context_attributes,
+                "element": element_attributes,
+                "environment": self.loader.detected_environment_columns,
+            },
             # Which model produced this result: the first task may have switched to the
             # backup model, and every later step of the run stayed on it.
             "llm_model": getattr(self.llm_client, "model", None),

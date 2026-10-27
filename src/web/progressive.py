@@ -3,7 +3,7 @@
 The workspace shows the steps of the approach in their order (Section 4 of the paper):
 
   Stage 1 — UI activity identification
-    1  Segment events by context          rules (attribute roles identified by the LLM at load)
+    1  Segment events by context          rules (attribute roles identified by the LLM at load: P1, P2)
     2  Abstract higher-level UI activities LLM in place of the SME (prompt P3)
     3  Normalise UI activities            LLM in place of the SME (prompt P4)
     4  Add implicit activities            rules
@@ -55,11 +55,11 @@ STAGE_GROUPS = {1: "UI activity identification", 2: "Method recommendation"}
 # What each step does and why, shown under the step. (title, explanation) pairs.
 STAGE_LOGIC: Dict[str, List[List[str]]] = {
     "segment": [
-        ["Attribute roles", "Loggers name attributes differently, so when the log is loaded an LLM "
+        ["Attribute roles", "Loggers name attributes differently, so when the log is loaded an LLM (prompt P2) "
          "identifies the role of each attribute by what it describes, not by its name: the application "
          "(software context), the further context such as webpage, window or worksheet (data context), "
          "the target element, and the attributes indicating each execution environment. The activity-name "
-         "attribute is proposed by the LLM and confirmed or changed by the analyst before the analysis starts."],
+         "attribute is proposed by the LLM (prompt P1) and confirmed or changed by the analyst before the analysis starts."],
         ["Software context first", "Traversing the log in temporal order, consecutive events stay in the same "
          "interaction segment as long as they share their software context; a change of the recorded "
          "application starts a new segment."],
@@ -424,6 +424,98 @@ def _run_step2_thread(aid):
 
 _RULE_OF_PATTERN = {"Switch Context": "switch", "Find Element": "find", "Focus": "focus"}
 
+_EXAMPLE_VALUES = 3
+_EXAMPLE_CHARS = 40
+
+
+def _attribute_roles(columns, rows, step1, event_column) -> List[dict]:
+    """Prompts P1 and P2: the role the LLM gave each attribute of the log, with example values.
+
+    An attribute can hold several roles (an element id is a target element and a web
+    indicator) or none. The examples are the first distinct values recorded for it.
+    """
+    roles: Dict[str, List[str]] = {}
+
+    def give(attributes, role):
+        for attribute in attributes or []:
+            if attribute:
+                roles.setdefault(attribute, []).append(role)
+
+    give([event_column], "Activity name (P1)")
+    give(step1.get("application_attributes"), "Application (software context)")
+    give(step1.get("context_attributes"), "Data context")
+    give(step1.get("element_columns"), "Target element")
+    environment = step1.get("environment_columns") or {}
+    for name in ("web", "desktop", "screen"):
+        give(environment.get(name), f"{name.capitalize()} indicator")
+
+    table = []
+    for column in columns or list(roles):
+        examples: List[str] = []
+        for row in rows:
+            value = str(row["values"].get(column, "")).strip()
+            if value and value not in examples:
+                examples.append(value)
+                if len(examples) == _EXAMPLE_VALUES:
+                    break
+        table.append({
+            "name": column,
+            "roles": roles.get(column, []),
+            "examples": [v if len(v) <= _EXAMPLE_CHARS else v[:_EXAMPLE_CHARS - 1] + "…" for v in examples],
+        })
+    return table
+
+
+def _abstraction_decisions(segments, ui_activities):
+    """Prompt P3: what the LLM did with the rule-based segments of step 1.
+
+    A UI activity keeps a segment as it is, is one part of a segment the LLM divided, or
+    combines events of adjacent segments across a boundary the rules had drawn. P3 returns
+    no reasons, so only the outcome is stated (and, where the LLM combined, the boundary the
+    rules had drawn there). Returns one decision per UI activity, and the counts.
+    """
+    boundary = {s["segment_index"]: s.get("boundary") for s in segments}
+    parts: Dict[int, List[int]] = {s["segment_index"]: [] for s in segments}
+    for u in ui_activities:
+        for s in u["segments"]:
+            parts[s].append(u["index"])
+
+    def names(indexes):
+        labels = [f"S{i + 1}" for i in indexes]
+        return labels[0] if len(labels) == 1 else ", ".join(labels[:-1]) + " and " + labels[-1]
+
+    counts = {"segments": len(segments), "ui_activities": len(ui_activities),
+              "kept": 0, "divided": 0, "combined": 0}
+    decisions = []
+    for u in ui_activities:
+        touched = u["segments"]
+        if not touched:
+            decisions.append(None)
+        elif len(touched) > 1:
+            crossed = [boundary[s] for s in touched[1:] if boundary.get(s)]
+            note = f"Combined events of {names(touched)}"
+            if crossed:
+                note += f"; the rules had split them ({'; '.join(crossed)})"
+            decisions.append({"kind": "combined", "note": note})
+            counts["combined"] += len(touched) - 1
+        else:
+            siblings = parts[touched[0]]
+            if len(siblings) == 1:
+                decisions.append({"kind": "kept", "note": f"Kept segment {names(touched)} as one UI activity"})
+            else:
+                decisions.append({
+                    "kind": "divided",
+                    "note": f"Divided segment {names(touched)}: part {siblings.index(u['index']) + 1} of {len(siblings)}",
+                })
+
+    by_index = {u["index"]: u for u in ui_activities}
+    for segment, siblings in parts.items():
+        if len(siblings) > 1:
+            counts["divided"] += 1
+        elif siblings and by_index[siblings[0]]["segments"] == [segment]:
+            counts["kept"] += 1
+    return decisions, counts
+
 
 def build_view(store) -> dict:
     """Everything the workspace and the results page show, built from the stored steps."""
@@ -440,6 +532,8 @@ def build_view(store) -> dict:
         "roles": {},
         "segments": [],
         "ui_activities": [],
+        "abstraction": None,
+        "normalisation": None,
         "activities": [],
         "graph": {"nodes": [], "edges": []},
         "available": {key: False for key in STAGE_KEYS},
@@ -450,16 +544,21 @@ def build_view(store) -> dict:
         return view
 
     event_column = meta.get("event_column") or step1.get("event_column")
+    proposed = meta.get("llm_column") or None  # what the LLM proposed at upload (prompt P1)
+    if proposed and proposed == event_column:
+        event_column_source = "proposed by the LLM, confirmed by the analyst"
+    elif proposed:
+        event_column_source = f"selected by the analyst; the LLM had proposed {proposed}"
+    else:
+        event_column_source = "selected by the analyst; the LLM did not propose an attribute of the log"
     view["roles"] = {
         "event_column": event_column,
-        "event_column_source": (
-            "selected by the analyst" if meta.get("llm_column") and meta.get("llm_column") != event_column
-            else "proposed by the LLM, confirmed by the analyst"
-        ),
+        "event_column_source": event_column_source,
         "application": step1.get("application_attributes") or [],
         "context": step1.get("context_attributes") or [],
         "element": step1.get("element_columns") or [],
         "environment": step1.get("environment_columns") or {},
+        "attributes": _attribute_roles(columns, rows, step1, event_column),
     }
     view["segments"] = step1["segments"]
 
@@ -475,6 +574,9 @@ def build_view(store) -> dict:
             "labels": [e["event"] for e in g["events"]],
             "segments": sorted({row_to_segment[r] for r in rows_ if r in row_to_segment}),
         })
+    decisions, view["abstraction"] = _abstraction_decisions(step1["segments"], view["ui_activities"])
+    for ui_activity, decision in zip(view["ui_activities"], decisions):
+        ui_activity["decision"] = decision
     view["available"]["segment"] = view["available"]["abstract"] = True
 
     if not step2 or not step3:
@@ -498,6 +600,12 @@ def build_view(store) -> dict:
             "reasoning": a.get("reasoning") or "",
             **rec,
         })
+    recorded = [a for a in view["activities"] if a["kind"] == "recorded"]
+    view["normalisation"] = {
+        "activities": len(recorded),
+        "matched": sum(1 for a in recorded if a["pattern"]),
+        "not_covered": sum(1 for a in recorded if not a["pattern"]),
+    }
     view["graph"] = {
         "nodes": [{"id": a["index"], "label": a["name"], "kind": a["kind"], "rule": a["rule"]}
                   for a in view["activities"]],

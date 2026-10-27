@@ -187,3 +187,33 @@ def test_results_before_normalisation_point_to_step_3(monkeypatch, tmp_path) -> 
     html = webapp.app.test_client().get("/results/h1").get_data(as_text=True)
 
     assert "#normalise" in html
+
+
+def test_workspace_states_what_the_llm_decided_in_each_of_its_steps(analysis) -> None:
+    client, history_id, _ = analysis
+    html = client.get(f"/workspace/{history_id}").get_data(as_text=True)
+    view = _view(html)
+
+    # Steps 1 (P1, P2): the role the LLM gave every attribute of the log.
+    attributes = {a["name"]: a for a in view["roles"]["attributes"]}
+    assert list(attributes) == ["Event", "Application", "Workbook", "Worksheet", "Cell range", "Element ID", "URL"]
+    assert attributes["Event"]["roles"] == ["Activity name (P1)"]
+    assert attributes["Element ID"]["roles"] == ["Target element", "Web indicator"]
+    assert attributes["Cell range"]["roles"] == ["Target element", "Desktop indicator"]
+    assert attributes["Application"]["examples"] == ["Microsoft Excel", "Edge"]
+
+    # Step 2 (P3): what the LLM did with each segment. Every Excel segment is kept; every Edge
+    # segment is divided, because the click that focuses the field is a UI activity of its own.
+    assert [u["decision"]["note"] for u in view["ui_activities"][:3]] == [
+        "Kept segment S1 as one UI activity",
+        "Divided segment S2: part 1 of 2",
+        "Divided segment S2: part 2 of 2",
+    ]
+    assert view["abstraction"] == {"segments": 60, "ui_activities": 90, "kept": 30, "divided": 30, "combined": 0}
+
+    # Step 3 (P4): the pattern chosen for every UI activity, with the LLM's own reasoning and evidence.
+    assert view["normalisation"] == {"activities": 90, "matched": 90, "not_covered": 0}
+    write = next(a for a in view["activities"] if a["pattern"] == "Write Element")
+    assert (write["reasoning"], write["evidence"]) == ("scripted", ["scripted"])
+    assert "Decisions made by the LLM: attribute roles" in html
+    assert "The LLM\\'s decision for the selected UI activity" in html

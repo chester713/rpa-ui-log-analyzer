@@ -49,11 +49,24 @@ Examples:
             print(result.summary())
 
         if args.verbose:
+            def listed(value):
+                items = value if isinstance(value, list) else ([value] if value else [])
+                return ", ".join(items) or "none"
+
+            roles = result.statistics.get("attribute_roles") or {}
+            print("\n=== Attribute Roles (identified by the LLM) ===")
+            for label, key in (("Activity name", "activity_name"), ("Application", "application"),
+                               ("Data context", "data_context"), ("Target element", "element")):
+                print(f"  {label}: {listed(roles.get(key))}")
+            for environment, columns in (roles.get("environment") or {}).items():
+                print(f"  {environment.capitalize()} indicators: {listed(columns)}")
+
             print("\n=== Detailed Results ===")
             for i, mapping in enumerate(result.mappings, 1):
                 print(f"\n--- Activity {i} ---")
                 print(f"  Name: {mapping.activity.name}")
                 print(f"  Confidence: {mapping.confidence:.2f}")
+                print(f"  Reasoning: {mapping.activity.reasoning}")
                 print(f"  Evidence: {mapping.activity.evidence}")
                 print(f"  Events: {len(mapping.events)}")
                 print(

@@ -38,6 +38,7 @@
         .stage-title { font-size: 18px; }
         .stage-sub { color: #6b7280; font-size: 13px; margin-bottom: 12px; }
         .badge { border-radius: 999px; padding: 4px 10px; font-size: 12px; font-weight: 500; }
+        .badges { display: flex; gap: 6px; flex-wrap: wrap; }
         .badge-rule { background: #ecfdf5; color: #065f46; }
         .badge-llm { background: #fef3c7; color: #92400e; }
         .badge-lookup { background: #eef2ff; color: #3730a3; }
@@ -46,17 +47,24 @@
         .cols-21 { grid-template-columns: minmax(0, 2fr) minmax(0, 1fr); }
         .cols-12 { grid-template-columns: minmax(0, 1fr) minmax(0, 2fr); }
         .pane { border: 1px solid #e5e7eb; border-radius: 10px; padding: 12px; min-width: 0; }
+        .pane.llm { border-left: 3px solid #f59e0b; }
         .pane h3 { color: #4b5563; font-size: 13px; margin-bottom: 6px; }
+        .badge-sm { padding: 1px 8px; font-size: 11px; vertical-align: middle; }
+        .decision { font-size: 13px; line-height: 1.6; margin-bottom: 8px; }
+        .evidence { margin-left: 16px; }
         .step-desc { font-size: 12px; color: #6b7280; margin-bottom: 8px; line-height: 1.45; }
         .tbl-wrap { overflow: auto; max-height: 440px; border: 1px solid #e5e7eb; border-radius: 8px; }
         .data-tbl { width: 100%; border-collapse: collapse; font-size: 12px; }
         .data-tbl th, .data-tbl td { padding: 6px 9px; text-align: left; border-bottom: 1px solid #eee; vertical-align: top; }
         .data-tbl td.wrap { white-space: normal; min-width: 180px; }
         .data-tbl td.nowrap, .data-tbl th { white-space: nowrap; }
+        .data-tbl td.break { overflow-wrap: anywhere; }
         .data-tbl th { background: #f8f9fa; font-weight: 600; color: #374151; position: sticky; top: 0; z-index: 1; }
         .data-tbl tbody tr { cursor: pointer; }
         .data-tbl tbody tr:hover { background: #f0f7ff; }
         .data-tbl tbody tr.hl { background: #dbeafe; }
+        .data-tbl.static tbody tr { cursor: default; }
+        .data-tbl.static tbody tr:hover { background: none; }
         .muted { color: #9ca3af; }
         .small { font-size: 11px; color: #6b7280; }
         .kind { display: inline-block; border-radius: 4px; padding: 2px 7px; font-size: 11px; font-weight: 500; white-space: nowrap; }
@@ -133,7 +141,7 @@
     </div>
 
     {% set badges = {
-        'segment': ('badge-rule', 'Rules'),
+        'segment': ('badge-rule', 'Rules', ('badge-llm', 'LLM · attribute roles · P1, P2')),
         'abstract': ('badge-llm', 'LLM in place of the SME · P3'),
         'normalise': ('badge-llm', 'LLM in place of the SME · P4'),
         'implicit': ('badge-rule', 'Rules'),
@@ -144,7 +152,10 @@
     <section class="stage-card" data-stage="{{ s.key }}" hidden>
         <div class="stage-header">
             <h2 class="stage-title">Step {{ s.step }}: {{ s.title }}</h2>
-            <span class="badge {{ badges[s.key][0] }}">{{ badges[s.key][1] }}</span>
+            <span class="badges">
+                <span class="badge {{ badges[s.key][0] }}">{{ badges[s.key][1] }}</span>
+                {% if badges[s.key]|length > 2 %}<span class="badge {{ badges[s.key][2][0] }}">{{ badges[s.key][2][1] }}</span>{% endif %}
+            </span>
         </div>
         <p class="stage-sub">Stage {{ s.stage }}: {{ stage_groups[s.stage] }}</p>
         <div class="stage-body" id="body-{{ s.key }}"></div>
@@ -173,15 +184,16 @@ const KIND_LABEL = { recorded: 'Recorded', switch: 'Implicit · Switch', find: '
 const kindBadge = (a) => { const k = a.kind === 'recorded' ? 'recorded' : a.rule; return `<span class="kind kind-${k}">${KIND_LABEL[k] || k}</span>`; };
 const envBadge = (e) => `<span class="env env-${esc(e)}">${esc(e)}</span>`;
 const catBadge = (c) => c ? `<span class="cat cat-${esc(c.toLowerCase())}">${esc(c)}</span>` : '<span class="muted">—</span>';
-const chips = (xs) => (xs && xs.length) ? xs.map(x => `<span class="chip">${esc(x)}</span>`).join('') : '<span class="muted">none</span>';
 const recorded = () => VIEW.activities.filter(a => a.kind === 'recorded');
 const segOf = {}; VIEW.segments.forEach(s => s.rows.forEach(r => { segOf[r] = s.segment_index; }));
+const actOfUi = {}; recorded().forEach(a => { actOfUi[a.ui_activity] = a.index; });
+const count = (n, one, many) => `${n} ${n === 1 ? one : (many || one + 's')}`;
 
-function table(headers, rowsHtml) {
-    return `<div class="tbl-wrap"><table class="data-tbl"><thead><tr>${headers.map(h => `<th>${h}</th>`).join('')}</tr></thead><tbody>${rowsHtml}</tbody></table></div>`;
+function table(headers, rowsHtml, cls = '') {
+    return `<div class="tbl-wrap"><table class="data-tbl ${cls}"><thead><tr>${headers.map(h => `<th>${h}</th>`).join('')}</tr></thead><tbody>${rowsHtml}</tbody></table></div>`;
 }
-function pane(title, desc, inner) {
-    return `<div class="pane"><h3>${title}</h3>${desc ? `<p class="step-desc">${desc}</p>` : ''}${inner}</div>`;
+function pane(title, desc, inner, cls = '') {
+    return `<div class="pane ${cls}"><h3>${title}</h3>${desc ? `<p class="step-desc">${desc}</p>` : ''}${inner}</div>`;
 }
 function logTable() {
     const cols = VIEW.log.columns;
@@ -192,39 +204,65 @@ function segmentsTable(withBoundary) {
     const body = VIEW.segments.map(s => `<tr data-rows="${rowsAttr(s.rows)}"><td>S${s.segment_index + 1}</td><td class="nowrap">${esc(s.rows.join(', '))}</td><td class="wrap">${esc(s.labels.join(', '))}</td>${withBoundary ? `<td class="wrap">${s.boundary ? esc('New segment: ' + s.boundary) : '<span class="muted">start of the log</span>'}</td>` : ''}</tr>`).join('');
     return table(['Segment', 'Rows', 'Events', ...(withBoundary ? ['Why it starts here'] : [])], body);
 }
-function uiActivitiesTable() {
-    const body = VIEW.ui_activities.map(u => `<tr data-rows="${rowsAttr(u.rows)}"><td>U${u.index + 1}</td><td class="nowrap">${esc(u.rows.join(', '))}</td><td class="wrap">${esc(u.labels.join(', '))}</td><td class="nowrap">${u.segments.map(i => 'S' + (i + 1)).join(', ')}</td></tr>`).join('');
-    return table(['UI activity', 'Rows', 'Events', 'From segments'], body);
+function uiActivitiesTable(withDecision) {
+    const body = VIEW.ui_activities.map(u => {
+        const act = actOfUi[u.index];
+        const decision = withDecision ? `<td class="wrap break">${u.decision ? esc(u.decision.note) : ''}</td>` : `<td class="nowrap">${u.segments.map(i => 'S' + (i + 1)).join(', ')}</td>`;
+        return `<tr data-rows="${rowsAttr(u.rows)}"${act !== undefined ? ` data-act="${act}"` : ''}><td>U${u.index + 1}</td><td class="nowrap">${esc(u.rows.join(', '))}</td><td class="wrap">${esc(u.labels.join(', '))}</td>${decision}</tr>`;
+    }).join('');
+    return table(['UI activity', 'Rows', 'Events', withDecision ? 'LLM decision' : 'From segments'], body);
+}
+// What the LLM decided for one UI activity (prompt P4), in its own words where it gave them.
+function decisionHtml(a) {
+    if (!a) return '<span class="muted">No UI activity.</span>';
+    const events = (VIEW.ui_activities[a.ui_activity] || {}).labels || [];
+    const pattern = a.pattern
+        ? `${esc(a.pattern)} <span class="small">(action ${esc(a.action)}, ${esc(a.category)})</span>`
+        : '<span class="no-method">None fits: not covered by the pattern collection</span>';
+    const evidence = (a.evidence || []).length ? `<ul class="evidence">${a.evidence.map(e => `<li>${esc(e)}</li>`).join('')}</ul>` : '<span class="muted">none given</span>';
+    return `<div class="cols cols-2">
+        <dl class="roles">
+            <dt>UI activity</dt><dd>U${a.ui_activity + 1} <span class="small">${esc(events.join(', '))}</span></dd>
+            <dt>Pattern chosen</dt><dd>${pattern}</dd>
+            <dt>Name</dt><dd>${esc(a.name)}</dd>
+            <dt>Object</dt><dd>${a.target ? esc(a.target) : '<span class="muted">none (page or application level)</span>'}</dd>
+            <dt>Context</dt><dd>${a.context ? esc(a.context) : '<span class="muted">—</span>'}</dd></dl>
+        <dl class="roles">
+            <dt>Reasoning</dt><dd>${a.reasoning ? esc(a.reasoning) : '<span class="muted">none given</span>'}</dd>
+            <dt>Evidence</dt><dd>${evidence}</dd>
+            <dt>Confidence</dt><dd>${a.confidence != null ? Math.round(a.confidence * 100) + '%' : '—'}</dd></dl></div>`;
 }
 
 const RENDER = {
     segment() {
         const roles = VIEW.roles;
-        const env = roles.environment || {};
-        const rolesHtml = `<dl class="roles">
-            <dt>Activity name</dt><dd><span class="chip">${esc(roles.event_column)}</span> <span class="small">${esc(roles.event_column_source)}</span></dd>
-            <dt>Application (software context)</dt><dd>${chips(roles.application)}</dd>
-            <dt>Further context (data context)</dt><dd>${chips(roles.context)}</dd>
-            <dt>Target element</dt><dd>${chips(roles.element)}</dd>
-            <dt>Web indicators</dt><dd>${chips(env.web)}</dd>
-            <dt>Desktop indicators</dt><dd>${chips(env.desktop)}</dd>
-            <dt>Screen indicators</dt><dd>${chips(env.screen)}</dd></dl>`;
+        const attributes = (roles.attributes || []).map(a => `<tr><td class="nowrap">${esc(a.name)}</td><td class="wrap">${a.roles.length ? a.roles.map(r => `<span class="chip">${esc(r)}</span>`).join('') : '<span class="muted">no role</span>'}</td><td class="wrap small">${a.examples.length ? esc(a.examples.join(' · ')) : '<span class="muted">empty</span>'}</td></tr>`).join('');
+        const decisions = `
+            <p class="decision"><span class="badge badge-llm badge-sm">P1</span> Activity-name attribute: <span class="chip">${esc(roles.event_column)}</span> <span class="small">${esc(roles.event_column_source)}</span></p>
+            <p class="decision"><span class="badge badge-llm badge-sm">P2</span> The role the LLM gave each attribute of the log:</p>
+            ${table(['Attribute', 'Role', 'Example values'], attributes, 'static')}`;
         return `<div class="cols cols-2">
             ${pane('Recorded UI log', `${VIEW.log.rows.length} events, as recorded. Click a segment to see its events.`, logTable())}
             ${pane('Interaction segments', `${VIEW.segments.length} segments. A new segment starts when the recorded application or a data-context value changes.`, segmentsTable(true))}
-        </div><div style="margin-top:12px">${pane('Attribute roles identified for this log', 'Identified by the LLM from the attribute names and sample values; used by steps 1, 2, 4 and 6.', rolesHtml)}</div>`;
+        </div><div style="margin-top:12px">${pane('Decisions made by the LLM: attribute roles', 'Identified by the LLM (prompt P2) from the attribute names and example values; the activity-name attribute was proposed by the LLM (prompt P1) and confirmed or changed by the analyst. Used by steps 1, 2, 4 and 6.', decisions, 'llm')}</div>`;
     },
     abstract() {
-        return `<div class="cols cols-2">
+        const a = VIEW.abstraction;
+        const summary = `The LLM turned ${count(a.segments, 'segment')} into ${count(a.ui_activities, 'UI activity', 'UI activities')}: it kept ${count(a.kept, 'segment')} as one UI activity, divided ${count(a.divided, 'segment')} and combined events across ${count(a.combined, 'segment boundary', 'segment boundaries')}. Each UI activity is a run of consecutive events with one intent: one action on one target.`;
+        return `<div class="cols cols-12">
             ${pane('Interaction segments (step 1)', 'The evidence the abstraction starts from.', segmentsTable(false))}
-            ${pane('Higher-level UI activities', `${VIEW.ui_activities.length} UI activities, each a run of consecutive events with one intent: one action on one target.`, uiActivitiesTable())}
+            ${pane('Decisions made by the LLM: higher-level UI activities', summary, uiActivitiesTable(true), 'llm')}
         </div>`;
     },
     normalise() {
-        const body = recorded().map(a => `<tr data-rows="${rowsAttr(a.rows)}"><td>U${a.ui_activity + 1}</td><td class="wrap">${esc(a.name)}</td><td class="nowrap">${a.action ? esc(a.action) : '<span class="no-method">not covered</span>'}</td><td class="wrap">${a.target ? esc(a.target) : '<span class="muted">none (page or application level)</span>'}</td><td class="wrap">${a.context ? esc(a.context) : '<span class="muted">—</span>'}</td><td class="nowrap">${a.confidence != null ? Math.round(a.confidence * 100) + '%' : ''}</td></tr>`).join('');
-        return `<div class="cols cols-12">
-            ${pane('Higher-level UI activities (step 2)', '', uiActivitiesTable())}
-            ${pane('Normalised UI activities', 'Named by action + object + context. The action is that of the pattern the LLM chose; "not covered" means no pattern of the collection fits.', table(['UI activity', 'Name', 'Action', 'Object', 'Context', 'LLM confidence'], body))}
+        const n = VIEW.normalisation;
+        const body = recorded().map(a => `<tr data-rows="${rowsAttr(a.rows)}" data-act="${a.index}"><td>U${a.ui_activity + 1}</td><td class="wrap">${esc(a.name)}</td><td class="nowrap">${a.action ? esc(a.action) : '<span class="no-method">not covered</span>'}</td><td class="wrap">${a.target ? esc(a.target) : '<span class="muted">none (page or application level)</span>'}</td><td class="wrap">${a.context ? esc(a.context) : '<span class="muted">—</span>'}</td><td class="nowrap">${a.confidence != null ? Math.round(a.confidence * 100) + '%' : ''}</td></tr>`).join('');
+        const matched = n.not_covered === 0 ? 'all of them matched a pattern of the collection' : `${n.matched} matched a pattern of the collection and ${n.not_covered} ${n.not_covered === 1 ? 'is' : 'are'} not covered (no pattern fits)`;
+        const summary = `The LLM named ${count(n.activities, 'UI activity', 'UI activities')} by action + object + context, the action being that of the pattern it chose; ${matched}.`;
+        return `<div style="margin-bottom:12px">${pane('The LLM\'s decision for the selected UI activity', 'Its reasoning and evidence, as returned by prompt P4. Click a UI activity below to see another.', `<div id="llmDecision">${decisionHtml(recorded()[0])}</div>`, 'llm')}</div>
+        <div class="cols cols-12">
+            ${pane('Higher-level UI activities (step 2)', 'The input of this step.', uiActivitiesTable())}
+            ${pane('Decisions made by the LLM: normalised UI activities', summary, table(['UI activity', 'Name', 'Action', 'Object', 'Context', 'LLM confidence'], body), 'llm')}
         </div>`;
     },
     implicit() {
@@ -266,11 +304,13 @@ function bindHighlights(card) {
             card.querySelectorAll('tbody tr.hl').forEach((row, i) => { if (row !== tr && i < 50) row.scrollIntoView({ block: 'nearest' }); });
             if (tr.dataset.act !== undefined) {
                 const a = VIEW.activities[Number(tr.dataset.act)];
-                const box = document.getElementById('patternDesc');
+                const box = card.querySelector('#patternDesc');
                 if (box) {
                     box.classList.toggle('muted', !a.pattern);
                     box.textContent = a.pattern ? `${a.pattern} (action ${a.action}, ${a.category})\n\n${a.pattern_description || ''}` : 'Not covered by the pattern collection.';
                 }
+                const decision = card.querySelector('#llmDecision');
+                if (decision) decision.innerHTML = decisionHtml(a);
             }
         });
     });

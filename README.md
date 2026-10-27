@@ -31,7 +31,7 @@ The prototype implements the seven steps of the pattern-guided automation method
 
 | # | Step | How |
 |---|------|-----|
-| 1 | **Segment events by context** | When the log is loaded, an LLM identifies the role of each attribute by what it describes, not its name: the application (software context), the further context such as webpage, window or worksheet (data context), the target element, and the attributes indicating each execution environment. The activity-name attribute is proposed by the LLM and confirmed or changed by the analyst. Consecutive events then stay in one interaction segment while they share their software context; within it, a change of a data-context value (webpage, worksheet, UI element) starts a new segment. A value that was not recorded is no evidence of a change. | LLM (attribute roles) + rules |
+| 1 | **Segment events by context** | When the log is loaded, an LLM (prompt P2) identifies the role of each attribute by what it describes, not its name: the application (software context), the further context such as webpage, window or worksheet (data context), the target element, and the attributes indicating each execution environment. The activity-name attribute is proposed by the LLM (prompt P1) and confirmed or changed by the analyst. Consecutive events then stay in one interaction segment while they share their software context; within it, a change of a data-context value (webpage, worksheet, UI element) starts a new segment. A value that was not recorded is no evidence of a change. | LLM (P1, P2) + rules |
 | 2 | **Abstract higher-level UI activities** | In place of the SME, an LLM (prompt P3) receives the events of up to 10 segments, numbered and with their target elements, plus per-attribute evidence between adjacent segments (same / changed / not recorded), and returns runs of consecutive events, one per UI activity. It may divide a segment (a click that focuses a text field is a UI activity of its own) and combine adjacent segments (a paste and the field change it causes form one UI activity). The code only checks that runs are consecutive and cover every event once. | LLM |
 | 3 | **Normalise UI activities** | In place of the SME, an LLM (prompt P4, batches of 5) returns for each UI activity its pattern — whose action is the normalised action — or `null` (not covered by the collection), its name in the form **action + object + context** (e.g. *Write First Name field on rpachallenge.com in Edge*, no input values), its target object and context, evidence and confidence. A pattern name outside the collection stops the analysis. | LLM |
 | 4 | **Add implicit activities** | Fixed rules, in this order: **Switch context** (recorded in a different application from the last recorded one), **Find** (the activity acts on a target element — Read, Observe, Write, Delete, Disable, Activate, Hover, Focus, and Scroll / Refresh when they act on an element — unless the preceding activity targets the same element), **Focus** (before a Write unless the preceding activity focuses that element). | Rules |
@@ -43,6 +43,8 @@ The prototype implements the seven steps of the pattern-guided automation method
 | 5 | **Match patterns** | Each UI activity matches the pattern of its action (returned with the normalisation in step 3); implicit activities match the pattern they were inserted for. | Lookup |
 | 6 | **Determine environment and object type** | The richest environment indicated by the attributes recorded for the activity's events (web > desktop > screen), or *unknown* if none is recorded. It determines the object type: HTML element, UI element or visual element. Find and Focus take the environment of the activity they precede; Switch Context always takes the desktop environment. | Rules |
 | 7 | **Recommend prioritised methods** | The pattern's applicable methods, in order content-level (DOM) → accessibility-level (UI Automation) → visual recognition / hardware simulation, at most three. If there is none (e.g. Delete Element on screen, unknown environment, not covered), the reason is shown. | Rules |
+
+The four LLM prompts are numbered P1 to P4 in the order they are used: **P1** proposes the activity-name attribute (at upload), **P2** identifies the roles of the attributes (when the analysis starts), **P3** abstracts the UI activities (step 2) and **P4** normalises them (step 3). The attribute-selection page and the workspace label them.
 
 Every step's output is stored per analysis (`data/progressive/<id>/`), and the workspace and results pages are built from these files.
 
@@ -73,11 +75,11 @@ The web interface (`python app.py`, port 5001) provides a guided flow:
 1. **Welcome** (`/`) — overview of the approach and its seven steps.
 2. **Upload** (`/upload`) — CSV file upload (`.csv`, UTF-8, up to 16 MB). A file that is not UTF-8 is rejected with a hint to save it as "CSV UTF-8" (in Excel: Save As).
 3. **Activity-name attribute** (`/select-column`) — the LLM proposes the attribute holding the activity names; click any attribute to change it (a prototype feature for when the LLM is wrong).
-4. **Guided Analysis** (`/workspace/<id>`) — the seven steps of the approach, one page each, with the output of every step (including the rule-based segments of step 1) and the logic behind it. Step 3 runs the second LLM call when it is opened.
+4. **Guided Analysis** (`/workspace/<id>`) — the seven steps of the approach, one page each, with the output of every step (including the rule-based segments of step 1) and the logic behind it. The steps in which the LLM decides also show **what it decided**: the role it gave every attribute of the log, with example values (P1, P2; step 1); what it did with each segment — kept it, divided it, or combined its events with the next segment's, together with the boundary the rules had drawn where it combined (P3; step 2); and, for each UI activity, the pattern it chose or that none fits, with its reasoning, evidence and confidence (P4; step 3, click a UI activity to see another). P1 to P3 return no reasons, so only their outcome is shown; nothing is explained after the fact. Step 3 runs the second LLM call when it is opened.
 5. **Results** (`/results/<id>`):
    - **Recorded UI log** — every row of the uploaded CSV (values in attributes whose names look sensitive are shown as `[REDACTED]`); click an event to select its UI activity.
    - **Sequence of UI activities** — recorded and implicit (Switch, Find, Focus) activities in order, with the selected method.
-   - **Pattern & Method** — pattern, object type and target, execution environment with the attributes that decided it, the prioritised methods with a **drop-down to select another method**, the reason when there is no method, and the LLM's confidence and evidence for recorded activities.
+   - **Pattern & Method** — pattern, object type and target, execution environment with the attributes that decided it, the prioritised methods with a **drop-down to select another method**, the reason when there is no method, and the LLM's confidence, reasoning and evidence for recorded activities.
    - **Directly-follows graph** — the sequence of UI activities; each occurrence is a node of its own, so the graph is a single path (UI interaction, not control flow).
    - **Export CSV** — the entire log, with each implicit activity inserted as a row before the UI activity it precedes, and columns `activity_no`, `activity_type`, `ui_activity`, `pattern`, `action`, `object_type`, `target`, `execution_environment`, `selected_method` (the recommendation or your selection), `prioritised_methods` and `method_note`.
 6. **History** (`/history`) — past analyses, each linking to its workspace and results.
@@ -134,10 +136,11 @@ There is **no rule-based fallback**: if the configured LLM is missing or fails, 
 # Basic — prints a text summary (activities and recommended methods) to stdout
 python src_cli.py sample.csv
 
-# Write JSON results to a file (includes confidence and LLM evidence per activity)
+# Write JSON results to a file (the confidence, evidence and reasoning of each activity, and under
+# statistics.attribute_roles the roles the LLM gave the log's attributes)
 python src_cli.py sample.csv --output results.json
 
-# Verbose — prints per-activity detail, including confidence and LLM evidence
+# Verbose — prints the attribute roles and per-activity detail, including confidence, reasoning and LLM evidence
 python src_cli.py sample.csv --verbose
 ```
 

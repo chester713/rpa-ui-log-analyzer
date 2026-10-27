@@ -28,7 +28,8 @@
         th:hover { background: #e0e0e0; }
         th.selected { background: #2563eb !important; color: white !important; }
         th.suggested { background: #90EE90; }
-        th.suggested::after { content: " (LLM)"; color: #006400; font-size: 10px; }
+        th.suggested::after { content: " (LLM · P1)"; color: #006400; font-size: 10px; }
+        .badge { display: inline-block; font-size: 12px; font-weight: 500; padding: 4px 10px; border-radius: 999px; vertical-align: middle; margin-left: 8px; background: #fef3c7; color: #92400e; }
         th.suggested.selected { background: #007bff !important; color: white !important; }
         tr:hover { background: #f5f7fb; }
         .filename { font-weight: 600; color: #333; margin-bottom: 10px; }
@@ -47,11 +48,11 @@
             <span class="nav-inactive">Analysis Results</span>
         </nav>
 
-        <h1>Select Event Column</h1>
+        <h1>Select Event Column <span class="badge" title="Prompt P1: the LLM proposes the attribute that holds the activity names">LLM · P1</span></h1>
         <p class="subtitle">Click on a column header to select it as the event column</p>
-        
+
         <div class="info">
-            <p>Click on a column header to select it. The table shows the first 100 rows of your CSV file.</p>
+            <p>The LLM (prompt P1) proposes which attribute holds the activity names; confirm it or choose another. Click on a column header to select it. The table shows the first 100 rows of your CSV file.</p>
         </div>
         
         <div class="card">
@@ -105,7 +106,7 @@
             var isDetected = selectedColumn === detectedColumn;
             var sourceEl = document.getElementById('selectionSource');
             if (isDetected && llmRecommended) {
-                sourceEl.textContent = '— recommended by LLM';
+                sourceEl.textContent = '— recommended by the LLM (P1)';
                 sourceEl.style.color = '#166534';
             } else {
                 sourceEl.textContent = '— manually selected';

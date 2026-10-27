@@ -126,6 +126,7 @@
                 <div class="kv" id="dNoMethodBox"><div class="k">Method</div><div class="v no-method" id="dNoMethod"></div></div>
                 <div class="kv" id="dLlmBox">
                     <div class="k">LLM Confidence</div><div class="v" id="dConfidence"></div>
+                    <div class="k" style="margin-top:8px">LLM Reasoning</div><div class="v" id="dLlmReason"></div>
                     <div class="k" style="margin-top:8px">LLM Evidence</div><ul id="dEvidence" style="margin-left:18px; font-size:13px; line-height:1.5;"></ul>
                 </div>
                 <div class="kv"><div class="k">Recorded events</div><div class="v" id="dRows"></div></div>
@@ -235,6 +236,7 @@ function renderDetails(a) {
     }
     document.getElementById('dLlmBox').style.display = a.kind === 'recorded' ? 'block' : 'none';
     document.getElementById('dConfidence').textContent = a.confidence != null ? Math.round(a.confidence * 100) + '%' : '—';
+    document.getElementById('dLlmReason').textContent = a.reasoning || '—';
     document.getElementById('dEvidence').innerHTML = (a.evidence || []).map(e => `<li>${esc(e)}</li>`).join('') || '<li>—</li>';
     document.getElementById('dRows').textContent = a.kind === 'implicit'
         ? `None recorded; linked to rows ${a.rows.join(', ')} of the UI activity it precedes.`
