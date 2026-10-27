@@ -217,3 +217,48 @@ def test_workspace_states_what_the_llm_decided_in_each_of_its_steps(analysis) ->
     assert (write["reasoning"], write["evidence"]) == ("scripted", ["scripted"])
     assert "Decisions made by the LLM: attribute roles" in html
     assert "The LLM\\'s decision for the selected UI activity" in html
+
+
+def test_workspace_states_what_the_rules_and_the_lookup_decided_and_why(analysis) -> None:
+    client, history_id, _ = analysis
+    html = client.get(f"/workspace/{history_id}").get_data(as_text=True)
+    view = _view(html)
+
+    # Step 1: every segment starts because the application changed (the Excel/Edge alternation).
+    assert view["segmentation"] == {"events": 120, "segments": 60, "application_changes": 59, "context_changes": 0,
+                                    "context_attributes": [], "no_application": 0}
+    assert view["segments"][1]["boundary_kind"] == "application"
+
+    # Step 4: what each rule decided for each UI activity. The first iteration reads a cell (Find),
+    # switches to Edge (Switch, Find), focuses the field and writes into it (no Find: the preceding
+    # activity targets the same element; no Focus: the preceding activity focuses it).
+    recorded = [a for a in view["activities"] if a["kind"] == "recorded"]
+    read, focus, write = recorded[:3]
+    assert [(c["rule"], c["inserted"]) for c in read["rule_checks"]] == [
+        ("switch", False), ("find", True), ("focus", False)]
+    assert [(c["rule"], c["inserted"]) for c in focus["rule_checks"]] == [
+        ("switch", True), ("find", True), ("focus", False)]
+    assert [(c["rule"], c["inserted"]) for c in write["rule_checks"]] == [
+        ("switch", False), ("find", False), ("focus", False)]
+    assert write["rule_checks"][1]["reason"].endswith("already targets it, so it is not located again.")
+    assert view["implicit_rules"] == {"checked": 90, "switch": 59, "find": 60, "focus": 0}
+
+    # Step 5: where each pattern comes from.
+    assert (read["match_source"], focus["match_source"]) == ("llm", "llm")
+    assert view["matching"] == {"activities": 209, "by_llm": 90, "by_rule": 119, "not_covered": 0}
+
+    # Step 6: what the events record for each environment, and the one that decided.
+    assert focus["environment"] == "web"
+    assert focus["environment_evidence"]["web"]["recorded"] == {"URL": "https://rpachallenge.com/", "Element ID": "lPupZ"}
+    assert focus["environment_evidence"]["desktop"]["recorded"] == {"Application": "Edge"}
+    assert focus["environment_evidence"]["screen"] == {"checked": [], "recorded": {}}
+    assert read["environment"] == "desktop" and read["environment_evidence"]["web"]["recorded"] == {}
+    assert view["environments"] == {"web": 90, "desktop": 119, "screen": 0, "unknown": 0}
+
+    # Step 7: every variant of the pattern and whether it applies.
+    assert [(v["rank"]) for v in write["method_variants"]] == [1, 2, 3]
+    assert [v["rank"] for v in read["method_variants"]] == [None, 1, 2]  # desktop: no content-level method
+    assert view["recommendation"] == {"activities": 209, "with_method": 209, "not_covered": 0,
+                                      "unknown_environment": 0, "no_variant": 0}
+    assert "Decisions made by the rules: implicit activities" in html
+    assert "Decisions made by lookup: matched patterns" in html

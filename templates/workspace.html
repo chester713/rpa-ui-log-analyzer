@@ -48,6 +48,11 @@
         .cols-12 { grid-template-columns: minmax(0, 1fr) minmax(0, 2fr); }
         .pane { border: 1px solid #e5e7eb; border-radius: 10px; padding: 12px; min-width: 0; }
         .pane.llm { border-left: 3px solid #f59e0b; }
+        .pane.rules { border-left: 3px solid #10b981; }
+        .pane.lookup { border-left: 3px solid #6366f1; }
+        .verdict { display: inline-block; border-radius: 4px; padding: 2px 7px; font-size: 11px; font-weight: 500; white-space: nowrap; }
+        .verdict-yes { background: #d1fae5; color: #065f46; }
+        .verdict-no { background: #f3f4f6; color: #6b7280; }
         .pane h3 { color: #4b5563; font-size: 13px; margin-bottom: 6px; }
         .badge-sm { padding: 1px 8px; font-size: 11px; vertical-align: middle; }
         .decision { font-size: 13px; line-height: 1.6; margin-bottom: 8px; }
@@ -233,6 +238,80 @@ function decisionHtml(a) {
             <dt>Confidence</dt><dd>${a.confidence != null ? Math.round(a.confidence * 100) + '%' : '—'}</dd></dl></div>`;
 }
 
+// What the rules and the lookup decided for one activity. Every reason is produced by the code that
+// made the decision, and stored with the step's output.
+const RULE_NAME = { switch: 'Switch context', find: 'Find', focus: 'Focus' };
+const verdict = (yes, text) => `<span class="verdict ${yes ? 'verdict-yes' : 'verdict-no'}">${esc(text)}</span>`;
+const nth = (n) => ['1st', '2nd', '3rd'][n - 1] || `${n}th`;
+const heading = (a, ui) => `<p class="decision">${ui ? 'U' + (a.ui_activity + 1) : a.number} ${kindBadge(a)} ${esc(a.name)}${a.pattern ? ` <span class="small">(${esc(a.pattern)})</span>` : ''}</p>`;
+
+function segmentationSummary() {
+    const s = VIEW.segmentation;
+    let text = `The rules turned ${count(s.events, 'event')} into ${count(s.segments, 'segment')}`;
+    if (s.application_changes !== null) {
+        const attributes = s.context_attributes.length ? ` (${s.context_attributes.map(([name, n]) => `${esc(name)} ${n}×`).join(', ')})` : '';
+        text += `: the first starts the log, ${s.application_changes} start because the recorded application changed and ${s.context_changes} because a data-context value changed${attributes}.`;
+    } else {
+        text += '.';
+    }
+    text += ' The software context is checked first, then the data context.';
+    if (s.no_application) {
+        const one = s.no_application === 1;
+        text += ` ${count(s.no_application, 'event')} record no application; a missing value is no evidence of a change, so ${one ? 'it was' : 'they were'} compared on the attributes ${one ? 'it' : 'they'} did record.`;
+    }
+    return text;
+}
+function implicitHtml(a) {
+    if (!a) return '<span class="muted">No UI activity.</span>';
+    if (!(a.rule_checks || []).length) return `${heading(a, true)}<span class="muted">The rule checks were not stored for this analysis; run it again to see them.</span>`;
+    const body = a.rule_checks.map(c => `<tr><td class="nowrap">${esc(RULE_NAME[c.rule] || c.rule)}</td><td>${verdict(c.inserted, c.inserted ? 'Inserted' : 'Not needed')}</td><td class="wrap break">${esc(c.reason)}</td></tr>`).join('');
+    return heading(a, true) + table(['Rule', 'Decision', 'Why'], body, 'static');
+}
+function matchHtml(a) {
+    if (!a) return '<span class="muted">No activity.</span>';
+    const why = a.match_note ? `<p class="decision">${esc(a.match_note)}</p>` : '';
+    const text = a.pattern ? `${a.pattern} (action ${a.action}, ${a.category})\n\n${a.pattern_description || ''}` : 'Not covered by the pattern collection.';
+    return `${heading(a)}${why}<div class="pattern-desc${a.pattern ? '' : ' muted'}">${esc(text)}</div>`;
+}
+function environmentHtml(a) {
+    if (!a) return '<span class="muted">No activity.</span>';
+    const parts = [heading(a)];
+    const evidence = a.environment_evidence;
+    if (evidence) {
+        const body = ['web', 'desktop', 'screen'].map(env => {
+            const e = evidence[env] || { checked: [], recorded: {} };
+            const recordedEntries = Object.entries(e.recorded || {});
+            const result = a.environment === env ? verdict(true, 'Decides') : verdict(false, recordedEntries.length ? 'Recorded, not decisive' : 'Nothing recorded');
+            const checked = e.checked.length ? esc(e.checked.join(', ')) : '<span class="muted">none identified for this log</span>';
+            const recordedText = recordedEntries.length ? recordedEntries.map(([k, v]) => `${esc(k)} = ${esc(String(v).slice(0, 60))}`).join('<br>') : '<span class="muted">none recorded</span>';
+            return `<tr><td class="nowrap">${envBadge(env)}</td><td class="wrap small">${checked}</td><td class="wrap break small">${recordedText}</td><td>${result}</td></tr>`;
+        }).join('');
+        parts.push(table(['Environment', 'Indicator attributes of the log', 'Recorded for this activity', 'Result'], body, 'static'));
+    }
+    if (a.environment_note) parts.push(`<p class="decision">${esc(a.environment_note)}</p>`);
+    if (a.environment === 'unknown') {
+        parts.push('<p class="decision">No indicator of any environment is recorded, so the environment is unknown and no method can be recommended.</p>');
+    } else if (evidence) {
+        parts.push(`<p class="decision">The richest environment with a recorded indicator decides (web, then desktop, then screen): <strong>${esc(a.environment)}</strong>.</p>`);
+    }
+    parts.push(`<p class="decision">Object type: <strong>${esc(a.object_type || '—')}</strong>${a.object_type_note ? '. ' + esc(a.object_type_note) : ''}</p>`);
+    return parts.join('');
+}
+function methodsHtml(a) {
+    if (!a) return '<span class="muted">No activity.</span>';
+    const parts = [heading(a), `<p class="decision">Execution environment: ${envBadge(a.environment)}</p>`];
+    const variants = a.method_variants || [];
+    if (variants.length) {
+        const body = variants.map(v => `<tr><td class="wrap">${esc(v.method)}</td><td class="nowrap small">${esc(v.level)}</td><td>${v.applicable ? verdict(true, nth(v.rank) + (v.rank === 1 ? ' · recommended' : '')) : verdict(false, 'Not applicable')}</td><td class="wrap break small">${esc(v.why)}</td></tr>`).join('');
+        parts.push(table(['Method the pattern defines', 'Level', 'Decision', 'Why'], body, 'static'));
+    }
+    parts.push(a.methods.length
+        ? `<p class="decision">The prioritised list: ${a.methods.map((m, k) => `${k + 1}. ${esc(m)}`).join(' · ')}.</p>`
+        : `<p class="decision"><span class="no-method">${esc(a.method_note || 'No method.')}</span></p>`);
+    return parts.join('');
+}
+const DETAIL = { normalise: decisionHtml, implicit: implicitHtml, match: matchHtml, environment: environmentHtml, methods: methodsHtml };
+
 const RENDER = {
     segment() {
         const roles = VIEW.roles;
@@ -243,7 +322,7 @@ const RENDER = {
             ${table(['Attribute', 'Role', 'Example values'], attributes, 'static')}`;
         return `<div class="cols cols-2">
             ${pane('Recorded UI log', `${VIEW.log.rows.length} events, as recorded. Click a segment to see its events.`, logTable())}
-            ${pane('Interaction segments', `${VIEW.segments.length} segments. A new segment starts when the recorded application or a data-context value changes.`, segmentsTable(true))}
+            ${pane('Decisions made by the rules: interaction segments', segmentationSummary(), segmentsTable(true), 'rules')}
         </div><div style="margin-top:12px">${pane('Decisions made by the LLM: attribute roles', 'Identified by the LLM (prompt P2) from the attribute names and example values; the activity-name attribute was proposed by the LLM (prompt P1) and confirmed or changed by the analyst. Used by steps 1, 2, 4 and 6.', decisions, 'llm')}</div>`;
     },
     abstract() {
@@ -259,37 +338,47 @@ const RENDER = {
         const body = recorded().map(a => `<tr data-rows="${rowsAttr(a.rows)}" data-act="${a.index}"><td>U${a.ui_activity + 1}</td><td class="wrap">${esc(a.name)}</td><td class="nowrap">${a.action ? esc(a.action) : '<span class="no-method">not covered</span>'}</td><td class="wrap">${a.target ? esc(a.target) : '<span class="muted">none (page or application level)</span>'}</td><td class="wrap">${a.context ? esc(a.context) : '<span class="muted">—</span>'}</td><td class="nowrap">${a.confidence != null ? Math.round(a.confidence * 100) + '%' : ''}</td></tr>`).join('');
         const matched = n.not_covered === 0 ? 'all of them matched a pattern of the collection' : `${n.matched} matched a pattern of the collection and ${n.not_covered} ${n.not_covered === 1 ? 'is' : 'are'} not covered (no pattern fits)`;
         const summary = `The LLM named ${count(n.activities, 'UI activity', 'UI activities')} by action + object + context, the action being that of the pattern it chose; ${matched}.`;
-        return `<div style="margin-bottom:12px">${pane('The LLM\'s decision for the selected UI activity', 'Its reasoning and evidence, as returned by prompt P4. Click a UI activity below to see another.', `<div id="llmDecision">${decisionHtml(recorded()[0])}</div>`, 'llm')}</div>
+        return `<div style="margin-bottom:12px">${pane('The LLM\'s decision for the selected UI activity', 'Its reasoning and evidence, as returned by prompt P4. Click a UI activity below to see another.', `<div data-detail="normalise">${decisionHtml(recorded()[0])}</div>`, 'llm')}</div>
         <div class="cols cols-12">
             ${pane('Higher-level UI activities (step 2)', 'The input of this step.', uiActivitiesTable())}
             ${pane('Decisions made by the LLM: normalised UI activities', summary, table(['UI activity', 'Name', 'Action', 'Object', 'Context', 'LLM confidence'], body), 'llm')}
         </div>`;
     },
     implicit() {
-        const left = recorded().map(a => `<tr data-rows="${rowsAttr(a.rows)}"><td>U${a.ui_activity + 1}</td><td class="wrap">${esc(a.name)}</td></tr>`).join('');
-        const right = VIEW.activities.map(a => `<tr data-rows="${rowsAttr(a.rows)}"><td>${a.number}</td><td>${kindBadge(a)}</td><td class="wrap">${esc(a.name)}</td><td class="wrap small">${a.kind === 'implicit' ? esc(a.reasoning) : ''}</td></tr>`).join('');
-        return `<div class="cols cols-12">
-            ${pane('Normalised UI activities (step 3)', '', table(['UI activity', 'Name'], left))}
-            ${pane('Sequence of UI activities', 'Implicit activities are inserted by the rules in the order Switch context, Find, Focus.', table(['#', 'Type', 'UI activity', 'Why it was added'], right))}
-        </div>`;
+        const n = VIEW.implicit_rules;
+        const rows = VIEW.activities.map(a => `<tr data-rows="${rowsAttr(a.rows)}"${actOfUi[a.ui_activity] !== undefined ? ` data-act="${actOfUi[a.ui_activity]}"` : ''}><td>${a.number}</td><td>${kindBadge(a)}</td><td class="wrap">${esc(a.name)}</td><td class="wrap small">${a.kind === 'implicit' ? esc(a.reasoning) : ''}</td></tr>`).join('');
+        const summary = `The rules checked ${count(n.checked, 'UI activity', 'UI activities')} and inserted ${count(n.switch + n.find + n.focus, 'implicit activity', 'implicit activities')}: ${n.switch} Switch context, ${n.find} Find, ${n.focus} Focus. They are inserted in the order Switch context, Find, Focus. Click a row to see the checks of its UI activity.`;
+        return `<div style="margin-bottom:12px">${pane('Decisions of the rules for the selected UI activity', 'Each rule is checked in turn for every UI activity, whether or not it inserts anything.', `<div data-detail="implicit">${implicitHtml(recorded()[0])}</div>`, 'rules')}</div>
+        ${pane('Decisions made by the rules: implicit activities', summary, table(['#', 'Type', 'UI activity', 'Why it was added'], rows), 'rules')}`;
     },
     match() {
         const body = VIEW.activities.map(a => `<tr data-rows="${rowsAttr(a.rows)}" data-act="${a.index}"><td>${a.number}</td><td>${kindBadge(a)}</td><td class="wrap">${esc(a.name)}</td><td class="nowrap">${esc(a.action || '—')}</td><td class="nowrap">${a.pattern ? esc(a.pattern) : '<span class="no-method">not covered</span>'}</td><td>${catBadge(a.category)}</td></tr>`).join('');
+        const n = VIEW.matching;
+        const are = n && n.not_covered === 1 ? 'is' : 'are';
+        const summary = n ? `Of ${count(n.activities, 'activity', 'activities')} in the sequence, ${n.by_llm} take the pattern the LLM chose in step 3, ${n.by_rule} that of the rule which inserted them, and ${n.not_covered} ${are} not covered (no pattern fits). ` : '';
         return `<div class="cols cols-21">
-            ${pane('Matched patterns', 'Click a row to read the pattern.', table(['#', 'Type', 'UI activity', 'Action', 'Pattern', 'Category'], body))}
-            ${pane('Pattern', '', '<div id="patternDesc" class="pattern-desc muted">No activity selected.</div>')}
+            ${pane('Decisions made by lookup: matched patterns', `${summary}Click a row to see why, and to read the pattern.`, table(['#', 'Type', 'UI activity', 'Action', 'Pattern', 'Category'], body), 'lookup')}
+            ${pane('The match for the selected activity', '', `<div data-detail="match">${matchHtml(VIEW.activities[0])}</div>`, 'lookup')}
         </div>`;
     },
     environment() {
         const body = VIEW.activities.map(a => {
             const deciding = Object.entries(a.deciding || {}).map(([k, v]) => `<span class="small">${esc(k)}:</span> ${esc(String(v).slice(0, 60))}`).join('<br>');
-            return `<tr data-rows="${rowsAttr(a.rows)}"><td>${a.number}</td><td>${kindBadge(a)}</td><td class="wrap">${esc(a.name)}</td><td class="wrap">${deciding || (a.environment_note ? `<span class="small">${esc(a.environment_note)}</span>` : '<span class="muted">no environment attribute recorded</span>')}</td><td>${envBadge(a.environment)}</td><td class="nowrap">${esc(a.object_type || '—')}</td></tr>`;
+            return `<tr data-rows="${rowsAttr(a.rows)}" data-act="${a.index}"><td>${a.number}</td><td>${kindBadge(a)}</td><td class="wrap">${esc(a.name)}</td><td class="wrap">${deciding || (a.environment_note ? `<span class="small">${esc(a.environment_note)}</span>` : '<span class="muted">no environment attribute recorded</span>')}</td><td>${envBadge(a.environment)}</td><td class="nowrap">${esc(a.object_type || '—')}</td></tr>`;
         }).join('');
-        return pane('Execution environment and object type', 'The attributes that decided the environment are shown with their recorded values.', table(['#', 'Type', 'UI activity', 'Deciding attributes', 'Environment', 'Object type'], body));
+        const e = VIEW.environments;
+        const summary = `The rules determined the environment of ${count(VIEW.activities.length, 'activity', 'activities')}: ${e.web} web, ${e.desktop} desktop, ${e.screen} screen${e.unknown ? `, ${e.unknown} unknown (no indicator recorded)` : ''}. The attributes that decided it are shown with their recorded values.`;
+        return `<div style="margin-bottom:12px">${pane('Decision of the rules for the selected activity', 'The indicators recorded for each environment, and what they decided. Click an activity below to see another.', `<div data-detail="environment">${environmentHtml(VIEW.activities[0])}</div>`, 'rules')}</div>
+        ${pane('Decisions made by the rules: environment and object type', summary, table(['#', 'Type', 'UI activity', 'Deciding attributes', 'Environment', 'Object type'], body), 'rules')}`;
     },
     methods() {
-        const body = VIEW.activities.map(a => `<tr data-rows="${rowsAttr(a.rows)}"><td>${a.number}</td><td>${kindBadge(a)}</td><td class="wrap">${esc(a.name)}</td><td class="nowrap">${esc(a.pattern || '—')}</td><td>${envBadge(a.environment)}</td><td class="wrap">${a.methods.length ? a.methods.map((m, k) => `${k + 1}. ${esc(m)}`).join('<br>') : `<span class="no-method">No method.</span> <span class="small">${esc(a.method_note || '')}</span>`}</td></tr>`).join('');
-        return pane('Prioritised automation methods', 'Content-level first, then accessibility-level, then visual recognition and hardware simulation. The analyst can select another method on the results page.', table(['#', 'Type', 'UI activity', 'Pattern', 'Environment', 'Methods (prioritised)'], body));
+        const body = VIEW.activities.map(a => `<tr data-rows="${rowsAttr(a.rows)}" data-act="${a.index}"><td>${a.number}</td><td>${kindBadge(a)}</td><td class="wrap">${esc(a.name)}</td><td class="nowrap">${esc(a.pattern || '—')}</td><td>${envBadge(a.environment)}</td><td class="wrap">${a.methods.length ? a.methods.map((m, k) => `${k + 1}. ${esc(m)}`).join('<br>') : `<span class="no-method">No method.</span> <span class="small">${esc(a.method_note || '')}</span>`}</td></tr>`).join('');
+        const r = VIEW.recommendation;
+        const none = r.activities - r.with_method;
+        const reasons = [r.not_covered && `${r.not_covered} not covered`, r.unknown_environment && `${r.unknown_environment} with an unknown environment`, r.no_variant && `${r.no_variant} without a variant for their environment`].filter(Boolean).join(', ');
+        const summary = `Of ${count(r.activities, 'activity', 'activities')}, ${r.with_method} ${r.with_method === 1 ? 'has' : 'have'} a recommended method${none ? `; ${none} ${none === 1 ? 'has' : 'have'} none (${reasons})` : ''}. Content-level methods come first, then accessibility-level, then visual recognition and hardware simulation. The analyst can select another method on the results page.`;
+        return `<div style="margin-bottom:12px">${pane('Decision of the rules for the selected activity', 'The variants the pattern defines, and which of them apply in the environment of the activity. Click an activity below to see another.', `<div data-detail="methods">${methodsHtml(VIEW.activities[0])}</div>`, 'rules')}</div>
+        ${pane('Decisions made by the rules: prioritised methods', summary, table(['#', 'Type', 'UI activity', 'Pattern', 'Environment', 'Methods (prioritised)'], body), 'rules')}`;
     },
 };
 
@@ -303,14 +392,8 @@ function bindHighlights(card) {
             });
             card.querySelectorAll('tbody tr.hl').forEach((row, i) => { if (row !== tr && i < 50) row.scrollIntoView({ block: 'nearest' }); });
             if (tr.dataset.act !== undefined) {
-                const a = VIEW.activities[Number(tr.dataset.act)];
-                const box = card.querySelector('#patternDesc');
-                if (box) {
-                    box.classList.toggle('muted', !a.pattern);
-                    box.textContent = a.pattern ? `${a.pattern} (action ${a.action}, ${a.category})\n\n${a.pattern_description || ''}` : 'Not covered by the pattern collection.';
-                }
-                const decision = card.querySelector('#llmDecision');
-                if (decision) decision.innerHTML = decisionHtml(a);
+                const detail = card.querySelector('[data-detail]');
+                if (detail) detail.innerHTML = DETAIL[detail.dataset.detail](VIEW.activities[Number(tr.dataset.act)]);
             }
         });
     });

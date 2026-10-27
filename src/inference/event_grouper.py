@@ -17,6 +17,8 @@ class EventGroup:
     ``boundary`` says why the group starts where it does (step 1 of the approach):
     the recorded application changed, a data-context attribute changed, or None for
     the first group of the log. It is set for the rule-based segments only.
+    ``boundary_kind`` is what changed ("application" or "data context") and
+    ``boundary_attribute`` the data-context attribute that changed.
     """
 
     events: List[Event]
@@ -24,6 +26,8 @@ class EventGroup:
     previous_app: Optional[str] = None
     current_app: Optional[str] = None
     boundary: Optional[str] = None
+    boundary_kind: Optional[str] = None
+    boundary_attribute: Optional[str] = None
 
 
 class EventGrouper:
@@ -131,6 +135,7 @@ class EventGrouper:
                 current_group = EventGroup(
                     events=[event], previous_app=last_app, current_app=app,
                     boundary=f"application changed: {last_app} \u2192 {app}",
+                    boundary_kind="application",
                 )
                 segment_values = dict(values)
             elif changed:
@@ -139,6 +144,7 @@ class EventGrouper:
                 current_group = EventGroup(
                     events=[event],
                     boundary=f"{key} changed: {segment_values[key]} \u2192 {values[key]}",
+                    boundary_kind="data context", boundary_attribute=key,
                 )
                 segment_values = dict(values)
             else:

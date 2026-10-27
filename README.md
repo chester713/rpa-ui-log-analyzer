@@ -75,7 +75,7 @@ The web interface (`python app.py`, port 5001) provides a guided flow:
 1. **Welcome** (`/`) — overview of the approach and its seven steps.
 2. **Upload** (`/upload`) — CSV file upload (`.csv`, UTF-8, up to 16 MB). A file that is not UTF-8 is rejected with a hint to save it as "CSV UTF-8" (in Excel: Save As).
 3. **Activity-name attribute** (`/select-column`) — the LLM proposes the attribute holding the activity names; click any attribute to change it (a prototype feature for when the LLM is wrong).
-4. **Guided Analysis** (`/workspace/<id>`) — the seven steps of the approach, one page each, with the output of every step (including the rule-based segments of step 1) and the logic behind it. The steps in which the LLM decides also show **what it decided**: the role it gave every attribute of the log, with example values (P1, P2; step 1); what it did with each segment — kept it, divided it, or combined its events with the next segment's, together with the boundary the rules had drawn where it combined (P3; step 2); and, for each UI activity, the pattern it chose or that none fits, with its reasoning, evidence and confidence (P4; step 3, click a UI activity to see another). P1 to P3 return no reasons, so only their outcome is shown; nothing is explained after the fact. Step 3 runs the second LLM call when it is opened.
+4. **Guided Analysis** (`/workspace/<id>`) — the seven steps of the approach, one page each, with the output of every step (including the rule-based segments of step 1) and the logic behind it. The steps in which the LLM decides also show **what it decided**: the role it gave every attribute of the log, with example values (P1, P2; step 1); what it did with each segment — kept it, divided it, or combined its events with the next segment's, together with the boundary the rules had drawn where it combined (P3; step 2); and, for each UI activity, the pattern it chose or that none fits, with its reasoning, evidence and confidence (P4; step 3, click a UI activity to see another). P1 to P3 return no reasons, so only their outcome is shown; nothing is explained after the fact. The rule-based steps and the lookup show their decisions the same way, each with the reason given by the code that made it: what started each segment (step 1); what each of the three implicit-activity rules decided for each UI activity, including why a Switch, Find or Focus was *not* needed (step 4); where each activity's pattern comes from (step 5); what the events record for each environment and which one decided (step 6); and every variant of the pattern, with whether it applies in the environment and why (step 7). Step 3 runs the second LLM call when it is opened.
 5. **Results** (`/results/<id>`):
    - **Recorded UI log** — every row of the uploaded CSV (values in attributes whose names look sensitive are shown as `[REDACTED]`); click an event to select its UI activity.
    - **Sequence of UI activities** — recorded and implicit (Switch, Find, Focus) activities in order, with the selected method.
@@ -137,7 +137,8 @@ There is **no rule-based fallback**: if the configured LLM is missing or fails, 
 python src_cli.py sample.csv
 
 # Write JSON results to a file (the confidence, evidence and reasoning of each activity, and under
-# statistics.attribute_roles the roles the LLM gave the log's attributes)
+# statistics.attribute_roles the roles the LLM gave the log's attributes; the rules' decisions as
+# rule_checks per activity and environment_evidence and method_variants per recommendation)
 python src_cli.py sample.csv --output results.json
 
 # Verbose — prints the attribute roles and per-activity detail, including confidence, reasoning and LLM evidence

@@ -35,6 +35,9 @@ class Activity:
         self.target = target  # readable name of the target UI element, None for page-level actions
         self.target_id = target_id  # identity used to tell whether two activities share a target
         self.context = context  # where the target resides, phrased to follow it, e.g. "on rpachallenge.com in Edge"
+        # What each implicit-activity rule (switch, find, focus) decided for this activity and why:
+        # [{"rule", "inserted", "reason"}, ...]. Set for recorded (main) activities only.
+        self.rule_checks: List[Dict[str, Any]] = []
 
     def __repr__(self) -> str:
         return f"Activity(name='{self.name}', type='{self.activity_type}', confidence={self.confidence})"

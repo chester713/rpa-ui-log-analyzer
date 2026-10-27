@@ -361,6 +361,24 @@ def _application_at(events: List[Event], attributes: List[str], last: bool) -> O
     return None
 
 
+def _check(rule: str, inserted: bool, reason: str) -> Dict[str, Any]:
+    """What one implicit-activity rule decided for an activity, and why."""
+    return {"rule": rule, "inserted": inserted, "reason": reason}
+
+
+def _no_find_reason(activity: Activity) -> str:
+    """Why an activity needs no Find: it does not act on a target element."""
+    pattern = (activity.pattern_name or "").strip().lower()
+    if not pattern:
+        return "Not covered by the pattern collection, so it is not known to act on a target element."
+    if pattern in ELEMENT_TARGETING_WHEN_NAMED:
+        return (
+            f"{activity.pattern_name} acts on the whole page or window here (no target element is "
+            "named), so it needs no Find."
+        )
+    return f"{activity.pattern_name} does not act on a target element, so it needs no Find."
+
+
 def add_implicit_activities(groups, mains: List[Activity], application_attributes: List[str]) -> List[Activity]:
     """Insert the implicit activities of step 4 before the activities that need them.
 
@@ -378,6 +396,9 @@ def add_implicit_activities(groups, mains: List[Activity], application_attribute
 
     The result is: an element is found, then focused, then written to, with one Find
     serving both the Focus and the Write activity.
+
+    What each rule decided for each main activity, and why, is kept on the main activity
+    (``Activity.rule_checks``), whether or not the rule inserted anything.
     """
     enriched: List[Activity] = []
     last_app: Optional[str] = None
@@ -386,16 +407,31 @@ def add_implicit_activities(groups, mains: List[Activity], application_attribute
         events = group.events if hasattr(group, "events") else group
         source_events = main.source_events
         pattern = (main.pattern_name or "").strip().lower()
+        checks: List[Dict[str, Any]] = []
 
         start_app = _application_at(events, application_attributes, last=False)
-        if start_app is not None and last_app is not None and start_app != last_app:
+        if start_app is None:
+            checks.append(_check(
+                "switch", False,
+                "No application is recorded for this UI activity; a missing value is no evidence of a switch.",
+            ))
+        elif last_app is None:
+            checks.append(_check(
+                "switch", False,
+                f"{start_app} is the first application recorded in the log, so there is none to switch from.",
+            ))
+        elif start_app == last_app:
+            checks.append(_check("switch", False, f"Recorded in {start_app}, the same application as before."))
+        else:
+            reason = (
+                f"The activity is recorded in {start_app} and the preceding one in {last_app}, "
+                "so the bot must switch its active application first."
+            )
+            checks.append(_check("switch", True, reason))
             enriched.append(Activity(
                 name=f"Switch context from {last_app} to {start_app}",
                 confidence=1.0,
-                reasoning=(
-                    f"The activity is recorded in {start_app} and the preceding one in {last_app}, "
-                    "so the bot must switch its active application first."
-                ),
+                reasoning=reason,
                 source_events=source_events,
                 activity_type="context_switch",
                 is_implicit=True,
@@ -403,16 +439,26 @@ def add_implicit_activities(groups, mains: List[Activity], application_attribute
                 pattern_name="Switch Context",
             ))
 
-        if _acts_on_target_element(main):
+        if not _acts_on_target_element(main):
+            checks.append(_check("find", False, _no_find_reason(main)))
+        else:
             previous = enriched[-1] if enriched else None
-            if not (previous is not None and main.target_id and previous.target_id == main.target_id):
+            if previous is not None and main.target_id and previous.target_id == main.target_id:
+                checks.append(_check(
+                    "find", False,
+                    f"{main.pattern_name} acts on a target element, but the preceding activity "
+                    f"({previous.name}) already targets it, so it is not located again.",
+                ))
+            else:
+                reason = (
+                    f"{main.pattern_name} acts on a target element that the preceding activity "
+                    "does not target, so the bot must locate the element first."
+                )
+                checks.append(_check("find", True, reason))
                 enriched.append(Activity(
                     name=_implicit_name("Find", main),
                     confidence=1.0,
-                    reasoning=(
-                        f"{main.pattern_name} acts on a target element that the preceding activity "
-                        "does not target, so the bot must locate the element first."
-                    ),
+                    reasoning=reason,
                     source_events=source_events,
                     activity_type="prerequisite",
                     is_implicit=True,
@@ -423,7 +469,9 @@ def add_implicit_activities(groups, mains: List[Activity], application_attribute
                     context=main.context,
                 ))
 
-        if pattern == "write element":
+        if pattern != "write element":
+            checks.append(_check("focus", False, "Only a Write needs its element focused for input."))
+        else:
             previous = enriched[-1] if enriched else None
             focused = (
                 previous is not None
@@ -431,14 +479,20 @@ def add_implicit_activities(groups, mains: List[Activity], application_attribute
                 and main.target_id
                 and previous.target_id == main.target_id
             )
-            if not focused:
+            if focused:
+                checks.append(_check(
+                    "focus", False, f"The preceding activity ({previous.name}) already focuses the element.",
+                ))
+            else:
+                reason = (
+                    "Writing requires the target element to be focused for input, and the "
+                    "preceding activity does not focus it."
+                )
+                checks.append(_check("focus", True, reason))
                 enriched.append(Activity(
                     name=_implicit_name("Focus", main),
                     confidence=1.0,
-                    reasoning=(
-                        "Writing requires the target element to be focused for input, and the "
-                        "preceding activity does not focus it."
-                    ),
+                    reasoning=reason,
                     source_events=source_events,
                     activity_type="prerequisite",
                     is_implicit=True,
@@ -449,6 +503,7 @@ def add_implicit_activities(groups, mains: List[Activity], application_attribute
                     context=main.context,
                 ))
 
+        main.rule_checks = checks
         enriched.append(main)
         end_app = _application_at(events, application_attributes, last=True)
         if end_app is not None:

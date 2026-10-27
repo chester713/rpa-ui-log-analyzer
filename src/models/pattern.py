@@ -22,6 +22,9 @@ MAX_RECOMMENDED_METHODS = 3
 # does not change it.
 OBJECT_TYPE_BY_ENVIRONMENT = {"web": "HTML element", "desktop": "UI element", "screen": "visual element"}
 
+# The names of the method levels (see ``method_level``), richest first.
+_LEVEL_NAMES = {0: "content-level", 1: "accessibility-level", 2: "visual and input level"}
+
 
 def method_level(method_name: str) -> Optional[int]:
     """The level of a method by its family, or None when the family is not recognised.
@@ -51,6 +54,18 @@ def object_type_for(pattern: Optional["Pattern"], environment: str) -> Optional[
     if (pattern.object or "").strip().lower() != "element":
         return pattern.object or None
     return OBJECT_TYPE_BY_ENVIRONMENT.get(environment)
+
+
+def explain_object_type(pattern: Optional["Pattern"], environment: str) -> Optional[str]:
+    """Why an activity has the object type ``object_type_for`` returns, or None without a pattern."""
+    if pattern is None:
+        return None
+    if (pattern.object or "").strip().lower() != "element":
+        return f"{pattern.name} acts on a {pattern.object.lower()}, whatever the environment."
+    object_type = OBJECT_TYPE_BY_ENVIRONMENT.get(environment)
+    if object_type is None:
+        return "The environment is unknown, so the object type is unknown too."
+    return f"{pattern.name} acts on an element, which in the {environment} environment has the object type {object_type}."
 
 
 def _split_top_level(text: str, separator: str) -> List[str]:
@@ -180,6 +195,47 @@ class Pattern:
                 methods.append(name)
         return methods[:MAX_RECOMMENDED_METHODS]
 
+    def describe_methods(self, context: str) -> List[dict]:
+        """Every variant the pattern defines, whether it applies in ``context``, and why.
+
+        Explains ``get_methods_for_context``. The variants come in order of level, richest
+        first, which is the order of priority. An applicable variant carries its rank in
+        the prioritised list (1 is the recommendation); every variant carries the reason
+        it is or is not applicable.
+        """
+        applicable = self.get_methods_for_context(context)
+        described = []
+        for name, level in sorted(self._variants(), key=lambda v: v[1]):
+            is_applicable = name in applicable
+            described.append({
+                "method": name,
+                "level": _LEVEL_NAMES[level],
+                "applicable": is_applicable,
+                "rank": applicable.index(name) + 1 if is_applicable else None,
+                "why": self._why_applicable(level, context) if is_applicable
+                else self._why_not_applicable(level, context),
+            })
+        return described
+
+    @staticmethod
+    def _why_applicable(level: int, context: str) -> str:
+        """Why a variant of the given level is among the methods of ``context``."""
+        if level == _ENVIRONMENT_RANK[context]:
+            return f"A {context} environment has {_LEVEL_NAMES[level]} methods of its own."
+        return f"Applicable by cumulation: a {context} object can also be acted on by {_LEVEL_NAMES[level]} methods."
+
+    def _why_not_applicable(self, level: int, context: str) -> str:
+        """Why a variant of the given level is not among the methods of ``context``."""
+        if context not in _ENVIRONMENT_RANK:
+            return "The execution environment is unknown, so no variant can be chosen."
+        if context not in self.contexts:
+            return f"{self.name} is not defined for the {context} environment."
+        if level < _ENVIRONMENT_RANK[context]:
+            if level == 0:
+                return "Content-level methods act only on HTML elements, which only a web environment has."
+            return "Accessibility-level methods need the UI Automation tree, which a screen environment does not expose."
+        return f"The prioritised list holds at most {MAX_RECOMMENDED_METHODS} methods."
+
     def get_method_for_context(self, context: str) -> Optional[str]:
         """
         Get the top-priority method for the given execution environment.
@@ -236,6 +292,11 @@ class MethodRecommendation:
     target: Optional[str] = None  # the concrete target element, e.g. "First Name field"
     # Prioritised methods (highest first, at most three); ``method`` is the first of them.
     methods: List[str] = field(default_factory=list)
+    # Why the environment and the methods were decided, as the web workspace shows them: what the
+    # events record for each environment's indicator columns, and every variant of the pattern with
+    # whether it applies in the environment.
+    environment_evidence: Optional[dict] = None
+    method_variants: List[dict] = field(default_factory=list)
 
     def to_dict(self) -> dict:
         """Convert to dictionary for output."""
@@ -260,5 +321,7 @@ class MethodRecommendation:
             "inference_reasoning": self.inference_reasoning or "",
             "method_note": self.method_note,
             "target": self.target,
+            "environment_evidence": self.environment_evidence,
+            "method_variants": list(self.method_variants),
         }
         return recommendation_record

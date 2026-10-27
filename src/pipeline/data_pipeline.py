@@ -10,7 +10,7 @@ from ..models.pattern import MethodRecommendation, explain_missing_method, objec
 from ..inference.event_grouper import EventGrouper, LLMGroupRefiner
 from ..inference.activity_inferrer import ActivityInferrer
 from ..mapping.event_activity_mapper import EventActivityMapper
-from ..matching.pattern_matcher import determine_environment
+from ..matching.pattern_matcher import environment_evidence, richest_environment
 from ..matching.output_formatter import RecommendationFormatter
 
 
@@ -32,6 +32,7 @@ class PipelineResult:
                     "confidence": a.confidence,
                     "evidence": a.evidence,
                     "reasoning": a.reasoning,
+                    "rule_checks": a.rule_checks,
                     "source_events": a.source_events,
                 }
                 for a in self.activities
@@ -212,14 +213,15 @@ class DataPipeline:
             group_idx = activity.group_index
             group = groups[group_idx] if 0 <= group_idx < len(groups) else None
             events = group.events if group else []
-            context, deciding = determine_environment(events, environment_columns)
+            evidence = environment_evidence(events, environment_columns)
+            context, deciding = richest_environment(evidence)
 
             # Switching between applications, windows or browser tabs is an operation of
             # the desktop, so a Switch Context activity always takes the desktop
             # environment (step 6 of the approach).
             is_context_switch = activity.activity_type == "context_switch"
             if is_context_switch:
-                context, deciding = "desktop", {}
+                context, deciding, evidence = "desktop", {}, None
             method_environment = context
 
             # The pattern is matched by name only. If it has no variant for the
@@ -253,6 +255,8 @@ class DataPipeline:
                 context_switch_to=context_switch_to,
                 method_note=explain_missing_method(pattern, method_environment),
                 target=getattr(activity, "target", None),
+                environment_evidence=evidence,
+                method_variants=pattern.describe_methods(method_environment) if pattern else [],
             )
             recommendations.append(recommendation)
 

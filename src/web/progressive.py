@@ -26,11 +26,14 @@ import shutil
 import tempfile
 import threading
 import uuid
+from collections import Counter
 from datetime import datetime
 from typing import Dict, List, Optional
 from urllib.parse import quote as _urlquote
 
 from flask import Blueprint, jsonify, redirect, request, session
+
+from src.models.event import recorded_value
 
 from .step_store import StepStore
 
@@ -259,6 +262,7 @@ def _serialize_activity(a):
         "target": a.target,
         "target_id": a.target_id,
         "context": getattr(a, "context", None),
+        "rule_checks": list(getattr(a, "rule_checks", None) or []),
     }
 
 
@@ -307,7 +311,7 @@ def _compute_step1(store):
     return {
         "segments": [
             {"segment_index": i, "rows": [e.row_index for e in s.events], "labels": [e.event for e in s.events],
-             "boundary": s.boundary}
+             "boundary": s.boundary, "boundary_kind": s.boundary_kind, "boundary_attribute": s.boundary_attribute}
             for i, s in enumerate(segments)
         ],
         "groups": [
@@ -331,41 +335,61 @@ def _compute_step1(store):
 def compute_recommendations(step1: dict, step2: dict) -> List[dict]:
     """Steps 5 to 7 for every activity of the sequence (recorded and implicit)."""
     from src.matching import PATTERNS
-    from src.matching.pattern_matcher import determine_environment
-    from src.models.pattern import explain_missing_method, object_type_for
+    from src.matching.pattern_matcher import environment_evidence, richest_environment
+    from src.models.pattern import explain_missing_method, explain_object_type, object_type_for
 
     patterns_by_name = {p.name.lower(): p for p in PATTERNS}
     groups = step1["groups"]
     environment_columns = step1.get("environment_columns")
     by_group = {}
     for g in groups:
-        by_group[g["group_index"]] = determine_environment(_reconstruct_events(g["events"]), environment_columns)
+        evidence = environment_evidence(_reconstruct_events(g["events"]), environment_columns)
+        by_group[g["group_index"]] = (*richest_environment(evidence), evidence)
 
     records = []
     for a in step2["activities"]:
         pattern = patterns_by_name.get((a.get("pattern_name") or "").strip().lower())
         is_switch = a.get("activity_type") == "context_switch"
         if is_switch:
-            environment, deciding = "desktop", {}
+            environment, deciding, evidence = "desktop", {}, None
             environment_note = ("Switch Context always takes the desktop environment: switching between "
                                 "applications, windows or browser tabs is an operation of the desktop.")
         else:
-            environment, deciding = by_group.get(a.get("group_index"), ("unknown", {}))
+            environment, deciding, evidence = by_group.get(a.get("group_index"), ("unknown", {}, None))
             environment_note = None
             if a.get("is_implicit"):
                 environment_note = "Takes the environment of the UI activity it precedes."
         methods = pattern.get_methods_for_context(environment) if pattern else []
+
+        # Step 5: where the pattern comes from.
+        if a.get("is_implicit"):
+            match_source = "rule"
+            rule = _RULE_LABEL.get(_RULE_OF_PATTERN.get(a.get("pattern_name")), a.get("pattern_name"))
+            match_note = f"Inserted by the {rule} rule in step 4, which acts through the {a.get('pattern_name')} pattern."
+        elif pattern is None:
+            match_source = "none"
+            match_note = ("The LLM found no pattern of the collection that fits this UI activity (step 3), "
+                          "so nothing is matched and it is not covered.")
+        else:
+            match_source = "llm"
+            match_note = f"The LLM chose {pattern.name} for this UI activity in step 3; the pattern's action is {pattern.action}."
+
         records.append({
             "pattern": pattern.name if pattern else None,
             "action": pattern.action if pattern else None,
             "category": pattern.category if pattern else None,
             "pattern_description": pattern.description if pattern else None,
+            "match_source": match_source,
+            "match_note": match_note,
             "object_type": object_type_for(pattern, environment),
+            "object_type_note": explain_object_type(pattern, environment),
             "environment": environment,
             "deciding": deciding,
+            "environment_evidence": evidence,
             "environment_note": environment_note,
             "methods": methods,
             "method": methods[0] if methods else None,
+            "method_variants": pattern.describe_methods(environment) if pattern else [],
             "method_note": explain_missing_method(pattern, environment),
         })
     return records
@@ -423,6 +447,7 @@ def _run_step2_thread(aid):
 # ── The view shown by the workspace and results pages ─────────────────────────
 
 _RULE_OF_PATTERN = {"Switch Context": "switch", "Find Element": "find", "Focus": "focus"}
+_RULE_LABEL = {"switch": "Switch context", "find": "Find", "focus": "Focus"}
 
 _EXAMPLE_VALUES = 3
 _EXAMPLE_CHARS = 40
@@ -517,6 +542,73 @@ def _abstraction_decisions(segments, ui_activities):
     return decisions, counts
 
 
+def _segmentation_summary(segments, rows, application_attributes) -> dict:
+    """Step 1 (rules): why the log was cut into segments where it was.
+
+    The counts of what started each segment are None for an analysis stored before the
+    segments recorded it. ``no_application`` counts the events that record no application:
+    the rules did not take a missing value for a change.
+    """
+    kinds = [s.get("boundary_kind") for s in segments if s.get("boundary")]
+    summary = {
+        "events": sum(len(s["rows"]) for s in segments),
+        "segments": len(segments),
+        "application_changes": None,
+        "context_changes": None,
+        "context_attributes": [],
+        "no_application": None,
+    }
+    if all(kinds):
+        summary["application_changes"] = kinds.count("application")
+        summary["context_changes"] = kinds.count("data context")
+        changed = Counter(s.get("boundary_attribute") for s in segments if s.get("boundary_kind") == "data context")
+        summary["context_attributes"] = [[name, n] for name, n in changed.most_common()]
+    if application_attributes and rows:
+        summary["no_application"] = sum(
+            1 for row in rows
+            if all(recorded_value(row["values"].get(a)) is None for a in application_attributes)
+        )
+    return summary
+
+
+def _rule_summaries(activities) -> dict:
+    """Steps 4 to 7: what the rules and the lookup decided, counted over the activity sequence."""
+    recorded = [a for a in activities if a["kind"] == "recorded"]
+    inserted = Counter(a["rule"] for a in activities if a["kind"] == "implicit")
+
+    no_method = Counter(
+        "not_covered" if a["pattern"] is None
+        else "unknown_environment" if a["environment"] == "unknown"
+        else "no_variant"
+        for a in activities if not a["methods"]
+    )
+    # Analyses stored before the match was explained have no source to count.
+    matching = None
+    if all("match_source" in a for a in activities):
+        matching = {
+            "activities": len(activities),
+            "by_llm": sum(1 for a in activities if a["match_source"] == "llm"),
+            "by_rule": sum(1 for a in activities if a["match_source"] == "rule"),
+            "not_covered": sum(1 for a in activities if a["match_source"] == "none"),
+        }
+    return {
+        "implicit_rules": {
+            "checked": len(recorded),
+            "switch": inserted["switch"], "find": inserted["find"], "focus": inserted["focus"],
+        },
+        "matching": matching,
+        "environments": {name: sum(1 for a in activities if a["environment"] == name)
+                         for name in ("web", "desktop", "screen", "unknown")},
+        "recommendation": {
+            "activities": len(activities),
+            "with_method": sum(1 for a in activities if a["methods"]),
+            "not_covered": no_method["not_covered"],
+            "unknown_environment": no_method["unknown_environment"],
+            "no_variant": no_method["no_variant"],
+        },
+    }
+
+
 def build_view(store) -> dict:
     """Everything the workspace and the results page show, built from the stored steps."""
     meta = store.load("meta") or {}
@@ -532,8 +624,13 @@ def build_view(store) -> dict:
         "roles": {},
         "segments": [],
         "ui_activities": [],
+        "segmentation": None,
         "abstraction": None,
         "normalisation": None,
+        "implicit_rules": None,
+        "matching": None,
+        "environments": None,
+        "recommendation": None,
         "activities": [],
         "graph": {"nodes": [], "edges": []},
         "available": {key: False for key in STAGE_KEYS},
@@ -561,6 +658,7 @@ def build_view(store) -> dict:
         "attributes": _attribute_roles(columns, rows, step1, event_column),
     }
     view["segments"] = step1["segments"]
+    view["segmentation"] = _segmentation_summary(step1["segments"], rows, step1.get("application_attributes"))
 
     row_to_segment = {}
     for s in step1["segments"]:
@@ -598,8 +696,10 @@ def build_view(store) -> dict:
             "confidence": None if implicit else a.get("confidence"),
             "evidence": [] if implicit else (a.get("evidence") or []),
             "reasoning": a.get("reasoning") or "",
+            "rule_checks": [] if implicit else (a.get("rule_checks") or []),
             **rec,
         })
+    view.update(_rule_summaries(view["activities"]))
     recorded = [a for a in view["activities"] if a["kind"] == "recorded"]
     view["normalisation"] = {
         "activities": len(recorded),

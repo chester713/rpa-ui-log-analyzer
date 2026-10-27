@@ -66,6 +66,39 @@ DEFAULT_ENVIRONMENT_COLUMNS: Dict[str, List[str]] = {
 ENVIRONMENT_PRIORITY = ("web", "desktop", "screen")
 
 
+def environment_evidence(
+    events: List[Event],
+    environment_columns: Optional[Dict[str, List[str]]] = None,
+) -> Dict[str, Dict[str, object]]:
+    """What the events of a UI activity record for each environment's indicator columns.
+
+    Returns, for every environment in priority order, the indicator columns that were
+    checked (``"checked"``) and those among them the events record, each with its first
+    recorded value (``"recorded"``). ``determine_environment`` decides from this.
+    """
+    columns = DEFAULT_ENVIRONMENT_COLUMNS if environment_columns is None else environment_columns
+    evidence: Dict[str, Dict[str, object]] = {}
+    for environment in ENVIRONMENT_PRIORITY:
+        checked = list(columns.get(environment) or [])
+        recorded: Dict[str, str] = {}
+        for column in checked:
+            for event in events:
+                value = event.recorded(column)
+                if value is not None:
+                    recorded[column] = value
+                    break
+        evidence[environment] = {"checked": checked, "recorded": recorded}
+    return evidence
+
+
+def richest_environment(evidence: Dict[str, Dict[str, object]]) -> Tuple[str, Dict[str, str]]:
+    """The highest-priority environment with a recorded indicator, and those indicators."""
+    for environment in ENVIRONMENT_PRIORITY:
+        if evidence[environment]["recorded"]:
+            return environment, evidence[environment]["recorded"]
+    return "unknown", {}
+
+
 def determine_environment(
     events: List[Event],
     environment_columns: Optional[Dict[str, List[str]]] = None,
@@ -90,19 +123,7 @@ def determine_environment(
         "screen" or "unknown"; the deciding attributes map each indicator column of
         that environment recorded in the events to its first recorded value.
     """
-    columns = DEFAULT_ENVIRONMENT_COLUMNS if environment_columns is None else environment_columns
-
-    for environment in ENVIRONMENT_PRIORITY:
-        deciding: Dict[str, str] = {}
-        for column in columns.get(environment) or []:
-            for event in events:
-                value = event.recorded(column)
-                if value is not None:
-                    deciding[column] = value
-                    break
-        if deciding:
-            return environment, deciding
-    return "unknown", {}
+    return richest_environment(environment_evidence(events, environment_columns))
 
 
 def get_context_from_events(
