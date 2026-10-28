@@ -109,6 +109,7 @@
         <a href="/upload">Upload</a>
         <a href="/workspace/{{ entry.id }}">Guided Analysis</a>
         <a href="/results/{{ entry.id }}">Analysis Results</a>
+        <a href="/visualisation/{{ entry.id }}">Visualisation</a>
         <a href="/history">History</a>
     </nav>
 
@@ -225,11 +226,11 @@ function decisionHtml(a) {
         ? `${esc(a.pattern)} <span class="small">(action ${esc(a.action)}, ${esc(a.category)})</span>`
         : '<span class="no-method">None fits: not covered by the pattern collection</span>';
     const evidence = (a.evidence || []).length ? `<ul class="evidence">${a.evidence.map(e => `<li>${esc(e)}</li>`).join('')}</ul>` : '<span class="muted">none given</span>';
-    return `<div class="cols cols-2">
     // Only a Delete carries this answer: whether it removes the element or the data an element holds.
     const deletes = a.pattern === 'Delete Element'
         ? `<dt>Deletes</dt><dd>${a.deletes === 'content' ? 'data held by an element (the element stays)' : a.deletes === 'element' ? 'the element itself' : '<span class="muted">not stored for this analysis</span>'}</dd>`
         : '';
+    return `<div class="cols cols-2">
         <dl class="roles">
             <dt>UI activity</dt><dd>U${a.ui_activity + 1} <span class="small">${esc(events.join(', '))}</span></dd>
             <dt>Pattern chosen</dt><dd>${pattern}</dd>

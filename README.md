@@ -82,7 +82,8 @@ The web interface (`python app.py`, port 5001) provides a guided flow:
    - **Pattern & Method** — pattern, object type and target, execution environment with the attributes that decided it, the prioritised methods with a **drop-down to select another method**, the reason when there is no method, and the LLM's confidence, reasoning and evidence for recorded activities.
    - **Directly-follows graph** — the sequence of UI activities; each occurrence is a node of its own, so the graph is a single path (UI interaction, not control flow).
    - **Export CSV** — the entire log, with each implicit activity inserted as a row before the UI activity it precedes, and columns `activity_no`, `activity_type`, `ui_activity`, `pattern`, `action`, `object_type`, `target`, `execution_environment`, `selected_method` (the recommendation or your selection), `prioritised_methods` and `method_note`.
-6. **History** (`/history`) — past analyses, each linking to its workspace and results.
+6. **Visualisation** (`/visualisation/<id>`, linked from the results page, the workspace and History) — a layered, zoomable map of the analysis in the style of an online map. Every row of the exported analysis is one step of a sequence, and the layers are aligned on it: the rule-based segments of step 1, the software and data context, the context switches, the implicit activities, the UI activities, the log events, the execution environment and the recommended methods. Scroll to zoom and drag to pan; click anything for its details (a UI activity shows its pattern, its methods in order, the LLM's reasoning and the log events it covers); switch layers on and off, colour the activities by environment, pattern category or recommended method, search activities and events, or use the overview in the corner. **Download SVG** and **Download PNG** save what is on screen, legend included, as a figure. `/visualisation` opens an exported CSV file (**Open exported CSV**, or drop it on the page), so a file can be drawn without the app that wrote it. A file does not say which attributes the LLM identified, so its context columns are taken from their names (`application`, `browser_url`, `workbook`, ...) and it has no segments layer. A log of more than 1,200 steps opens with the log-events layer off to keep the map smooth.
+7. **History** (`/history`) — past analyses, each linking to its workspace, results and visualisation.
 
 ### LLM Configuration
 
@@ -177,7 +178,7 @@ src/
 ├── mapping/           # EventActivityMapper — wires grouper and inferrer together
 ├── matching/          # PatternLoader, PatternMatcher, RecommendationFormatter, pattern library wiring
 ├── pipeline/          # DataPipeline — end-to-end orchestrator used by the CLI
-├── web/               # The seven steps for the web app; stores each step's output per analysis and builds the pages from it
+├── web/               # The seven steps for the web app; stores each step's output per analysis and builds the pages from it; the layered map (visualisation.py)
 └── llm/               # LLMClient for OpenAI-compatible endpoints (default: Gemini)
 
 patterns/              # 13 pattern definition files (*.md) — read at startup

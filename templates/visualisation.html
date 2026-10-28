@@ -1,0 +1,889 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Visualisation - RPA UI Log Analyzer</title>
+    <style>
+        * { box-sizing: border-box; margin: 0; padding: 0; }
+        html, body { height: 100%; }
+        body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif; background: #f5f7fb; color: #1f2937; display: flex; flex-direction: column; overflow: hidden; }
+        a { color: #2563eb; text-decoration: none; }
+        a:hover { text-decoration: underline; }
+        .bar { display: flex; align-items: center; gap: 10px 14px; padding: 8px 16px; background: #fff; border-bottom: 1px solid #e5e7eb; flex-wrap: wrap; z-index: 5; }
+        .bar h1 { font-size: 16px; font-weight: 600; }
+        .bar .file { color: #6b7280; font-weight: 400; margin-left: 6px; }
+        .bar .links { display: flex; gap: 14px; font-size: 14px; }
+        .grow { flex: 1; }
+        .btn { background: #fff; border: 1px solid #d1d5db; border-radius: 8px; padding: 7px 12px; font-size: 13px; cursor: pointer; color: #1f2937; font-family: inherit; }
+        .btn:hover { background: #f3f4f6; }
+        .btn:disabled { opacity: .45; cursor: default; }
+        .btn.primary { background: #2563eb; color: #fff; border-color: #2563eb; }
+        .btn.primary:hover { background: #1d4ed8; }
+        #stage { position: relative; flex: 1; min-height: 0; display: flex; background: #eef1f6; }
+        #canvas { position: relative; flex: 1; min-width: 0; }
+        #map { position: absolute; inset: 0; width: 100%; height: 100%; cursor: grab; touch-action: none; user-select: none; -webkit-user-select: none; }
+        #map.dragging { cursor: grabbing; }
+        .card { position: absolute; background: #fff; border-radius: 12px; box-shadow: 0 1px 4px rgba(15,23,42,.28), 0 4px 14px rgba(15,23,42,.12); z-index: 3; }
+        .card.hidden { display: none; }
+        #sheet { flex: none; width: 340px; background: #fff; border-right: 1px solid #e5e7eb; display: flex; flex-direction: column; overflow: hidden; z-index: 3; }
+        #sheet.hidden { display: none; }
+        .search { display: flex; align-items: center; gap: 8px; padding: 12px 14px; flex: none; }
+        .search svg { flex: none; color: #6b7280; }
+        .search input { flex: 1; border: none; outline: none; font-size: 14px; font-family: inherit; min-width: 0; background: transparent; }
+        .search button { border: none; background: none; cursor: pointer; font-size: 18px; color: #6b7280; display: none; }
+        .search.filled button { display: block; }
+        #cardBody { overflow: auto; padding: 4px 14px 14px; font-size: 13px; border-top: 1px solid #eef0f4; min-height: 0; }
+        #cardBody:empty { display: none; }
+        .hint { color: #6b7280; line-height: 1.5; padding-top: 10px; }
+        .title { font-size: 16px; font-weight: 600; line-height: 1.3; margin: 12px 0 8px; overflow-wrap: anywhere; }
+        .badges { display: flex; flex-wrap: wrap; gap: 6px; margin-bottom: 10px; }
+        .badge { display: inline-block; border-radius: 999px; padding: 2px 9px; font-size: 11px; font-weight: 500; background: #f3f4f6; color: #374151; white-space: nowrap; }
+        .badge.warn { background: #fef3c7; color: #92400e; }
+        .badge.sw { color: #fff; }
+        .kv { display: grid; grid-template-columns: max-content 1fr; gap: 5px 12px; font-size: 12px; margin-bottom: 10px; }
+        .kv dt { color: #6b7280; }
+        .kv dd { overflow-wrap: anywhere; }
+        h3.sec { font-size: 11px; text-transform: uppercase; letter-spacing: .05em; color: #6b7280; margin: 12px 0 6px; font-weight: 600; }
+        .note { background: #fff7ed; border: 1px solid #fed7aa; color: #9a3412; border-radius: 8px; padding: 8px 10px; font-size: 12px; margin: 8px 0; }
+        .methodlist { list-style: none; display: flex; flex-direction: column; gap: 5px; }
+        .methodlist li { display: flex; align-items: center; gap: 8px; font-size: 12px; }
+        .methodlist .dot { width: 10px; height: 10px; border-radius: 3px; flex: none; }
+        .methodlist .lvl { color: #6b7280; font-size: 11px; margin-left: auto; white-space: nowrap; }
+        .methodlist .mark { font-weight: 600; }
+        .rows { list-style: none; display: flex; flex-direction: column; }
+        .rows li { display: flex; gap: 8px; align-items: baseline; padding: 5px 6px; border-radius: 6px; font-size: 12px; cursor: pointer; }
+        .rows li:hover { background: #eff6ff; }
+        .rows .n { color: #6b7280; min-width: 34px; }
+        .rows .k { margin-left: auto; color: #6b7280; font-size: 11px; white-space: nowrap; }
+        .attrs { width: 100%; border-collapse: collapse; font-size: 12px; }
+        .attrs th { text-align: left; font-weight: 500; color: #6b7280; padding: 3px 10px 3px 0; vertical-align: top; white-space: nowrap; }
+        .attrs td { padding: 3px 0; overflow-wrap: anywhere; white-space: pre-wrap; }
+        .attrs tr { border-bottom: 1px solid #f3f4f6; }
+        #layers { right: 12px; top: 108px; width: 258px; max-height: calc(100% - 120px); overflow: auto; padding: 12px 14px; }
+        #layers h2 { font-size: 13px; font-weight: 600; display: flex; justify-content: space-between; align-items: baseline; }
+        #layers h2 small { font-weight: 400; color: #6b7280; font-size: 11px; }
+        .stats { color: #6b7280; font-size: 11px; line-height: 1.5; margin: 4px 0 8px; }
+        .layer { display: flex; align-items: center; gap: 8px; padding: 4px 0; font-size: 13px; cursor: pointer; }
+        .layer input { accent-color: #2563eb; }
+        .layer .accent { width: 4px; height: 18px; border-radius: 2px; flex: none; }
+        .layer small { color: #6b7280; margin-left: auto; font-size: 11px; }
+        .layer.off { color: #9ca3af; }
+        .radios { display: flex; flex-direction: column; gap: 3px; font-size: 13px; }
+        .radios label { display: flex; gap: 8px; align-items: center; cursor: pointer; }
+        .roles { color: #6b7280; font-size: 11px; line-height: 1.45; margin-top: 8px; }
+        #zoomBox { left: 12px; bottom: 12px; display: flex; flex-direction: column; overflow: hidden; }
+        #zoomBox button { width: 38px; height: 38px; border: none; background: #fff; cursor: pointer; font-size: 18px; color: #374151; }
+        #zoomBox button + button { border-top: 1px solid #eef0f4; }
+        #zoomBox button:hover { background: #f3f4f6; }
+        #miniBox { right: 12px; top: 12px; width: 258px; height: 84px; overflow: hidden; padding: 0; }
+        #mini { width: 100%; height: 100%; display: block; cursor: pointer; touch-action: none; }
+        #tip { position: absolute; z-index: 6; pointer-events: none; background: #111827; color: #fff; font-size: 12px; padding: 6px 9px; border-radius: 6px; max-width: 320px; line-height: 1.4; display: none; overflow-wrap: anywhere; }
+        #toast { position: absolute; left: 50%; bottom: 20px; transform: translateX(-50%); background: #fee2e2; color: #b91c1c; border-radius: 8px; padding: 10px 14px; font-size: 13px; z-index: 8; display: none; max-width: min(560px, 90%); box-shadow: 0 2px 10px rgba(0,0,0,.2); }
+        #toast.notice { background: #eff6ff; color: #1e40af; }
+        #landing { position: absolute; inset: 0; display: flex; align-items: center; justify-content: center; z-index: 7; background: #eef1f6; padding: 16px; }
+        #landing.hidden { display: none; }
+        .drop { background: #fff; border: 2px dashed #cbd5e1; border-radius: 16px; padding: 34px 38px; text-align: center; max-width: 520px; width: 100%; }
+        .drop.over { border-color: #2563eb; background: #eff6ff; }
+        .drop h2 { font-size: 20px; margin-bottom: 8px; }
+        .drop p { color: #6b7280; font-size: 14px; line-height: 1.55; margin-bottom: 16px; }
+        .drop .warn { background: #fff7ed; border: 1px solid #fed7aa; color: #9a3412; border-radius: 8px; padding: 10px 12px; font-size: 13px; text-align: left; }
+        @media (max-width: 800px) {
+            #stage { flex-direction: column; }
+            #sheet { width: 100%; max-height: 38%; border-right: none; border-bottom: 1px solid #e5e7eb; }
+            #layers { top: auto; bottom: 12px; right: 12px; left: 12px; width: auto; max-height: 55%; }
+            #miniBox { display: none; }
+        }
+    </style>
+</head>
+<body>
+<header class="bar">
+    <nav class="links">
+        {% if entry %}<a href="/results/{{ entry.id }}">&larr; Analysis Results</a><a href="/workspace/{{ entry.id }}">Guided Analysis</a>{% else %}<a href="/">Welcome</a><a href="/history">History</a>{% endif %}
+    </nav>
+    <h1>Layered map<span class="file" id="fileName"></span></h1>
+    <span class="grow"></span>
+    <button class="btn" id="layersBtn" type="button">Layers</button>
+    <button class="btn" id="openBtn" type="button">Open exported CSV&hellip;</button>
+    <button class="btn" id="svgBtn" type="button" disabled>Download SVG</button>
+    <button class="btn" id="pngBtn" type="button" disabled>Download PNG</button>
+    <input type="file" id="fileInput" accept=".csv,text/csv" hidden>
+</header>
+
+<main id="stage">
+    <aside id="sheet">
+        <div class="search" id="searchBox">
+            <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round"><circle cx="11" cy="11" r="7"/><path d="M20 20l-4-4"/></svg>
+            <input id="search" type="text" placeholder="Search activities and events" autocomplete="off" aria-label="Search activities and events">
+            <button id="clearBtn" type="button" aria-label="Clear">&times;</button>
+        </div>
+        <div id="cardBody"></div>
+    </aside>
+
+    <div id="canvas">
+        <svg id="map" xmlns="http://www.w3.org/2000/svg" role="img" aria-label="Layered map of the analysis"></svg>
+        <section class="card" id="layers" aria-label="Layers"></section>
+        <div class="card" id="zoomBox">
+            <button id="zoomIn" type="button" aria-label="Zoom in">+</button>
+            <button id="zoomOut" type="button" aria-label="Zoom out">&minus;</button>
+            <button id="zoomFit" type="button" aria-label="Fit the whole log" title="Fit the whole log">&#x26F6;</button>
+        </div>
+        <div class="card" id="miniBox"><svg id="mini" xmlns="http://www.w3.org/2000/svg" aria-label="Overview"></svg></div>
+        <div id="tip"></div>
+        <div id="toast" role="alert"></div>
+    </div>
+
+    <div id="landing">
+        <div class="drop" id="drop">
+            <h2>Open an exported analysis</h2>
+            <p>Drop the CSV written by <strong>Export CSV</strong> on the results page here, or choose it. The map layers the log events, the identified and implicit activities, the context switches, the context and the recommended methods.</p>
+            {% if notice %}<div class="warn">{{ notice }}</div>{% endif %}
+            <p style="margin-top:14px;margin-bottom:0"><button class="btn primary" id="chooseBtn" type="button">Choose a CSV file</button></p>
+        </div>
+    </div>
+</main>
+
+<script>window.__MODEL__ = {{ (model | tojson) if model else "null" }};</script>
+<script>
+{% raw %}
+(function () {
+'use strict';
+
+// ── constants ────────────────────────────────────────────────────────────────
+const NS = 'http://www.w3.org/2000/svg';
+const SLOT = 88;            // world width of one slot of the sequence
+let GUTTER = 176;           // screen width of the column of layer titles (narrower on a small screen)
+const MIN_K = 0.03, MAX_K = 4, MIN_KY = 0.5;   // below MIN_KY the lanes stop shrinking, so an overview stays readable
+
+const SOURCE = { llm: '#f59e0b', rules: '#10b981', lookup: '#6366f1', log: '#94a3b8' };
+const SOURCE_NAME = { llm: 'LLM', rules: 'Rules', lookup: 'Lookup', log: 'Log' };
+const LANES = [
+    { id: 'segments', title: 'Segments', abbr: 'Segments', sub: 'rules', h: 40, from: 'rules' },
+    { id: 'software', title: 'Software context', abbr: 'Software', sub: 'application', h: 46, from: 'llm' },
+    { id: 'data', title: 'Data context', abbr: 'Data', sub: 'page or document', h: 42, from: 'llm' },
+    { id: 'switches', title: 'Context switches', abbr: 'Switches', sub: 'implicit, rules', h: 66, from: 'rules' },
+    { id: 'implicit', title: 'Implicit activities', abbr: 'Implicit', sub: 'Find, Focus (rules)', h: 74, from: 'rules' },
+    { id: 'activities', title: 'UI activities', abbr: 'Activities', sub: 'identified by the LLM', h: 78, from: 'llm' },
+    { id: 'events', title: 'Log events', abbr: 'Events', sub: 'as recorded', h: 74, from: 'log' },
+    { id: 'environment', title: 'Execution environment', abbr: 'Env.', sub: '', h: 22, from: 'rules' },
+    { id: 'methods', title: 'Recommended method', abbr: 'Method', sub: 'prioritised (lookup)', h: 52, from: 'lookup' },
+];
+const CTX = ['#2563eb', '#16a34a', '#d97706', '#9333ea', '#dc2626', '#0d9488', '#db2777', '#64748b'];
+const ENV = { web: '#16a34a', desktop: '#2563eb', screen: '#d97706', unknown: '#9ca3af' };
+const CAT = { Extraction: '#0891b2', Modification: '#ca8a04', Control: '#9333ea' };
+const LVL = ['#0d9488', '#7c3aed', '#db2777'];
+const LVL_NAME = ['Content-level (DOM)', 'Accessibility-level (UI Automation)', 'Visual and input level'];
+const GREY = '#9ca3af';
+const RULE_NAME = { find: 'Find', focus: 'Focus', switch: 'Switch context' };
+
+// The styles of the map. They are kept inside the SVG so a downloaded file looks the same.
+const MAP_CSS = `
+#map text { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif; fill: #1f2937; pointer-events: none; }
+#map .shape { vector-effect: non-scaling-stroke; }
+#map .item { cursor: pointer; }
+#map .lane-bg { fill: #fff; fill-opacity: .7; stroke: #dfe5ee; vector-effect: non-scaling-stroke; }
+#map .grid { stroke: #e8ecf2; stroke-width: 1; vector-effect: non-scaling-stroke; fill: none; }
+#map .has-sel .item { opacity: .28; }
+#map .has-sel .item.rel, #map .has-sel .item.sel { opacity: 1; }
+#map .item.sel .shape { stroke-width: 3; }
+#map .band-label { font-size: 12px; font-weight: 600; }
+#map .gutter-title { font-size: 12px; font-weight: 600; }
+#map .gutter-sub { font-size: 10.5px; fill: #6b7280; }
+#map [data-lod="0"] .t1, #map [data-lod="0"] .t2, #map [data-lod="0"] .t3,
+#map [data-lod="1"] .t2, #map [data-lod="1"] .t3, #map [data-lod="2"] .t3 { display: none; }
+`;
+
+// ── small helpers ────────────────────────────────────────────────────────────
+const $ = (id) => document.getElementById(id);
+function S(tag, attrs, parent, text) {
+    const e = document.createElementNS(NS, tag);
+    for (const key in (attrs || {})) if (attrs[key] != null) e.setAttribute(key, attrs[key]);
+    if (text != null) e.textContent = text;
+    if (parent) parent.appendChild(e);
+    return e;
+}
+function H(tag, attrs, ...kids) {
+    const e = document.createElement(tag);
+    for (const key in (attrs || {})) {
+        const v = attrs[key];
+        if (v == null || v === false) continue;
+        if (key === 'class') e.className = v;
+        else if (key.startsWith('on')) e.addEventListener(key.slice(2), v);
+        else e.setAttribute(key, v);
+    }
+    for (const kid of kids.flat(Infinity)) if (kid != null && kid !== false) e.append(kid.nodeType ? kid : document.createTextNode(String(kid)));
+    return e;
+}
+const clamp = (v, a, b) => Math.min(b, Math.max(a, v));
+const fit = (text, width, px = 12) => {
+    const room = Math.floor(width / (px * 0.56));
+    text = String(text == null ? '' : text);
+    return text.length <= room ? text : room < 2 ? '' : text.slice(0, room - 1) + '…';
+};
+
+// ── state ────────────────────────────────────────────────────────────────────
+let model = null;
+let acts = new Map();
+let lanes = [];
+let contentH = 0;
+const layers = {};
+let colourBy = 'environment';
+let selected = null;
+let overrides = {};
+let tx = 0, ty = 0, k = 1;
+let labelDefs = [];
+let lod = -1;
+let anim = null;
+let touched = false;   // the user has moved or zoomed the map
+
+const svg = $('map');
+const stage = $('stage');     // the whole page area; files are dropped anywhere on it
+const canvas = $('canvas');   // the map and the panels floating over it
+let world, bandLayer, gutter, legendLayer, clipRect, bg;
+let showLegend = true;
+const ky = () => Math.max(k, MIN_KY);
+const size = () => ({ w: canvas.clientWidth, h: canvas.clientHeight });
+// What the layers panel covers on the right when the window is wide enough to keep it open, so a
+// fitted map is not hidden behind it. On a narrower window the panel simply floats over the map.
+const reserved = () => (canvas.clientWidth >= 1100 && !$('layers').classList.contains('hidden') ? $('layers').offsetWidth + 24 : 0);
+const worldWidth = () => (model ? model.slots.length * SLOT : 0);
+
+function setupSvg() {
+    svg.textContent = '';
+    S('style', null, svg, MAP_CSS);
+    const defs = S('defs', null, svg);
+    const hatch = S('pattern', { id: 'hatch', width: 8, height: 8, patternUnits: 'userSpaceOnUse', patternTransform: 'rotate(45)' }, defs);
+    S('rect', { width: 8, height: 8, fill: '#f3f4f6' }, hatch);
+    S('line', { x1: 0, y1: 0, x2: 0, y2: 8, stroke: GREY, 'stroke-width': 2, opacity: .55 }, hatch);
+    const clip = S('clipPath', { id: 'mapClip' }, defs);
+    clipRect = S('rect', {}, clip);
+    bg = S('rect', { x: 0, y: 0, width: '100%', height: '100%', fill: '#eef1f6' }, svg);
+    const clipped = S('g', { 'clip-path': 'url(#mapClip)' }, svg);
+    world = S('g', { id: 'world' }, clipped);
+    bandLayer = S('g', null, clipped);
+    gutter = S('g', null, svg);
+    legendLayer = S('g', null, svg);
+}
+
+// ── colours ──────────────────────────────────────────────────────────────────
+const ctxColor = (name) => {
+    const i = model.software_names.indexOf(name);
+    return i < 0 ? GREY : CTX[i % CTX.length];
+};
+const selectedOf = (a) => (a.index != null && overrides[a.index]) || a.selected || (a.methods[0] && a.methods[0].name) || null;
+const levelOf = (a, name) => { const m = a.methods.find((x) => x.name === name); return m ? m.level : null; };
+function actColor(a) {
+    if (colourBy === 'category') return CAT[a.category] || GREY;
+    if (colourBy === 'method') { const lvl = levelOf(a, selectedOf(a)); return lvl == null ? GREY : LVL[lvl]; }
+    return ENV[a.environment] || GREY;
+}
+function readOverrides() {
+    try { return (model && model.aid && JSON.parse(localStorage.getItem('method_overrides_' + model.aid) || '{}')) || {}; } catch (e) { return {}; }
+}
+
+// ── layout and drawing ───────────────────────────────────────────────────────
+const laneAvailable = (id) => {
+    if (id === 'segments') return model.segments.length > 0;
+    if (id === 'switches') return model.switches.length > 0;
+    if (id === 'implicit') return model.activities.some((a) => a.type === 'implicit' && a.rule !== 'switch');
+    return true;
+};
+function buildLanes() {
+    let y = 16;
+    lanes = LANES.filter((l) => laneAvailable(l.id) && layers[l.id]).map((l) => { const lane = { ...l, y }; y += l.h + 14; return lane; });
+    contentH = y;
+}
+const laneOf = (id) => lanes.find((l) => l.id === id);
+function item(parent, id, attrs) {
+    return S('g', { class: 'item', 'data-id': id, ...attrs }, parent);
+}
+function actAttrs(a) { return { 'data-act': a.no, 'data-s0': a.from, 'data-s1': a.to }; }
+
+const DRAW = {
+    segments(lane, g) {
+        model.segments.forEach((s, i) => {
+            const x = s.from * SLOT + 1, w = (s.to - s.from + 1) * SLOT - 2;
+            const it = item(g, 'sg' + i, { 'data-s0': s.from, 'data-s1': s.to });
+            S('rect', { class: 'shape', x, y: lane.y, width: w, height: lane.h, rx: 7, fill: '#10b981', 'fill-opacity': .13, stroke: '#10b981', 'stroke-width': 1.2 }, it);
+            S('text', { class: 't1', x: x + 10, y: lane.y + 25, 'font-size': 12, 'font-weight': 600, style: 'fill:#047857' }, it, fit(s.label, w - 16));
+        });
+    },
+    software(lane, g) {
+        model.bands.software.forEach((b, i) => {
+            const c = ctxColor(b.name);
+            const it = item(g, 'bs' + i, { 'data-s0': b.from, 'data-s1': b.to });
+            S('rect', { class: 'shape', x: b.from * SLOT + 1, y: lane.y, width: (b.to - b.from + 1) * SLOT - 2, height: lane.h, rx: 8, fill: c, 'fill-opacity': .2, stroke: c, 'stroke-width': 1.3 }, it);
+            labelDefs.push({ lane: 'software', from: b.from, to: b.to, text: b.name, color: c });
+        });
+    },
+    data(lane, g) {
+        model.bands.data.forEach((b, i) => {
+            const c = ctxColor(b.software);
+            const it = item(g, 'bd' + i, { 'data-s0': b.from, 'data-s1': b.to });
+            S('rect', { class: 'shape', x: b.from * SLOT + 1, y: lane.y, width: (b.to - b.from + 1) * SLOT - 2, height: lane.h, rx: 8, fill: c, 'fill-opacity': .09, stroke: c, 'stroke-width': 1, 'stroke-dasharray': '4 3' }, it);
+            labelDefs.push({ lane: 'data', from: b.from, to: b.to, text: b.name, color: c });
+        });
+    },
+    switches(lane, g) {
+        const software = laneOf('software');
+        model.switches.forEach((s) => {
+            const a = acts.get(s.activity);
+            const c = ctxColor(s.to);
+            const x = s.slot * SLOT, cx = x + SLOT / 2, cy = lane.y + 20;
+            const it = item(g, 'a' + a.no, { ...actAttrs(a) });
+            if (software) S('line', { class: 'shape', x1: cx, x2: cx, y1: software.y + software.h, y2: cy - 14, stroke: c, 'stroke-width': 1.4, 'stroke-dasharray': '3 3' }, it);
+            S('rect', { class: 'shape', x: x + 8, y: cy - 14, width: SLOT - 16, height: 28, rx: 14, fill: c }, it);
+            S('path', { d: `M${cx - 11} ${cy - 4} h20 m-5 -4 l5 4 l-5 4 M${cx + 11} ${cy + 5} h-20 m5 -4 l-5 4 l5 4`, fill: 'none', stroke: '#fff', 'stroke-width': 1.8, 'stroke-linecap': 'round', 'stroke-linejoin': 'round' }, it);
+            S('text', { class: 't1', x: cx, y: lane.y + 50, 'text-anchor': 'middle', 'font-size': 10.5, style: 'fill:#6b7280' }, it, fit(s.from, SLOT - 6, 10.5));
+            S('text', { class: 't1', x: cx, y: lane.y + 62, 'text-anchor': 'middle', 'font-size': 11, 'font-weight': 600 }, it, fit('→ ' + s.to, SLOT - 6, 11));
+        });
+    },
+    implicit(lane, g) {
+        model.activities.filter((a) => a.type === 'implicit' && a.rule !== 'switch').forEach((a) => {
+            const c = actColor(a);
+            const cx = a.from * SLOT + SLOT / 2, cy = lane.y + 24;
+            const it = item(g, 'a' + a.no, actAttrs(a));
+            S('path', { class: 'shape', d: `M${cx} ${cy - 17} L${cx + 17} ${cy} L${cx} ${cy + 17} L${cx - 17} ${cy} Z`, fill: c, 'fill-opacity': .22, stroke: c, 'stroke-width': 1.7 }, it);
+            const glyph = { fill: 'none', stroke: c, 'stroke-width': 1.8, 'stroke-linecap': 'round' };
+            if (a.rule === 'find') {
+                S('circle', { ...glyph, cx: cx - 2, cy: cy - 2, r: 5 }, it);
+                S('path', { ...glyph, d: `M${cx + 2} ${cy + 2} L${cx + 7} ${cy + 7}` }, it);
+            } else {
+                S('circle', { ...glyph, cx, cy, r: 4 }, it);
+                S('path', { ...glyph, d: `M${cx} ${cy - 9} v4 M${cx} ${cy + 5} v4 M${cx - 9} ${cy} h4 M${cx + 5} ${cy} h4` }, it);
+            }
+            S('text', { class: 't1', x: cx, y: lane.y + 56, 'text-anchor': 'middle', 'font-size': 12, 'font-weight': 600 }, it, RULE_NAME[a.rule] || a.rule);
+            S('text', { class: 't3', x: cx, y: lane.y + 69, 'text-anchor': 'middle', 'font-size': 10.5, style: 'fill:#6b7280' }, it, fit(a.target || a.object_type || '', SLOT - 6, 10.5));
+        });
+    },
+    activities(lane, g) {
+        model.activities.filter((a) => a.type === 'recorded').forEach((a) => {
+            const x = a.from * SLOT + 3, w = (a.to - a.from + 1) * SLOT - 6;
+            const c = actColor(a);
+            const it = item(g, 'a' + a.no, actAttrs(a));
+            if (a.covered) S('rect', { class: 'shape', x, y: lane.y, width: w, height: lane.h, rx: 9, fill: c, 'fill-opacity': .2, stroke: c, 'stroke-width': 1.5 }, it);
+            else S('rect', { class: 'shape', x, y: lane.y, width: w, height: lane.h, rx: 9, fill: 'url(#hatch)', stroke: GREY, 'stroke-width': 1.5, 'stroke-dasharray': '5 4' }, it);
+            S('circle', { class: 'shape', cx: x + 16, cy: lane.y + 17, r: 11, fill: a.covered ? c : GREY }, it);
+            S('text', { class: 't1', x: x + 16, y: lane.y + 21, 'text-anchor': 'middle', 'font-size': 11, 'font-weight': 700, style: 'fill:#fff' }, it, String(a.no));
+            S('text', { class: 't2', x: x + 33, y: lane.y + 21, 'font-size': 12, 'font-weight': 600 }, it, fit(a.name, w - 40));
+            S('text', { class: 't3', x: x + 11, y: lane.y + 46, 'font-size': 11, style: 'fill:#6b7280' }, it, fit(a.covered ? [a.pattern, a.target].filter(Boolean).join(' · ') : 'Not covered by the pattern collection', w - 20, 11));
+            S('text', { class: 't3', x: x + 11, y: lane.y + 63, 'font-size': 11, style: 'fill:#6b7280' }, it, fit(a.covered ? (a.environment + ' · ' + (a.object_type || '')) : 'no pattern, no method', w - 20, 11));
+        });
+    },
+    events(lane, g) {
+        model.slots.forEach((s, i) => {
+            if (s.kind !== 'event') return;
+            const cx = i * SLOT + SLOT / 2, cy = lane.y + 30;
+            const c = s.software ? ctxColor(s.software) : GREY;
+            const attrs = { 'data-s0': i, 'data-s1': i };
+            if (s.activity != null) attrs['data-act'] = s.activity;
+            const it = item(g, 'e' + i, attrs);
+            S('circle', { class: 'shape', cx, cy, r: 11, fill: c, 'fill-opacity': s.activity == null ? .15 : .92, stroke: s.activity == null ? c : '#fff', 'stroke-width': 2 }, it);
+            S('text', { class: 't3', x: cx, y: lane.y + 11, 'text-anchor': 'middle', 'font-size': 10, style: 'fill:#9ca3af' }, it, '#' + s.row);
+            S('text', { class: 't2', x: cx, y: lane.y + 60, 'text-anchor': 'middle', 'font-size': 11 }, it, fit(s.name, SLOT - 6, 11));
+        });
+    },
+    environment(lane, g) {
+        // One cell for each activity (its slots are consecutive), and one for each event without an activity.
+        const cell = (from, to, activity, environment, recorded) => {
+            const attrs = { 'data-s0': from, 'data-s1': to };
+            if (activity != null) attrs['data-act'] = activity;
+            const it = item(g, activity != null ? 'a' + activity : 'x' + from, attrs);
+            const w = (to - from + 1) * SLOT - 2;
+            S('rect', { class: 'shape', x: from * SLOT + 1, y: lane.y, width: w, height: lane.h, rx: 4, fill: ENV[environment] || GREY, 'fill-opacity': recorded ? .85 : .45 }, it);
+            S('text', { class: 't3', x: from * SLOT + 1 + w / 2, y: lane.y + 15, 'text-anchor': 'middle', 'font-size': 10.5, style: 'fill:#fff;font-weight:600' }, it, environment);
+        };
+        const covered = new Set();
+        model.activities.forEach((a) => {
+            for (let i = a.from; i <= a.to; i++) covered.add(i);
+            cell(a.from, a.to, a.no, a.environment, a.type === 'recorded');
+        });
+        model.slots.forEach((s, i) => { if (!covered.has(i)) cell(i, i, null, s.environment, s.kind === 'event'); });
+    },
+    methods(lane, g) {
+        model.activities.forEach((a) => {
+            const name = selectedOf(a);
+            const lvl = levelOf(a, name);
+            const x = a.from * SLOT + 3, w = (a.to - a.from + 1) * SLOT - 6;
+            const it = item(g, 'a' + a.no, actAttrs(a));
+            if (name) S('rect', { class: 'shape', x, y: lane.y, width: w, height: 32, rx: 8, fill: lvl == null ? GREY : LVL[lvl] }, it);
+            else S('rect', { class: 'shape', x, y: lane.y, width: w, height: 32, rx: 8, fill: 'url(#hatch)', stroke: GREY, 'stroke-width': 1.3, 'stroke-dasharray': '5 4' }, it);
+            S('text', { class: 't2', x: x + w / 2, y: lane.y + 20, 'text-anchor': 'middle', 'font-size': 11, 'font-weight': 600, style: name ? 'fill:#fff' : 'fill:#6b7280' }, it, fit(name || 'No method', w - 12, 11));
+            if (a.methods.length > 1) S('text', { class: 't3', x: x + w / 2, y: lane.y + 46, 'text-anchor': 'middle', 'font-size': 10, style: 'fill:#6b7280' }, it, '+' + (a.methods.length - 1) + ' more');
+        });
+    },
+};
+
+function drawWorld() {
+    world.textContent = '';
+    labelDefs = [];
+    const W = worldWidth();
+    const back = S('g', null, world);
+    lanes.forEach((lane) => S('rect', { class: 'lane-bg', x: 0, y: lane.y - 5, width: W, height: lane.h + 10, rx: 6 }, back));
+    let grid = '';
+    for (let i = 0; i <= model.slots.length; i++) grid += `M${i * SLOT} ${lanes.length ? lanes[0].y - 5 : 0} V${contentH} `;
+    S('path', { class: 'grid', d: grid }, back);
+    lanes.forEach((lane) => DRAW[lane.id](lane, S('g', { 'data-lane': lane.id }, world)));
+    lod = -1;
+    drawMini();
+    applyView();
+    if (selected) markSelection();
+}
+
+// ── view: pan, zoom, level of detail ─────────────────────────────────────────
+function applyView() {
+    const { w, h } = size();
+    GUTTER = w < 560 ? 92 : 176;
+    world.setAttribute('transform', `translate(${tx} ${ty}) scale(${k} ${ky()})`);
+    clipRect.setAttribute('x', GUTTER); clipRect.setAttribute('y', 0); clipRect.setAttribute('width', Math.max(0, w - GUTTER)); clipRect.setAttribute('height', h);
+    svg.setAttribute('viewBox', `0 0 ${w} ${h}`);
+    const level = k < 0.5 ? 0 : k < 0.9 ? 1 : k < 1.5 ? 2 : 3;
+    if (level !== lod) { lod = level; world.setAttribute('data-lod', String(level)); }
+    drawOverlay(w, h);
+    moveMini();
+}
+function drawOverlay(w, h) {
+    bandLayer.textContent = '';
+    for (const d of labelDefs) {
+        const lane = laneOf(d.lane);
+        if (!lane) continue;
+        const left = tx + k * d.from * SLOT, right = tx + k * (d.to + 1) * SLOT;
+        const top = ty + ky() * lane.y, height = ky() * lane.h;
+        if (height < 15 || right < GUTTER || left > w || top > h || top + height < 0) continue;
+        const x = Math.max(left, GUTTER) + 9;
+        const room = Math.min(right, w) - x - 8;
+        if (room < 28) continue;
+        S('text', { class: 'band-label', x, y: top + height / 2 + 4, style: 'fill:' + d.color }, bandLayer, fit(d.text, room, 12.5));
+    }
+    gutter.textContent = '';
+    S('rect', { x: 0, y: 0, width: GUTTER, height: h, style: 'fill:#fff;fill-opacity:.95' }, gutter);
+    S('line', { x1: GUTTER, x2: GUTTER, y1: 0, y2: h, style: 'stroke:#d9e0ea' }, gutter);
+    for (const lane of lanes) {
+        const top = ty + ky() * lane.y, height = ky() * lane.h;
+        if (top + height < 0 || top > h || height < 15) continue;
+        S('rect', { x: 0, y: top, width: 4, height, rx: 2, style: 'fill:' + SOURCE[lane.from] }, gutter);
+        const two = height > 32 && lane.sub && GUTTER > 120;
+        S('text', { class: 'gutter-title', x: 14, y: top + height / 2 + (two ? -2 : 4) }, gutter, fit(GUTTER > 120 ? lane.title : lane.abbr, GUTTER - 20, 12));
+        if (two) S('text', { class: 'gutter-sub', x: 14, y: top + height / 2 + 12 }, gutter, fit(lane.sub, GUTTER - 20, 10.5));
+    }
+    drawLegend(w, h);
+}
+// The legend is part of the map, so a downloaded file carries it.
+function legendRows() {
+    const levels = LVL.map((c, i) => [c, ['content-level (DOM)', 'accessibility-level (UIA)', 'visual and input level'][i]]);
+    const env = Object.keys(ENV).map((e) => [ENV[e], e]);
+    const rows = [];
+    if (colourBy === 'environment') rows.push(['Activities by environment', env]);
+    else if (colourBy === 'category') rows.push(['Activities by pattern', [...Object.keys(CAT).map((c) => [CAT[c], c]), [GREY, 'not covered', true]]]);
+    else rows.push(['Activities by method', [...levels, [GREY, 'no method', true]]]);
+    if (colourBy !== 'method') rows.push(['Method chips', [...levels, [GREY, 'no method', true]]]);
+    if (colourBy !== 'environment') rows.push(['Environment strip', env]);
+    rows.push(['Shapes', [['#475569', '◇ implicit activity'], ['#475569', '⇄ context switch'], [GREY, 'dashed: not covered', true]]]);
+    return rows;
+}
+function drawLegend(w, h) {
+    legendLayer.textContent = '';
+    if (!showLegend) return;
+    const pad = 10, rowH = 17, labelW = 116, px = 11;
+    const maxW = Math.max(190, w - GUTTER - 24);
+    const lines = [];   // a line holds the items that fit the box; the rest continue on the next line
+    for (const [label, items] of legendRows()) {
+        let line = { label, items: [], end: pad + labelW };
+        for (const item of items) {
+            const itemW = 17 + item[1].length * px * 0.56 + 14;
+            if (line.items.length && line.end + itemW > maxW - pad) { lines.push(line); line = { label: null, items: [], end: pad + labelW }; }
+            line.items.push({ item, x: line.end });
+            line.end += itemW;
+        }
+        lines.push(line);
+    }
+    const boxW = Math.min(maxW, Math.max(...lines.map((l) => l.end)) + pad), boxH = lines.length * rowH + pad;
+    const x0 = GUTTER + 12, y0 = h - boxH - 12;
+    S('rect', { x: x0, y: y0, width: boxW, height: boxH, rx: 8, style: 'fill:#fff;fill-opacity:.93;stroke:#dfe5ee;pointer-events:none' }, legendLayer);
+    lines.forEach((line, r) => {
+        const y = y0 + pad / 2 + r * rowH + 12;
+        if (line.label) S('text', { x: x0 + pad, y, 'font-size': px, 'font-weight': 600, style: 'fill:#475569' }, legendLayer, line.label);
+        line.items.forEach(({ item: [color, text, hatch], x }) => {
+            S('rect', { x: x0 + x, y: y - 9, width: 12, height: 10, rx: 3, style: hatch ? 'fill:url(#hatch);stroke:#9ca3af;stroke-dasharray:3 2;pointer-events:none' : `fill:${color};pointer-events:none` }, legendLayer);
+            S('text', { x: x0 + x + 17, y, 'font-size': px }, legendLayer, text);
+        });
+    });
+}
+function zoomAt(mx, my, factor) {
+    touched = true;
+    const nk = clamp(k * factor, MIN_K, MAX_K);
+    const wx = (mx - tx) / k, wy = (my - ty) / ky();
+    k = nk;
+    tx = mx - k * wx;
+    ty = my - ky() * wy;
+    applyView();
+}
+function animateTo(ntx, nty, nk) {
+    if (anim) cancelAnimationFrame(anim);
+    const from = { tx, ty, k }, t0 = performance.now(), dur = 380;
+    const step = (now) => {
+        const p = clamp((now - t0) / dur, 0, 1), e = 1 - Math.pow(1 - p, 3);
+        tx = from.tx + (ntx - from.tx) * e; ty = from.ty + (nty - from.ty) * e; k = from.k + (nk - from.k) * e;
+        applyView();
+        anim = p < 1 ? requestAnimationFrame(step) : null;
+    };
+    anim = requestAnimationFrame(step);
+}
+function fitView(animate) {
+    touched = false;
+    const { w, h } = size();
+    const nk = clamp((w - GUTTER - 40 - reserved()) / Math.max(1, worldWidth()), MIN_K, 1);
+    const nty = Math.max(8, (h - Math.max(nk, MIN_KY) * contentH) / 2);
+    if (animate) animateTo(GUTTER + 20, nty, nk); else { k = nk; tx = GUTTER + 20; ty = nty; applyView(); }
+}
+function flyTo(s0, s1) {
+    touched = true;
+    const { w, h } = size();
+    const width = (s1 - s0 + 1) * SLOT;
+    const nk = clamp(Math.min((w - GUTTER) * 0.6 / width, 2), 0.9, 2);
+    const cx = (s0 + s1 + 1) / 2 * SLOT;
+    animateTo(GUTTER + (w - GUTTER) / 2 - cx * nk, Math.max(8, (h - nk * contentH) / 2), nk);
+}
+
+// ── selection and the place card ─────────────────────────────────────────────
+function lookup(id) {
+    if (!id) return null;
+    const kind = id.startsWith('bs') ? 'bs' : id.startsWith('bd') ? 'bd' : id.startsWith('sg') ? 'sg' : id[0];
+    const key = id.slice(kind.length);
+    if (kind === 'a') return acts.has(Number(key)) || acts.has(key) ? { kind: 'a', obj: acts.get(Number(key)) || acts.get(key) } : null;
+    if (kind === 'e') return { kind: 'e', obj: model.slots[Number(key)], slot: Number(key) };
+    if (kind === 'bs') return { kind: 'bs', obj: model.bands.software[Number(key)], index: Number(key) };
+    if (kind === 'bd') return { kind: 'bd', obj: model.bands.data[Number(key)], index: Number(key) };
+    if (kind === 'sg') return { kind: 'sg', obj: model.segments[Number(key)], index: Number(key) };
+    return null;
+}
+function markSelection() {
+    world.querySelectorAll('.sel, .rel').forEach((e) => e.classList.remove('sel', 'rel'));
+    world.classList.toggle('has-sel', !!selected);
+    if (!selected) return;
+    const info = lookup(selected);
+    if (!info) return;
+    const mark = (selector, cls) => world.querySelectorAll(selector).forEach((e) => e.classList.add(cls));
+    mark(`[data-id="${selected}"]`, 'sel');
+    const overlapping = (from, to) => world.querySelectorAll('[data-s0]').forEach((e) => {
+        if (+e.dataset.s0 <= to && +e.dataset.s1 >= from && !e.classList.contains('sel') && /^(e|a|x)/.test(e.dataset.id)) e.classList.add('rel');
+    });
+    if (info.kind === 'a') {
+        mark(`[data-act="${info.obj.no}"]`, 'rel');
+        model.bands.software.forEach((b, i) => { if (b.from <= info.obj.to && b.to >= info.obj.from) mark(`[data-id="bs${i}"]`, 'rel'); });
+        model.bands.data.forEach((b, i) => { if (b.from <= info.obj.to && b.to >= info.obj.from) mark(`[data-id="bd${i}"]`, 'rel'); });
+    } else if (info.kind === 'e') {
+        if (info.obj.activity != null) mark(`[data-act="${info.obj.activity}"]`, 'rel');
+    } else {
+        overlapping(info.obj.from, info.obj.to);
+    }
+    world.querySelectorAll('.sel').forEach((e) => e.classList.remove('rel'));
+}
+function select(id, fly) {
+    selected = id;
+    markSelection();
+    renderCard(lookup(id));
+    if (id && fly) {
+        const info = lookup(id);
+        const o = info.obj;
+        flyTo(info.kind === 'e' ? info.slot : o.from, info.kind === 'e' ? info.slot : o.to);
+    }
+}
+
+const badge = (text, cls, color) => H('span', { class: 'badge' + (cls ? ' ' + cls : ''), style: color ? 'background:' + color : null }, text);
+const section = (title) => H('h3', { class: 'sec' }, title);
+const kv = (pairs) => H('dl', { class: 'kv' }, pairs.filter((p) => p[1] != null && p[1] !== '').map(([a, b]) => [H('dt', null, a), H('dd', null, b)]));
+const link = (text, id) => H('a', { href: '#', onclick: (e) => { e.preventDefault(); select(id, true); } }, text);
+function rowList(entries) {
+    return H('ul', { class: 'rows' }, entries.map((e) => H('li', { onclick: () => select(e.id, true) }, H('span', { class: 'n' }, e.n), H('span', null, e.text), e.kind ? H('span', { class: 'k' }, e.kind) : null)));
+}
+function renderCard(info) {
+    const body = $('cardBody');
+    body.textContent = '';
+    if (!info) {
+        body.append(H('p', { class: 'hint' }, 'Scroll to zoom, drag to pan, click anything for its details. Use Layers (above) to switch layers on and off and to colour the activities by environment, pattern or method.'));
+        return;
+    }
+    const o = info.obj;
+    if (info.kind === 'a') {
+        const implicit = o.type === 'implicit';
+        body.append(
+            H('div', { class: 'title' }, o.name),
+            H('div', { class: 'badges' },
+                badge(implicit ? 'Implicit · ' + (RULE_NAME[o.rule] || o.rule) : 'Recorded · identified by the LLM', null),
+                badge(o.environment, null, ENV[o.environment] || GREY),
+                o.category ? badge(o.category) : null,
+                !o.covered ? badge('Not covered', 'warn') : null),
+            kv([['Sequence', '#' + o.no], ['Pattern', o.pattern || '—'], ['Action', o.action], ['Object type', o.object_type], ['Target', o.target],
+                ['Software context', o.software], ['Data context', o.data], ['Events', implicit ? null : String(o.events.length)]]));
+        if (o.methods.length) {
+            const chosen = selectedOf(o);
+            body.append(section('Recommended method'), H('ul', { class: 'methodlist' }, o.methods.map((m, i) => H('li', null,
+                H('span', { class: 'dot', style: 'background:' + (m.level == null ? GREY : LVL[m.level]) }),
+                H('span', { class: m.name === chosen ? 'mark' : null }, (i + 1) + '. ' + m.name + (m.name === chosen ? ' (selected)' : '')),
+                H('span', { class: 'lvl' }, m.level == null ? '' : LVL_NAME[m.level])))));
+        } else if (o.note) {
+            body.append(section('Recommended method'), H('div', { class: 'note' }, o.note));
+        } else if (!o.covered) {
+            body.append(section('Recommended method'), H('div', { class: 'note' }, 'No method: no pattern of the collection fits this activity.'));
+        }
+        if (o.reasoning) body.append(section(implicit ? 'Why it was added' : 'Why the LLM named it so'), H('p', null, o.reasoning));
+        if (o.evidence && o.evidence.length) body.append(section('Evidence'), H('ul', { class: 'methodlist' }, o.evidence.map((e) => H('li', null, e))));
+        if (o.confidence != null && !implicit) body.append(kv([['LLM confidence', Math.round(o.confidence * 100) + '%']]));
+        if (!implicit && o.events.length) body.append(section('Log events'), rowList(o.events.map((s) => ({ id: 'e' + s, n: '#' + model.slots[s].row, text: model.slots[s].name }))));
+    } else if (info.kind === 'e') {
+        const a = o.activity != null ? acts.get(o.activity) : null;
+        body.append(
+            H('div', { class: 'title' }, o.name || '(no name)'),
+            H('div', { class: 'badges' }, badge('Log event'), badge('row #' + o.row), badge(o.environment, null, ENV[o.environment] || GREY)),
+            kv([['UI activity', a ? link('#' + a.no + ' ' + a.name, 'a' + a.no) : '—'], ['Software context', o.software], ['Data context', o.data]]),
+            section('Recorded attributes'),
+            H('table', { class: 'attrs' }, Object.entries(o.attrs).map(([key, value]) => H('tr', null, H('th', null, key), H('td', null, value)))));
+    } else if (info.kind === 'bs' || info.kind === 'bd') {
+        const inside = model.activities.filter((a) => a.from >= o.from && a.to <= o.to);
+        body.append(
+            H('div', { class: 'title' }, o.name),
+            H('div', { class: 'badges' }, badge(info.kind === 'bs' ? 'Software context' : 'Data context'), info.kind === 'bd' ? badge(o.software, null, ctxColor(o.software)) : null),
+            kv([['Slots', (o.from + 1) + ' to ' + (o.to + 1)], ['Activities', String(inside.length)], ['Log events', String(model.slots.slice(o.from, o.to + 1).filter((s) => s.kind === 'event').length)]]),
+            section('Activities'), rowList(inside.map((a) => ({ id: 'a' + a.no, n: '#' + a.no, text: a.name, kind: a.type === 'implicit' ? RULE_NAME[a.rule] : '' }))));
+    } else if (info.kind === 'sg') {
+        body.append(H('div', { class: 'title' }, 'Segment ' + o.label), H('div', { class: 'badges' }, badge('Rule-based segment')),
+            kv([['Why it starts here', o.boundary || 'start of the log'], ['Slots', (o.from + 1) + ' to ' + (o.to + 1)]]));
+    }
+}
+
+// ── hover tip ────────────────────────────────────────────────────────────────
+function tipText(id) {
+    const info = lookup(id);
+    if (!info) return '';
+    const o = info.obj;
+    if (info.kind === 'a') return `#${o.no} ${o.name}\n${o.type === 'implicit' ? 'Implicit · ' + (RULE_NAME[o.rule] || o.rule) : 'Recorded activity'} · ${o.environment}${o.covered ? '' : ' · not covered'}`;
+    if (info.kind === 'e') return `${o.name || '(no name)'}\nlog event, row #${o.row}`;
+    if (info.kind === 'sg') return `Segment ${o.label}\n${o.boundary || 'start of the log'}`;
+    return `${o.name}\n${info.kind === 'bs' ? 'software context' : 'data context'}`;
+}
+let tipFor = null;
+function showTip(e, id) {
+    const tip = $('tip');
+    if (!id) { tip.style.display = 'none'; tipFor = null; return; }
+    if (id !== tipFor) { tip.textContent = tipText(id); tip.style.whiteSpace = 'pre-line'; tipFor = id; }
+    const r = canvas.getBoundingClientRect();
+    tip.style.display = 'block';
+    tip.style.left = Math.min(e.clientX - r.left + 14, r.width - tip.offsetWidth - 8) + 'px';
+    tip.style.top = Math.min(e.clientY - r.top + 16, r.height - tip.offsetHeight - 8) + 'px';
+}
+const idAt = (x, y) => { const el = document.elementFromPoint(x, y); const g = el && el.closest && el.closest('#map [data-id]'); return g ? g.dataset.id : null; };
+
+// ── pointer, wheel and keyboard ──────────────────────────────────────────────
+let drag = null;
+svg.addEventListener('pointerdown', (e) => {
+    if (e.button !== 0) return;
+    if (anim) { cancelAnimationFrame(anim); anim = null; }
+    svg.setPointerCapture(e.pointerId);
+    drag = { x: e.clientX, y: e.clientY, tx, ty, moved: false };
+});
+svg.addEventListener('pointermove', (e) => {
+    if (!drag) { showTip(e, idAt(e.clientX, e.clientY)); return; }
+    const dx = e.clientX - drag.x, dy = e.clientY - drag.y;
+    if (!drag.moved && Math.hypot(dx, dy) > 4) { drag.moved = true; touched = true; svg.classList.add('dragging'); showTip(e, null); }
+    if (drag.moved) { tx = drag.tx + dx; ty = drag.ty + dy; applyView(); }
+});
+svg.addEventListener('pointerup', (e) => {
+    const was = drag;
+    drag = null;
+    svg.classList.remove('dragging');
+    if (was && !was.moved) select(idAt(e.clientX, e.clientY), false);
+});
+svg.addEventListener('pointerleave', () => showTip(null, null));
+svg.addEventListener('wheel', (e) => {
+    e.preventDefault();
+    const r = svg.getBoundingClientRect();
+    zoomAt(e.clientX - r.left, e.clientY - r.top, Math.exp(-e.deltaY * (e.ctrlKey ? 0.012 : 0.0016)));
+}, { passive: false });
+document.addEventListener('keydown', (e) => {
+    if (!model || /^(input|textarea|select)$/i.test(e.target.tagName)) return;
+    const { w, h } = size();
+    if (e.key === '+' || e.key === '=') zoomAt((w + GUTTER) / 2, h / 2, 1.3);
+    else if (e.key === '-') zoomAt((w + GUTTER) / 2, h / 2, 1 / 1.3);
+    else if (e.key === '0' || e.key === 'Home') fitView(true);
+    else if (e.key === 'ArrowLeft') { touched = true; tx += 80; applyView(); }
+    else if (e.key === 'ArrowRight') { touched = true; tx -= 80; applyView(); }
+    else if (e.key === 'ArrowUp') { touched = true; ty += 60; applyView(); }
+    else if (e.key === 'ArrowDown') { touched = true; ty -= 60; applyView(); }
+    else if (e.key === 'Escape') select(null);
+    else if (e.key === '/') { e.preventDefault(); $('search').focus(); }
+    else return;
+});
+$('zoomIn').addEventListener('click', () => { const { w, h } = size(); zoomAt((w + GUTTER) / 2, h / 2, 1.4); });
+$('zoomOut').addEventListener('click', () => { const { w, h } = size(); zoomAt((w + GUTTER) / 2, h / 2, 1 / 1.4); });
+$('zoomFit').addEventListener('click', () => fitView(true));
+
+// ── layers, colour modes and legend ──────────────────────────────────────────
+function renderLayers() {
+    const box = $('layers');
+    box.textContent = '';
+    const st = model.stats;
+    box.append(H('h2', null, 'Layers', H('small', null, model.slots.length + ' steps')),
+        H('div', { class: 'stats' }, `${st.events} log events · ${st.activities} UI activities · ${st.implicit.find + st.implicit.focus + st.implicit.switch} implicit activities (${st.implicit.switch} context switches) · ${st.not_covered} not covered`));
+    LANES.filter((l) => laneAvailable(l.id)).forEach((l) => {
+        const from = (l.id === 'software' || l.id === 'data') && model.roles.from_names ? 'log' : l.from;
+        const input = H('input', { type: 'checkbox', checked: layers[l.id] ? 'checked' : null, onchange: (e) => { layers[l.id] = e.target.checked; relayout(); } });
+        box.append(H('label', { class: 'layer' + (layers[l.id] ? '' : ' off') }, input, H('span', { class: 'accent', style: 'background:' + SOURCE[from] }), l.title, H('small', null, SOURCE_NAME[from])));
+    });
+    box.append(section('Colour activities by'), H('div', { class: 'radios' }, [['environment', 'Execution environment'], ['category', 'Pattern category'], ['method', 'Recommended method']].map(([value, label]) =>
+        H('label', null, H('input', { type: 'radio', name: 'colour', value, checked: colourBy === value ? 'checked' : null, onchange: () => { colourBy = value; drawWorld(); } }), label))),
+        H('label', { class: 'layer', style: 'margin-top:8px' }, H('input', { type: 'checkbox', checked: showLegend ? 'checked' : null, onchange: (e) => { showLegend = e.target.checked; applyView(); } }), 'Show the legend on the map'));
+    const r = model.roles;
+    box.append(H('div', { class: 'roles' }, 'Context from ' + (r.from_names ? 'the column names' : 'the attribute roles the LLM identified') + ': ' + ([...r.software, ...r.data].join(', ') || 'none') + '.'));
+}
+function relayout() {
+    buildLanes();
+    drawWorld();
+    renderLayers();
+}
+
+// ── search ───────────────────────────────────────────────────────────────────
+$('search').addEventListener('input', (e) => {
+    const q = e.target.value.trim().toLowerCase();
+    $('searchBox').classList.toggle('filled', q.length > 0);
+    if (!q) { renderCard(lookup(selected)); return; }
+    const hits = [];
+    model.activities.forEach((a) => { if ((a.name + ' ' + (a.pattern || '') + ' ' + (a.target || '')).toLowerCase().includes(q)) hits.push({ id: 'a' + a.no, n: '#' + a.no, text: a.name, kind: a.type === 'implicit' ? RULE_NAME[a.rule] : 'Activity' }); });
+    model.slots.forEach((s, i) => { if (s.kind === 'event' && s.name.toLowerCase().includes(q)) hits.push({ id: 'e' + i, n: '#' + s.row, text: s.name, kind: 'Event' }); });
+    const body = $('cardBody');
+    body.textContent = '';
+    body.append(section(hits.length ? Math.min(hits.length, 40) + (hits.length > 40 ? ' of ' + hits.length : '') + ' results' : 'No results'), rowList(hits.slice(0, 40)));
+});
+$('clearBtn').addEventListener('click', () => { $('search').value = ''; $('searchBox').classList.remove('filled'); renderCard(lookup(selected)); });
+
+// ── overview ─────────────────────────────────────────────────────────────────
+const mini = $('mini');
+const MINI = { W: 258, H: 84, pad: 8 };
+let miniView = null;
+// The overview is drawn once per model and colour mode; panning only moves its viewport rectangle.
+function drawMini() {
+    if (!model) return;
+    const { W, H: H_, pad } = MINI;
+    const sx = (W - 2 * pad) / Math.max(1, worldWidth());
+    mini.setAttribute('viewBox', `0 0 ${W} ${H_}`);
+    mini.textContent = '';
+    S('rect', { width: W, height: H_, fill: '#fff' }, mini);
+    model.bands.software.forEach((b) => S('rect', { x: pad + b.from * SLOT * sx, y: 8, width: Math.max(1, (b.to - b.from + 1) * SLOT * sx), height: 10, fill: ctxColor(b.name), opacity: .55 }, mini));
+    model.activities.forEach((a) => S('rect', { x: pad + a.from * SLOT * sx, y: a.type === 'recorded' ? 24 : 40, width: Math.max(1, (a.to - a.from + 1) * SLOT * sx - .5), height: a.type === 'recorded' ? 12 : 8, fill: a.covered ? actColor(a) : GREY, opacity: .85 }, mini));
+    model.slots.forEach((s, i) => { if (s.kind === 'event') S('rect', { x: pad + i * SLOT * sx, y: 54, width: Math.max(1, SLOT * sx - .5), height: 8, fill: s.software ? ctxColor(s.software) : GREY, opacity: .8 }, mini); });
+    miniView = S('rect', { y: 3, height: H_ - 6, fill: '#2563eb', 'fill-opacity': .1, stroke: '#2563eb', 'stroke-width': 1.5, rx: 3 }, mini);
+    moveMini();
+}
+function moveMini() {
+    if (!model || !miniView) return;
+    const { W, pad } = MINI;
+    const total = Math.max(1, worldWidth()), sx = (W - 2 * pad) / total;
+    const { w } = size();
+    const x0 = clamp((GUTTER - tx) / k, 0, total), x1 = clamp((w - tx) / k, 0, total);
+    miniView.setAttribute('x', pad + x0 * sx);
+    miniView.setAttribute('width', Math.max(3, (x1 - x0) * sx));
+}
+function miniMove(e) {
+    const r = mini.getBoundingClientRect();
+    const sx = (258 - 16) / Math.max(1, worldWidth());
+    const wx = ((e.clientX - r.left) * (258 / r.width) - 8) / sx;
+    const { w } = size();
+    touched = true;
+    tx = GUTTER + (w - GUTTER) / 2 - wx * k;
+    applyView();
+}
+let miniDrag = false;
+mini.addEventListener('pointerdown', (e) => { miniDrag = true; mini.setPointerCapture(e.pointerId); miniMove(e); });
+mini.addEventListener('pointermove', (e) => { if (miniDrag) miniMove(e); });
+mini.addEventListener('pointerup', () => { miniDrag = false; });
+
+// ── download ─────────────────────────────────────────────────────────────────
+function svgText() {
+    const { w, h } = size();
+    const copy = svg.cloneNode(true);
+    copy.setAttribute('width', w); copy.setAttribute('height', h);
+    copy.removeAttribute('class'); copy.removeAttribute('style');
+    return '<?xml version="1.0" encoding="UTF-8"?>\n' + new XMLSerializer().serializeToString(copy);
+}
+const baseName = () => ((model && model.title) || 'analysis').replace(/\.csv$/i, '') + '_layered_map';
+function download(blob, name) {
+    const a = H('a', { href: URL.createObjectURL(blob), download: name });
+    document.body.append(a); a.click(); a.remove();
+    setTimeout(() => URL.revokeObjectURL(a.href), 2000);
+}
+$('svgBtn').addEventListener('click', () => download(new Blob([svgText()], { type: 'image/svg+xml;charset=utf-8' }), baseName() + '.svg'));
+$('pngBtn').addEventListener('click', () => {
+    const { w, h } = size();
+    const img = new Image();
+    img.onload = () => {
+        const canvas = H('canvas', { width: w * 2, height: h * 2 });
+        const ctx = canvas.getContext('2d');
+        ctx.fillStyle = '#eef1f6'; ctx.fillRect(0, 0, canvas.width, canvas.height);
+        ctx.drawImage(img, 0, 0, canvas.width, canvas.height);
+        canvas.toBlob((blob) => download(blob, baseName() + '.png'), 'image/png');
+    };
+    img.onerror = () => toast('The map could not be turned into an image.');
+    img.src = 'data:image/svg+xml;charset=utf-8,' + encodeURIComponent(svgText());
+});
+
+// ── opening a model ──────────────────────────────────────────────────────────
+let toastTimer = null;
+function toast(message, notice) {
+    const t = $('toast');
+    t.textContent = message;
+    t.classList.toggle('notice', !!notice);
+    t.style.display = 'block';
+    clearTimeout(toastTimer);
+    toastTimer = setTimeout(() => { t.style.display = 'none'; }, 7000);
+}
+function setModel(m) {
+    model = m;
+    touched = false;
+    acts = new Map(m.activities.map((a) => [a.no, a]));
+    overrides = readOverrides();
+    selected = null;
+    LANES.forEach((l) => { layers[l.id] = true; });
+    layers.events = m.slots.length <= 1200;   // every event is a drawn shape with two labels; a long log pans smoother without them
+    if (!layers.events) toast('This log has ' + m.slots.length + ' steps, so the log events layer starts switched off to keep the map smooth. Switch it on under Layers.', true);
+    setupSvg();
+    buildLanes();
+    $('landing').classList.add('hidden');
+    ['sheet', 'zoomBox', 'miniBox'].forEach((id) => $(id).classList.remove('hidden'));
+    $('layers').classList.toggle('hidden', canvas.clientWidth < 1100);   // a popover; open from the start only when there is room
+    $('fileName').textContent = m.title ? ' · ' + m.title : '';
+    $('svgBtn').disabled = $('pngBtn').disabled = false;
+    drawWorld();
+    renderLayers();
+    renderCard(null);
+    fitView(false);
+}
+async function openFile(file) {
+    if (!file) return;
+    const form = new FormData();
+    form.append('file', file);
+    try {
+        const response = await fetch('/visualisation/open-export', { method: 'POST', body: form });
+        const data = await response.json();
+        if (!response.ok) { toast(data.error || 'The file could not be opened.'); return; }
+        setModel(data);
+    } catch (e) {
+        toast('The file could not be opened: the server did not answer.');
+    }
+}
+$('openBtn').addEventListener('click', () => $('fileInput').click());
+$('chooseBtn').addEventListener('click', () => $('fileInput').click());
+$('fileInput').addEventListener('change', (e) => { openFile(e.target.files[0]); e.target.value = ''; });
+$('layersBtn').addEventListener('click', () => $('layers').classList.toggle('hidden'));
+['dragover', 'dragenter'].forEach((type) => stage.addEventListener(type, (e) => { e.preventDefault(); $('drop').classList.add('over'); }));
+['dragleave', 'drop'].forEach((type) => stage.addEventListener(type, (e) => { e.preventDefault(); $('drop').classList.remove('over'); }));
+stage.addEventListener('drop', (e) => openFile(e.dataTransfer.files[0]));
+// Until the map is moved by hand, it follows the size of its stage (the first layout, a resized window).
+new ResizeObserver(() => { if (model) { if (touched) applyView(); else fitView(false); } }).observe(canvas);
+
+if (window.__MODEL__) setModel(window.__MODEL__);
+else { setupSvg(); ['layers', 'sheet', 'zoomBox', 'miniBox'].forEach((id) => $(id).classList.add('hidden')); }
+})();
+{% endraw %}
+</script>
+</body>
+</html>

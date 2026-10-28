@@ -5,6 +5,8 @@ field and paste into it in Edge) repeated 30 times, so the log has 120 events, a
 scripted LLM that answers prompts P1-P4 the way the approach prescribes.
 """
 
+import csv
+import io
 import json
 import re
 import time
@@ -14,6 +16,7 @@ import pytest
 import app as webapp
 from src.web import progressive
 from src.web.step_store import StepStore
+from src.web.visualisation import build_model, rows_from_export
 
 FIELDS = ["lPupZ", "mQ8xY"]
 
@@ -262,3 +265,62 @@ def test_workspace_states_what_the_rules_and_the_lookup_decided_and_why(analysis
                                       "unknown_environment": 0, "no_variant": 0}
     assert "Decisions made by the rules: implicit activities" in html
     assert "Decisions made by lookup: matched patterns" in html
+
+
+def _export_csv(view) -> str:
+    """The analysis as Export CSV on the results page writes it: the implicit activities go
+    immediately before the first event of the UI activity they precede."""
+    columns = view["log"]["columns"]
+
+    def info(a):
+        return [a["number"], "recorded" if a["kind"] == "recorded" else f"implicit ({a['rule']})", a["name"],
+                a["pattern"] or "", a["action"] or "", a["object_type"] or "", a["target"] or "", a["environment"],
+                a["method"] or "", " > ".join(a["methods"]), a["method_note"] or ""]
+
+    recorded_of_row = {r: a for a in view["activities"] if a["kind"] == "recorded" for r in a["rows"]}
+    before, pending = {}, []
+    for a in view["activities"]:
+        if a["kind"] == "implicit":
+            pending.append(a)
+            continue
+        if pending and a["rows"]:
+            before[a["rows"][0]] = pending
+        pending = []
+    out = io.StringIO()
+    writer = csv.writer(out, lineterminator="\n")
+    writer.writerow(["row", *columns, "activity_no", "activity_type", "ui_activity", "pattern", "action",
+                     "object_type", "target", "execution_environment", "selected_method", "prioritised_methods",
+                     "method_note"])
+    for row in view["log"]["rows"]:
+        for imp in before.get(row["row_index"], []):
+            writer.writerow(["", *[""] * len(columns), *info(imp)])
+        a = recorded_of_row.get(row["row_index"])
+        writer.writerow([row["row_index"], *[row["values"].get(c, "") for c in columns], *(info(a) if a else [""] * 11)])
+    for imp in pending:
+        writer.writerow(["", *[""] * len(columns), *info(imp)])
+    return out.getvalue()
+
+
+def test_the_layered_map_of_a_stored_analysis_equals_the_map_of_its_export(analysis) -> None:
+    client, history_id, aid = analysis
+    page = client.get(f"/visualisation/{history_id}").get_data(as_text=True)
+    stored = json.loads(re.search(r"window\.__MODEL__ = (\{.*?\});</script>", page, re.S).group(1))
+    view = _view(client.get(f"/results/{history_id}").get_data(as_text=True))
+    exported = build_model(rows_from_export(_export_csv(view)), title="export.csv")
+
+    # What the map shows of the Fill Form log: 120 events and the 119 implicit activities between them.
+    assert stored["stats"] == {"events": 120, "activities": 90, "implicit": {"find": 60, "focus": 0, "switch": 59},
+                               "not_covered": 0, "software_contexts": 2}
+    assert len(stored["slots"]) == 239 and len(stored["bands"]["software"]) == 60 and len(stored["switches"]) == 59
+    assert (stored["source"], stored["aid"], stored["roles"]["software"]) == ("analysis", aid, ["Application"])
+    assert len(stored["segments"]) == 60 and stored["segments"][1]["boundary"] == "application changed: Microsoft Excel → Edge"
+
+    # The same sequence, activities, contexts and switches from the file alone; only the context columns differ.
+    def shape(model):
+        return [(a["no"], a["type"], a["rule"], a["name"], a["from"], a["to"], a["events"], a["environment"],
+                 a["pattern"], a["selected"], [m["name"] for m in a["methods"]]) for a in model["activities"]]
+
+    assert shape(stored) == shape(exported)
+    assert stored["bands"] == exported["bands"] and stored["switches"] == exported["switches"]
+    assert [s["name"] for s in stored["slots"]] == [s["name"] for s in exported["slots"]]
+    assert (stored["roles"]["from_names"], exported["roles"]["from_names"], exported["segments"]) == (False, True, [])

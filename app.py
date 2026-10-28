@@ -276,6 +276,48 @@ def workspace(history_id):
     )
 
 
+@app.route("/visualisation")
+def visualisation_home():
+    """The layered map without an analysis: open an exported CSV file to draw one."""
+    return render_template("visualisation.html", entry=None, model=None, notice=None)
+
+
+@app.route("/visualisation/<history_id>")
+def visualisation(history_id):
+    """The layered map of a stored analysis."""
+    from src.web.visualisation import build_model, rows_from_view
+
+    entry = _find_entry(history_id)
+    if entry is None:
+        return "Analysis not found", 404
+    view = _view_for(entry)
+    if not view or not view.get("activities"):
+        notice = ("The UI activities have not been normalised yet. Open step 3 of the guided analysis "
+                  "to run it, or open an exported CSV file.")
+        return render_template("visualisation.html", entry=entry, model=None, notice=notice)
+    model = build_model(rows_from_view(view), title=entry.get("filename") or "", aid=entry.get("progressive_aid"))
+    return render_template("visualisation.html", entry=entry, model=model, notice=None)
+
+
+@app.route("/visualisation/open-export", methods=["POST"])
+def visualisation_open_export():
+    """The layered map of an exported CSV file, as JSON for the page."""
+    from src.web.visualisation import build_model, rows_from_export
+
+    file = request.files.get("file")
+    if file is None or not file.filename:
+        return jsonify({"error": "No file selected."}), 400
+    try:
+        text = file.read().decode("utf-8-sig")
+        model = build_model(rows_from_export(text), title=secure_filename(file.filename))
+    except UnicodeDecodeError:
+        return jsonify({"error": "The file could not be read as UTF-8 text. "
+                                 "Save it as \"CSV UTF-8\" and open it again."}), 400
+    except ValueError as exc:
+        return jsonify({"error": str(exc)}), 400
+    return jsonify(model)
+
+
 @app.route("/history")
 def history():
     return render_template("history.html", history=get_history())
