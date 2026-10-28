@@ -39,6 +39,19 @@ def test_write_element_lists_every_level_the_environment_can_use() -> None:
     assert write.get_methods_for_context("screen") == ["Hardware simulation"]
 
 
+def test_delete_element_lists_every_level_including_hardware_simulation() -> None:
+    # Deleting text means focusing the field and sending delete keystrokes, so Delete has a visual variant too.
+    delete = _by_name("Delete Element")
+
+    assert delete.get_methods_for_context("web") == [
+        "HTML DOM manipulation", "UI Automation manipulation", "Hardware simulation",
+    ]
+    assert delete.get_methods_for_context("desktop") == [
+        "UI Automation manipulation", "Hardware simulation",
+    ]
+    assert delete.get_methods_for_context("screen") == ["Hardware simulation"]
+
+
 def test_extraction_patterns_end_with_visual_recognition() -> None:
     assert _by_name("Read Element").get_methods_for_context("web") == [
         "HTML DOM parsing", "UI Automation tree parsing", "Visual recognition",
@@ -53,7 +66,7 @@ def test_missing_level_shortens_the_list() -> None:
 
 
 def test_unsupported_environment_gives_an_empty_list() -> None:
-    assert _by_name("Delete Element").get_methods_for_context("screen") == []
+    assert _by_name("Switch Context").get_methods_for_context("screen") == []
     assert _by_name("Switch Context").get_methods_for_context("web") == []
     assert _by_name("Write Element").get_methods_for_context("unknown") == []
 

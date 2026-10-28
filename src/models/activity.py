@@ -22,6 +22,7 @@ class Activity:
         target: Optional[str] = None,
         target_id: Optional[str] = None,
         context: Optional[str] = None,
+        deletes: Optional[str] = None,
     ):
         self.name = name
         self.confidence = max(0.0, min(1.0, confidence))
@@ -35,6 +36,9 @@ class Activity:
         self.target = target  # readable name of the target UI element, None for page-level actions
         self.target_id = target_id  # identity used to tell whether two activities share a target
         self.context = context  # where the target resides, phrased to follow it, e.g. "on rpachallenge.com in Edge"
+        # What a Delete Element activity deletes, as the LLM said: "content" (data held by an element,
+        # which stays, e.g. the text in a text field) or "element" (the element itself). None otherwise.
+        self.deletes = deletes
         # What each implicit-activity rule (switch, find, focus) decided for this activity and why:
         # [{"rule", "inserted", "reason"}, ...]. Set for recorded (main) activities only.
         self.rule_checks: List[Dict[str, Any]] = []

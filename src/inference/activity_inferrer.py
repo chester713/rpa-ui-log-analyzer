@@ -86,8 +86,9 @@ class ActivityInferrer:
         Infer enriched activity list from event groups.
 
         The LLM names each group's UI activity, assigns its pattern (or none, when the
-        collection has no fitting pattern) and names its target element. The implicit
-        Switch context, Find and Focus activities are then inserted by fixed rules
+        collection has no fitting pattern) and names its target element; for a Delete it
+        also says whether the element itself or data held by an element is deleted. The
+        implicit Switch context, Find and Focus activities are then inserted by fixed rules
         (see ``add_implicit_activities``), not by the LLM.
 
         Args:
@@ -159,6 +160,7 @@ class ActivityInferrer:
             target = str(target).strip() if isinstance(target, str) and target.strip() else None
             context = llm_result.get("context")
             context = str(context).strip() if isinstance(context, str) and context.strip() else None
+            deletes = self._deletes_scenario(llm_result.get("deletes"), pattern, group_idx)
             mains.append(Activity(
                 name=activity_name,
                 confidence=llm_result.get("confidence", 0.3),
@@ -172,9 +174,28 @@ class ActivityInferrer:
                 target=target,
                 target_id=self._target_identity(group.events, target, context),
                 context=context,
+                deletes=deletes,
             ))
 
         return add_implicit_activities(normalised, mains, self.application_attributes)
+
+    @staticmethod
+    def _deletes_scenario(value, pattern: Optional[str], group_idx: int) -> Optional[str]:
+        """What a Delete Element activity deletes, as the LLM said: "content" (data held by an element,
+        which stays) or "element" (the element itself). None for every other pattern.
+
+        The Focus rule of step 4 needs the answer, so a Delete without a usable one stops the
+        analysis; there is no fallback.
+        """
+        if (pattern or "").strip().lower() != "delete element":
+            return None
+        scenario = value.strip().lower() if isinstance(value, str) else None
+        if scenario not in ("content", "element"):
+            raise LLMError(
+                f"LLM did not say whether the Delete in group {group_idx} deletes the 'element' itself or "
+                f"its 'content' (it returned {value!r}). No fallback is applied — re-run the analysis."
+            )
+        return scenario
 
     def _target_identity(
         self, events: List[Event], target: Optional[str], context: Optional[str] = None
@@ -276,23 +297,24 @@ Analyze the following {n} event group(s). Return a JSON ARRAY with exactly {n} o
 
 Each group is one UI activity: one action on one target. For each group return this JSON structure:
 {{
-  "activity_name": "Action + object + context: the action of the chosen pattern (e.g. Write, Read, Activate, Focus), or the recorded action if no pattern fits, followed by the target object and the context it resides in (e.g. 'Write First Name field on rpachallenge.com in Edge', 'Read cell A2 in Sheet 1 of challenge.xlsx in Excel', 'Activate Submit button on rpachallenge.com in Edge', 'Open rpachallenge.com in Edge'). Do not include input values such as the text that was typed or pasted.",
-  "pattern": "One pattern name from the reference above, chosen by the semantic meaning of the interaction, not the exact words in the log (e.g. a click on a button activates it; a click on a text field focuses it). Use null if no pattern fits the interaction — never force a pattern.",
+  "activity_name": "Action + object + context: the action of the chosen pattern (e.g. Write, Read, Activate, Focus, Delete), or the recorded action if no pattern fits, followed by the target object and the context it resides in (e.g. 'Write First Name field on rpachallenge.com in Edge', 'Read cell A2 in Sheet 1 of challenge.xlsx in Excel', 'Activate Submit button on rpachallenge.com in Edge', 'Open rpachallenge.com in Edge'). Do not include input values such as the text that was typed or pasted.",
+  "pattern": "One pattern name from the reference above, chosen by the semantic meaning of the interaction, not the exact words in the log (e.g. a click on a button activates it; a click on a text field gives it input focus, so it is a Focus, not an Activate; keys that delete text delete it, so it is Delete Element, not Write Element, even when the change of the field is recorded afterwards). Use null if no pattern fits the interaction — never force a pattern.",
   "target": "The target object: the specific UI element the action is performed on, named by its label (e.g. 'First Name field', 'Submit button', 'cell A2'), or null for page- or application-level actions without a target element (opening a URL, scrolling a page, refreshing a page, switching application)",
   "context": "The context the target resides in, phrased to follow the object: the application and, within it, the webpage, window, workbook or worksheet (e.g. 'on rpachallenge.com in Edge', 'in Sheet 1 of challenge.xlsx in Excel')",
+  "deletes": "Only when the pattern is Delete Element: 'content' if the action deletes data held by an element while the element stays (for example the text in a text field), 'element' if it deletes the element itself (for example a window or a row). null for every other pattern.",
   "evidence": ["2-4 concise observations from events/attributes"],
   "confidence": 0.9,
   "reasoning": "One sentence summary"
 }}
 
-Implicit activities (locating an element first, focusing a field before writing, switching application) are added afterwards by fixed rules; do not describe them.
+Activities that the log does not record (locating an element first, focusing a field before writing when no focusing event was recorded, switching application) are added afterwards by fixed rules; do not describe them. An event the log does record that gives an element input focus, such as a click on a text field, is not one of them: describe it as a Focus.
 
 CRITICAL OUTPUT RULES:
 1. Return a valid JSON ARRAY with EXACTLY {n} object(s) — one per group, in the same order.
 2. "activity_name" is MANDATORY in every object. Never omit it. If the events are ambiguous, still name the activity by its recorded action, object and context.
 3. Output raw JSON only — no markdown fences, no explanation text before or after the array.
 
-[{{"activity_name": "...", "pattern": "...", "target": "...", "context": "...", "evidence": [...], "confidence": 0.9, "reasoning": "..."}}, ...]"""
+[{{"activity_name": "...", "pattern": "...", "target": "...", "context": "...", "deletes": null, "evidence": [...], "confidence": 0.9, "reasoning": "..."}}, ...]"""
 
     def _parse_batch_response(self, raw: str, n: int) -> List[dict]:
         """Parse a JSON array response from a batch prompt. Returns exactly n dicts.
@@ -379,6 +401,16 @@ def _no_find_reason(activity: Activity) -> str:
     return f"{activity.pattern_name} does not act on a target element, so it needs no Find."
 
 
+def _no_focus_reason(pattern: str, activity: Activity) -> str:
+    """Why an activity needs no Focus: only writing, or deleting data within a text field, needs input focus."""
+    if pattern == "delete element" and activity.deletes == "element":
+        return (
+            "This Delete removes the element itself, not data within a text field, so the element "
+            "need not be focused for input."
+        )
+    return "Only a Write, or a Delete of data within a text field, needs its element focused for input."
+
+
 def add_implicit_activities(groups, mains: List[Activity], application_attributes: List[str]) -> List[Activity]:
     """Insert the implicit activities of step 4 before the activities that need them.
 
@@ -391,11 +423,12 @@ def add_implicit_activities(groups, mains: List[Activity], application_attribute
     2. Find element — the activity acts on a target element (see
        ``_acts_on_target_element``) and the preceding activity does not already
        target the same element.
-    3. Focus — the activity writes into an element and the preceding activity does not
-       focus that element.
+    3. Focus — the activity writes into an element, or deletes data within a text field
+       (the LLM says whether a Delete removes the element or the data it holds), and the
+       preceding activity does not focus that element.
 
-    The result is: an element is found, then focused, then written to, with one Find
-    serving both the Focus and the Write activity.
+    The result is: an element is found, then focused, then written to or deleted from,
+    with one Find serving both the Focus and the activity that follows it.
 
     What each rule decided for each main activity, and why, is kept on the main activity
     (``Activity.rule_checks``), whether or not the rule inserted anything.
@@ -469,8 +502,9 @@ def add_implicit_activities(groups, mains: List[Activity], application_attribute
                     context=main.context,
                 ))
 
-        if pattern != "write element":
-            checks.append(_check("focus", False, "Only a Write needs its element focused for input."))
+        deletes_data = pattern == "delete element" and main.deletes == "content"
+        if pattern != "write element" and not deletes_data:
+            checks.append(_check("focus", False, _no_focus_reason(pattern, main)))
         else:
             previous = enriched[-1] if enriched else None
             focused = (
@@ -485,7 +519,8 @@ def add_implicit_activities(groups, mains: List[Activity], application_attribute
                 ))
             else:
                 reason = (
-                    "Writing requires the target element to be focused for input, and the "
+                    f"{'Writing' if pattern == 'write element' else 'Deleting data within a text field'} "
+                    "requires the target element to be focused for input, and the "
                     "preceding activity does not focus it."
                 )
                 checks.append(_check("focus", True, reason))

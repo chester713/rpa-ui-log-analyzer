@@ -343,3 +343,71 @@ def test_naming_prompt_asks_for_action_object_context_without_values_or_uniquene
     assert "Do not include input values" in prompt
     assert '"context"' in prompt
     assert "UNIQUE" not in prompt
+
+
+def test_naming_prompt_separates_a_recorded_focusing_click_from_the_focus_added_by_the_rule() -> None:
+    prompt = ActivityInferrer(None)._build_batch_prompt(
+        [(0, EventGroup(events=[Event("clickTextField", {}, 0)]), None)])
+
+    assert "a click on a text field gives it input focus, so it is a Focus, not an Activate" in prompt
+    assert "focusing a field before writing when no focusing event was recorded" in prompt
+    assert "such as a click on a text field, is not one of them: describe it as a Focus" in prompt
+    assert "added afterwards by fixed rules" in prompt
+
+
+def test_naming_prompt_tells_the_model_that_delete_keys_are_a_delete_not_a_write() -> None:
+    prompt = ActivityInferrer(None)._build_batch_prompt(
+        [(0, EventGroup(events=[Event("pressBackspace", {}, 0)]), None)])
+
+    assert "keys that delete text delete it, so it is Delete Element, not Write Element" in prompt
+    assert "even when the change of the field is recorded afterwards" in prompt
+
+
+def test_naming_prompt_asks_what_a_delete_deletes() -> None:
+    prompt = ActivityInferrer(None)._build_batch_prompt(
+        [(0, EventGroup(events=[Event("pressBackspace", {}, 0)]), None)])
+
+    assert '"deletes"' in prompt
+    assert "'content' if the action deletes data held by an element while the element stays" in prompt
+    assert "'element' if it deletes the element itself" in prompt
+
+
+class _Answers:
+    def __init__(self, *results):
+        self.results = list(results)
+
+    def complete(self, prompt):
+        return json.dumps(self.results)
+
+
+def _delete_answer(**extra):
+    return {"activity_name": "Delete text in First Name field on rpachallenge.com in Edge", "pattern": "Delete Element",
+            "target": "First Name field", "context": "on rpachallenge.com in Edge", "evidence": [],
+            "confidence": 0.9, "reasoning": "", **extra}
+
+
+def _infer_delete(answer):
+    inferrer = ActivityInferrer(_Answers(answer), patterns=PATTERNS)
+    activities = inferrer.infer_activities([[Event("pressBackspace", {"app": "Edge"}, 0)]])
+    return [a for a in activities if not a.is_implicit]
+
+
+@pytest.mark.parametrize("said, recorded", [("content", "content"), (" Element ", "element")])
+def test_a_delete_records_whether_it_deletes_the_element_or_data_in_it(said, recorded) -> None:
+    (main,) = _infer_delete(_delete_answer(deletes=said))
+
+    assert main.deletes == recorded
+
+
+@pytest.mark.parametrize("extra", [{}, {"deletes": None}, {"deletes": "text"}, {"deletes": True}])
+def test_a_delete_without_a_usable_answer_stops_the_analysis(extra) -> None:
+    from src.llm.client import LLMError
+
+    with pytest.raises(LLMError, match="deletes the 'element' itself or its 'content'"):
+        _infer_delete(_delete_answer(**extra))
+
+
+def test_the_answer_is_ignored_for_every_other_pattern() -> None:
+    (main,) = _infer_delete({**_delete_answer(deletes="content"), "pattern": "Write Element"})
+
+    assert main.deletes is None

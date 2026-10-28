@@ -64,7 +64,6 @@ def test_hover_has_no_ui_automation_variant() -> None:
 
 
 def test_pattern_scope_exceptions_are_respected() -> None:
-    assert _by_name("Delete Element").get_method_for_context("screen") is None
     assert _by_name("Switch Context").get_method_for_context("web") is None
     assert _by_name("Switch Context").get_method_for_context("screen") is None
     assert _by_name("Switch Context").get_method_for_context("desktop") == "UI Automation manipulation"

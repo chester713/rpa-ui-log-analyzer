@@ -100,6 +100,8 @@ STAGE_LOGIC: Dict[str, List[List[str]]] = {
         ["Name: action + object + context", "Each UI activity is named by its action, its target object and the "
          "context the object resides in, e.g. 'Write First Name field on rpachallenge.com in Edge'. Input "
          "values are not part of the name."],
+        ["Delete: element or data", "For a Delete the LLM also says whether the action deletes the element itself "
+         "(a window, a row) or data held by an element, such as the text in a text field. Step 4 uses the answer."],
         ["Not covered", "If no pattern fits, the LLM returns none and the UI activity is reported as not covered "
          "by the pattern collection, rather than assigned to the closest pattern. A pattern name outside the "
          "collection stops the analysis."],
@@ -115,8 +117,10 @@ STAGE_LOGIC: Dict[str, List[List[str]]] = {
          "Observe, Write, Delete, Disable, Activate, Hover and Focus, and Scroll and Refresh when they act on an "
          "element rather than a whole page. A Find is inserted unless the preceding activity targets the same "
          "element. Open, Switch Context and Find itself need no Find."],
-        ["Focus", "Writing requires the element to be focused for input. If the preceding activity does not focus "
-         "it, a Focus activity is inserted. An element is therefore found, then focused, then written to."],
+        ["Focus", "Writing requires the element to be focused for input, and so does deleting data within a text "
+         "field (deleting an element itself, such as a window, does not). If the preceding activity does not focus "
+         "it, a Focus activity is inserted. An element is therefore found, then focused, then written to or deleted "
+         "from."],
         ["Same element", "Two activities target the same element when they record the same element-attribute "
          "value (any of their events); if the log records no element attribute, the target object and context "
          "named by the LLM are compared."],
@@ -149,7 +153,7 @@ STAGE_LOGIC: Dict[str, List[List[str]]] = {
         ["Prioritised list", "The applicable variants of the matched pattern are listed in order of level: "
          "content-level (DOM) first, then accessibility-level (UI Automation), then visual recognition and "
          "hardware simulation. A pattern defines at most one variant per level, so the list has at most three methods."],
-        ["No method", "If the pattern defines no variant for the environment (e.g. Delete Element on screen), or the "
+        ["No method", "If the pattern defines no variant for the environment (e.g. Switch Context on screen), or the "
          "environment is unknown, or the UI activity is not covered by the collection, no method is recommended "
          "and the reason is stated."],
         ["Designer's choice", "The first method is the recommendation. On the results page the analyst can select "
@@ -262,6 +266,7 @@ def _serialize_activity(a):
         "target": a.target,
         "target_id": a.target_id,
         "context": getattr(a, "context", None),
+        "deletes": getattr(a, "deletes", None),
         "rule_checks": list(getattr(a, "rule_checks", None) or []),
     }
 
@@ -691,6 +696,7 @@ def build_view(store) -> dict:
             "name": a["name"],
             "target": a.get("target"),
             "context": a.get("context"),
+            "deletes": None if implicit else a.get("deletes"),
             "ui_activity": a.get("group_index"),
             "rows": a.get("source_events") or [],
             "confidence": None if implicit else a.get("confidence"),

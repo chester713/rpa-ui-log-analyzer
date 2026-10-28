@@ -59,8 +59,9 @@ def test_every_rule_records_its_decision_and_reason_for_every_activity() -> None
     assert first["switch"]["inserted"] is False
     assert first["switch"]["reason"] == "Excel is the first application recorded in the log, so there is none to switch from."
     assert first["find"]["inserted"] is True
-    assert first["focus"] == {"rule": "focus", "inserted": False,
-                              "reason": "Only a Write needs its element focused for input."}
+    assert first["focus"] == {
+        "rule": "focus", "inserted": False,
+        "reason": "Only a Write, or a Delete of data within a text field, needs its element focused for input."}
     assert second["switch"]["inserted"] is True
     assert second["find"]["inserted"] is True  # the preceding activity is the switch, which targets nothing
     assert third["switch"] == {"rule": "switch", "inserted": False, "reason": "Recorded in Edge, the same application as before."}
@@ -136,6 +137,60 @@ def test_a_write_after_something_other_than_a_focus_gets_a_focus() -> None:
     }
 
 
+def _delete(i, deletes, target="First Name field", target_id="id=f"):
+    main = _main(i, "Delete Element", target, target_id)
+    main.deletes = deletes
+    return main
+
+
+def test_a_delete_of_data_within_a_text_field_gets_a_focus() -> None:
+    mains = [_main(0, "Read Element", "cell A2", "cell=A2"), _delete(1, "content")]
+
+    enriched = add_implicit_activities([_group(0, app="Excel"), _group(1, app="Edge")], mains, ["app"])
+
+    assert _checks(mains[1])["focus"] == {
+        "rule": "focus", "inserted": True,
+        "reason": "Deleting data within a text field requires the target element to be focused for input, "
+                  "and the preceding activity does not focus it.",
+    }
+    assert [a.pattern_name for a in enriched] == [
+        "Find Element", "Read Element", "Switch Context", "Find Element", "Focus", "Delete Element"]
+
+
+def test_a_delete_of_data_after_a_focus_on_the_same_field_needs_no_focus() -> None:
+    mains = [_main(0, "Focus", "First Name field", "id=f"), _delete(1, "content")]
+
+    enriched = add_implicit_activities([_group(0, app="Edge"), _group(1, app="Edge")], mains, ["app"])
+
+    assert _checks(mains[1])["focus"] == {"rule": "focus", "inserted": False,
+                                          "reason": "The preceding activity (A0) already focuses the element."}
+    assert [a.pattern_name for a in enriched] == ["Find Element", "Focus", "Delete Element"]
+
+
+def test_a_delete_of_the_element_itself_needs_no_focus() -> None:
+    mains = [_delete(0, "element", target="window", target_id="window=Book1")]
+
+    enriched = add_implicit_activities([_group(0, app="Excel")], mains, ["app"])
+
+    assert _checks(mains[0])["focus"] == {
+        "rule": "focus", "inserted": False,
+        "reason": "This Delete removes the element itself, not data within a text field, so the element "
+                  "need not be focused for input.",
+    }
+    assert "Focus" not in [a.pattern_name for a in enriched]
+
+
+def test_a_delete_that_does_not_say_what_it_deletes_gets_no_focus() -> None:
+    mains = [_main(0, "Delete Element", "window", "window=Book1")]
+
+    add_implicit_activities([_group(0, app="Excel")], mains, ["app"])
+
+    assert _checks(mains[0])["focus"] == {
+        "rule": "focus", "inserted": False,
+        "reason": "Only a Write, or a Delete of data within a text field, needs its element focused for input.",
+    }
+
+
 # ── step 6: what the events record for each environment ──────────────────────
 
 COLUMNS = {"web": ["URL", "Element ID"], "desktop": ["Application", "Workbook"], "screen": ["X", "Y"]}
@@ -197,11 +252,11 @@ def test_every_variant_is_listed_with_its_rank_and_the_reason_it_applies_or_not(
 
 
 def test_a_pattern_without_a_variant_for_the_environment_says_so_for_every_variant() -> None:
-    delete = _by_name("Delete Element")
+    switch = _by_name("Switch Context")
 
-    assert [(v["applicable"], v["why"]) for v in delete.describe_methods("screen")] == [
-        (False, "Delete Element is not defined for the screen environment.")] * 2
-    assert {v["why"] for v in delete.describe_methods("unknown")} == {
+    assert [(v["applicable"], v["why"]) for v in switch.describe_methods("screen")] == [
+        (False, "Switch Context is not defined for the screen environment.")] * 2
+    assert {v["why"] for v in switch.describe_methods("unknown")} == {
         "The execution environment is unknown, so no variant can be chosen."}
 
 
@@ -377,6 +432,39 @@ def test_an_analysis_stored_without_the_explanations_still_builds_its_view(monke
                                       "unknown_environment": 0, "no_variant": 0}
 
 
+def test_what_a_delete_deletes_is_stored_with_the_activity_and_reaches_the_view(monkeypatch, tmp_path) -> None:
+    from src.web.progressive import _serialize_activity
+
+    assert _serialize_activity(_delete(0, "content"))["deletes"] == "content"
+    assert _serialize_activity(_main(0, "Write Element"))["deletes"] is None
+
+    monkeypatch.setattr("src.web.step_store._STORE_DIR", str(tmp_path / "progressive"))
+    log = tmp_path / "log.csv"
+    log.write_text("Event,Application,URL\npressBackspace,Edge,https://x/\n", encoding="utf-8")
+    store = StepStore("a2")
+    store.save("meta", {"aid": "a2", "history_id": "h2", "filename": "log.csv", "filepath": str(log),
+                        "event_column": "Event", "llm_column": "Event"})
+    store.save_step(1, {
+        "segments": [{"segment_index": 0, "rows": [0], "labels": ["pressBackspace"], "boundary": None}],
+        "groups": [{"group_index": 0, "events": [{"event": "pressBackspace", "row_index": 0, "attributes": {}}]}],
+        "application_attributes": ["Application"], "environment_columns": {"web": ["URL"], "desktop": [], "screen": []},
+    })
+    store.save_step(2, {"activities": [
+        {"name": "Delete text in First Name field", "confidence": 0.9, "evidence": [], "reasoning": "",
+         "source_events": [0], "activity_type": "main", "is_implicit": False, "group_index": 0,
+         "pattern_name": "Delete Element", "target": "First Name field", "target_id": None, "context": None,
+         "deletes": "content"},
+    ]})
+    store.save_step(3, {"recommendations": [
+        {"pattern": "Delete Element", "action": "Delete", "category": "Modification", "pattern_description": "d",
+         "object_type": "HTML element", "environment": "web", "deciding": {"URL": "https://x/"},
+         "environment_note": None, "methods": ["HTML DOM manipulation"], "method": "HTML DOM manipulation",
+         "method_note": None},
+    ]})
+
+    assert build_view(store)["activities"][0]["deletes"] == "content"
+
+
 # ── what the rules and the lookup show is escaped ────────────────────────────
 
 def test_workspace_escapes_every_rule_and_lookup_value_it_shows() -> None:
@@ -396,3 +484,10 @@ def test_workspace_escapes_every_rule_and_lookup_value_it_shows() -> None:
         "esc(name)} ${n}×",
     ):
         assert escaped in template
+
+
+def test_workspace_shows_what_a_delete_deletes() -> None:
+    template = (TEMPLATES / "workspace.html").read_text(encoding="utf-8")
+
+    assert "<dt>Deletes</dt>" in template
+    assert "a.deletes === 'content'" in template and "a.deletes === 'element'" in template

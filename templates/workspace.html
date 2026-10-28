@@ -226,12 +226,16 @@ function decisionHtml(a) {
         : '<span class="no-method">None fits: not covered by the pattern collection</span>';
     const evidence = (a.evidence || []).length ? `<ul class="evidence">${a.evidence.map(e => `<li>${esc(e)}</li>`).join('')}</ul>` : '<span class="muted">none given</span>';
     return `<div class="cols cols-2">
+    // Only a Delete carries this answer: whether it removes the element or the data an element holds.
+    const deletes = a.pattern === 'Delete Element'
+        ? `<dt>Deletes</dt><dd>${a.deletes === 'content' ? 'data held by an element (the element stays)' : a.deletes === 'element' ? 'the element itself' : '<span class="muted">not stored for this analysis</span>'}</dd>`
+        : '';
         <dl class="roles">
             <dt>UI activity</dt><dd>U${a.ui_activity + 1} <span class="small">${esc(events.join(', '))}</span></dd>
             <dt>Pattern chosen</dt><dd>${pattern}</dd>
             <dt>Name</dt><dd>${esc(a.name)}</dd>
             <dt>Object</dt><dd>${a.target ? esc(a.target) : '<span class="muted">none (page or application level)</span>'}</dd>
-            <dt>Context</dt><dd>${a.context ? esc(a.context) : '<span class="muted">—</span>'}</dd></dl>
+            <dt>Context</dt><dd>${a.context ? esc(a.context) : '<span class="muted">—</span>'}</dd>${deletes}</dl>
         <dl class="roles">
             <dt>Reasoning</dt><dd>${a.reasoning ? esc(a.reasoning) : '<span class="muted">none given</span>'}</dd>
             <dt>Evidence</dt><dd>${evidence}</dd>

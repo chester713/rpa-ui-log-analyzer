@@ -18,7 +18,7 @@ Control
 - screen
 
 ## Description
-The Focus pattern enables the bot to set the input focus on a target UI element, allowing it to receive subsequent input actions. Unlike Activate, Focus assigns input focus without invoking any associated behaviour.
+The Focus pattern enables the bot to set the input focus on a target UI element, such as a text field, allowing it to receive subsequent data entry or deletion. Unlike Activate, Focus assigns input focus without invoking any associated behaviour.
 
 This pattern has three variants:
 1. HTML element → HTML DOM manipulation → Web environment
@@ -26,7 +26,7 @@ This pattern has three variants:
 3. Visual element → Hardware simulation → Web/Desktop/Screen environment
 
 ## Applicability
-- Bot requires focusing on designated element to enable subsequent data entry
+- Bot requires focusing on designated element to enable subsequent data entry or deletion
 - Element is not automatically focused and requires dedicated focus action
 
 ## Operation
