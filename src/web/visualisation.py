@@ -1,13 +1,13 @@
-"""The layered map of an analysis, drawn by the ``/visualisation`` page.
+"""The sequence graph of an analysis, drawn by the ``/visualisation`` page.
 
-The map is built from the rows of the exported analysis (Export CSV on the results page): one row for
+The graph is built from the rows of the exported analysis (Export CSV on the results page): one row for
 every log event, and one for every implicit activity, inserted before the UI activity it precedes. The
 same rows come from two sources. The stored analysis (``rows_from_view``) knows which attributes the
-LLM identified as the application and the data context, and the rule-based segments. An exported CSV
-file (``rows_from_export``) does not, so the context columns are taken from their names.
-``build_model`` turns the rows into the layers the page draws, all aligned on one sequence: the
-context, the context switches, the implicit activities, the UI activities, the log events, the
-execution environment and the recommended methods.
+LLM identified as the application and the data context. An exported CSV file (``rows_from_export``)
+does not, so the context columns are taken from their names.
+``build_model`` turns the rows into the UI activities in the order of the log, one box each, with
+everything the five layers of the page colour them by: where each came from (the log or a rule), its
+pattern, its context, its execution environment and its recommended methods.
 """
 
 import csv
@@ -18,7 +18,7 @@ from typing import Any, Dict, List, Optional
 from urllib.parse import urlparse
 
 from src.models.event import recorded_value
-from src.models.pattern import method_level
+from src.models.pattern import level_name, method_family, method_level, why_method_applies
 
 # What the export adds after the log's own columns, in order (see Export CSV on the results page).
 EXPORT_COLUMNS = [
@@ -125,10 +125,6 @@ def rows_from_view(view: dict) -> dict:
         # An element identifier says which element, not which page or document.
         "data": [c for c in (roles.get("context") or []) if c not in element],
         "rows": rows,
-        "segments": [
-            {"label": f"S{i + 1}", "rows": s["rows"], "boundary": s.get("boundary")}
-            for i, s in enumerate(view.get("segments") or [])
-        ],
     }
 
 
@@ -178,7 +174,7 @@ def rows_from_export(text: str) -> dict:
             "values": {c: cell.get(c, "") for c in columns} if number else {},
             "activity": activity,
         })
-    return {"columns": columns, "event_column": None, "software": None, "data": None, "rows": rows, "segments": []}
+    return {"columns": columns, "event_column": None, "software": None, "data": None, "rows": rows}
 
 
 # ── the layers ───────────────────────────────────────────────────────────────
@@ -192,19 +188,6 @@ def _roles_from_names(columns: List[str]) -> Dict[str, Any]:
         "software": [lowered[n] for n in _SOFTWARE_COLUMNS if n in lowered],
         "data": [lowered[n] for n in _DATA_COLUMNS if n in lowered],
     }
-
-
-def _runs(keys: list) -> List[Dict[str, Any]]:
-    """Maximal runs of equal, non-empty keys, as {"key", "from", "to"} over the slots."""
-    runs: List[Dict[str, Any]] = []
-    for i, key in enumerate(keys):
-        if key is None:
-            continue
-        if runs and runs[-1]["key"] == key and runs[-1]["to"] == i - 1:
-            runs[-1]["to"] = i
-        else:
-            runs.append({"key": key, "from": i, "to": i})
-    return runs
 
 
 def _context_per_slot(rows: list, software_columns: list, data_columns: list) -> tuple:
@@ -249,11 +232,53 @@ def _context_per_slot(rows: list, software_columns: list, data_columns: list) ->
     return software, data
 
 
-def build_model(source: dict, title: str = "", aid: Optional[str] = None) -> dict:
-    """The layers of the map, from the rows of an export (see ``rows_from_view`` and ``rows_from_export``).
+def _methods(methods: list, environment: str) -> List[Dict[str, Any]]:
+    """The prioritised methods of an activity, each with its family, level and why it applies."""
+    return [
+        {
+            "name": m["name"], "family": method_family(m["name"]), "level": m["level"],
+            "level_name": level_name(m["level"]) if m["level"] is not None else None,
+            "why": why_method_applies(m["level"], environment) if m["level"] is not None else None,
+        }
+        for m in methods
+    ]
 
-    Every row is one slot of the sequence. Returns the slots, the activities (with the slots of their
-    events), the context bands, the context switches, and the figures the page shows.
+
+def _selected_index(methods: list, selected: Optional[str]) -> Optional[int]:
+    """The place of the selected method in the list: the first when none is named, None without methods."""
+    if not methods:
+        return None
+    return next((i for i, m in enumerate(methods) if m["name"] == selected), 0)
+
+
+def _graph_activity(a: dict, categories: Dict[str, str], software: Optional[str], data: Optional[str],
+                    software_before: Optional[str]) -> Dict[str, Any]:
+    """One box of the graph. Its events are added by ``build_model``."""
+    methods = _methods(a["methods"], a["environment"])
+    activity = {
+        "no": a["no"], "index": a.get("index"), "name": a["name"],
+        "origin": "recorded" if a["type"] == "recorded" else (a["rule"] or "implicit"),
+        "pattern": a["pattern"], "category": categories.get((a["pattern"] or "").lower()),
+        "action": a["action"], "object_type": a["object_type"], "target": a["target"],
+        "environment": a["environment"], "software": software, "data": data,
+        "methods": methods, "selected": _selected_index(methods, a["selected"]), "note": a["note"],
+        "events": [],
+    }
+    for key in ("confidence", "reasoning", "evidence"):  # what the LLM said: a stored analysis only
+        if key in a:
+            activity[key] = a[key]
+    if activity["origin"] == "switch":
+        match = _SWITCH_NAME.fullmatch(a["name"])
+        activity["switch"] = {"from": match.group(1) if match else software_before,
+                              "to": match.group(2) if match else software}
+    return activity
+
+
+def build_model(source: dict, title: str = "", aid: Optional[str] = None) -> dict:
+    """The sequence graph, from the rows of an export (see ``rows_from_view`` and ``rows_from_export``).
+
+    Returns the UI activities in the order of the log, one entry each, the applications in order of
+    appearance, and the figures the page shows. An activity keeps the log events it was made of.
     """
     rows = source["rows"]
     named = _roles_from_names(source["columns"])
@@ -264,75 +289,42 @@ def build_model(source: dict, title: str = "", aid: Optional[str] = None) -> dic
 
     software, data = _context_per_slot(rows, software_columns, data_columns)
 
-    slots: List[Dict[str, Any]] = []
     activities: Dict[Any, Dict[str, Any]] = {}
+    events = without_activity = 0
+    software_before: Optional[str] = None
     for i, row in enumerate(rows):
         a = row["activity"]
         is_event = row["row"] is not None or bool(row["values"])
-        if is_event:
-            name = recorded_value(row["values"].get(event_column)) or ""
-            attrs = {c: _clip(v) for c, v in row["values"].items() if recorded_value(v) is not None}
-        else:
-            name, attrs = (a or {}).get("name", ""), {}
-        slots.append({
-            "kind": "event" if is_event else "implicit", "row": row["row"], "name": name,
-            "activity": a["no"] if a else None, "environment": (a or {}).get("environment") or "unknown",
-            "software": software[i], "data": data[i], "attrs": attrs,
-        })
+        if a is not None and a["no"] not in activities:
+            activities[a["no"]] = _graph_activity(a, categories, software[i], data[i], software_before)
+        if not is_event:
+            continue
+        events += 1
+        software_before = software[i] if software[i] is not None else software_before
         if a is None:
+            without_activity += 1
             continue
-        if a["no"] not in activities:
-            pattern = a["pattern"]
-            activities[a["no"]] = {
-                **a, "category": categories.get((pattern or "").lower()), "covered": pattern is not None,
-                "from": i, "to": i, "events": [], "software": software[i], "data": data[i],
-            }
-        activity = activities[a["no"]]
-        activity["to"] = i
-        if is_event:
-            activity["events"].append(i)
-
-    switches = []
-    for no, a in activities.items():
-        if a["type"] != "implicit" or a["rule"] != "switch":
-            continue
-        slot = a["from"]
-        match = _SWITCH_NAME.fullmatch(a["name"])
-        before = next((software[j] for j in range(slot - 1, -1, -1) if slots[j]["kind"] == "event"), None)
-        switches.append({
-            "activity": no, "slot": slot,
-            "from": match.group(1) if match else before, "to": match.group(2) if match else a["software"],
+        activities[a["no"]]["events"].append({
+            "row": row["row"],
+            "name": recorded_value(row["values"].get(event_column)) or "",
+            "attrs": {c: _clip(v) for c, v in row["values"].items() if recorded_value(v) is not None},
         })
 
-    software_bands = [{"name": r["key"], "from": r["from"], "to": r["to"]} for r in _runs(software)]
-    names = [b["name"] for b in software_bands]
-    data_bands = [
-        {"name": r["key"][1], "from": r["from"], "to": r["to"], "software": r["key"][0]}
-        for r in _runs([(s, d) if d is not None else None for s, d in zip(software, data)])
-    ]
-
-    segments = []
-    slot_of_row = {s["row"]: i for i, s in enumerate(slots) if s["row"] is not None}
-    for segment in source.get("segments") or []:
-        covered = [slot_of_row[r] for r in segment["rows"] if r in slot_of_row]
-        if covered:
-            segments.append({"label": segment["label"], "from": min(covered), "to": max(covered),
-                             "boundary": segment.get("boundary")})
-
-    recorded = [a for a in activities.values() if a["type"] == "recorded"]
-    implicit = [a for a in activities.values() if a["type"] == "implicit"]
+    listed = list(activities.values())
+    recorded = [a for a in listed if a["origin"] == "recorded"]
+    implicit = [a for a in listed if a["origin"] != "recorded"]
+    names = list(dict.fromkeys(a["software"] for a in listed if a["software"]))
     return {
         "title": title, "aid": aid, "source": "analysis" if aid else "export",
         "roles": {"event_column": event_column, "software": software_columns, "data": data_columns,
                   "from_names": source.get("software") is None},
-        "slots": slots, "activities": list(activities.values()),
-        "bands": {"software": software_bands, "data": data_bands}, "software_names": list(dict.fromkeys(names)),
-        "switches": switches, "segments": segments,
+        "activities": listed, "software_names": names,
         "stats": {
-            "events": sum(1 for s in slots if s["kind"] == "event"),
+            "events": events, "events_without_activity": without_activity,
             "activities": len(recorded),
-            "implicit": {rule: sum(1 for a in implicit if a["rule"] == rule) for rule in ("find", "focus", "switch")},
-            "not_covered": sum(1 for a in recorded if not a["covered"]),
-            "software_contexts": len(set(names)),
+            "implicit": {rule: sum(1 for a in implicit if a["origin"] == rule) for rule in ("find", "focus", "switch")},
+            "not_covered": sum(1 for a in recorded if not a["pattern"]),
+            "with_method": sum(1 for a in listed if a["methods"]),
+            "software_contexts": len(names),
         },
     }

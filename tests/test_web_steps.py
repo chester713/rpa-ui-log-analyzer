@@ -301,26 +301,33 @@ def _export_csv(view) -> str:
     return out.getvalue()
 
 
-def test_the_layered_map_of_a_stored_analysis_equals_the_map_of_its_export(analysis) -> None:
+def test_the_graph_of_a_stored_analysis_equals_the_graph_of_its_export(analysis) -> None:
     client, history_id, aid = analysis
     page = client.get(f"/visualisation/{history_id}").get_data(as_text=True)
     stored = json.loads(re.search(r"window\.__MODEL__ = (\{.*?\});</script>", page, re.S).group(1))
     view = _view(client.get(f"/results/{history_id}").get_data(as_text=True))
     exported = build_model(rows_from_export(_export_csv(view)), title="export.csv")
 
-    # What the map shows of the Fill Form log: 120 events and the 119 implicit activities between them.
-    assert stored["stats"] == {"events": 120, "activities": 90, "implicit": {"find": 60, "focus": 0, "switch": 59},
-                               "not_covered": 0, "software_contexts": 2}
-    assert len(stored["slots"]) == 239 and len(stored["bands"]["software"]) == 60 and len(stored["switches"]) == 59
+    # What the graph shows of the Fill Form log: 120 events, 90 UI activities and the 119 implicit activities between them.
+    assert stored["stats"] == {"events": 120, "events_without_activity": 0, "activities": 90,
+                               "implicit": {"find": 60, "focus": 0, "switch": 59}, "not_covered": 0,
+                               "with_method": 209, "software_contexts": 2}
+    assert len(stored["activities"]) == 209
     assert (stored["source"], stored["aid"], stored["roles"]["software"]) == ("analysis", aid, ["Application"])
-    assert len(stored["segments"]) == 60 and stored["segments"][1]["boundary"] == "application changed: Microsoft Excel → Edge"
 
-    # The same sequence, activities, contexts and switches from the file alone; only the context columns differ.
+    # The same boxes in the same order, with the same events, contexts and methods, from the file alone;
+    # only the context columns differ.
     def shape(model):
-        return [(a["no"], a["type"], a["rule"], a["name"], a["from"], a["to"], a["events"], a["environment"],
-                 a["pattern"], a["selected"], [m["name"] for m in a["methods"]]) for a in model["activities"]]
+        return [(a["no"], a["origin"], a["name"], [(e["row"], e["name"]) for e in a["events"]], a["environment"],
+                 a["pattern"], a["selected"], [(m["name"], m["why"]) for m in a["methods"]], a["software"], a["data"],
+                 a.get("switch")) for a in model["activities"]]
 
     assert shape(stored) == shape(exported)
-    assert stored["bands"] == exported["bands"] and stored["switches"] == exported["switches"]
-    assert [s["name"] for s in stored["slots"]] == [s["name"] for s in exported["slots"]]
-    assert (stored["roles"]["from_names"], exported["roles"]["from_names"], exported["segments"]) == (False, True, [])
+    assert stored["software_names"] == exported["software_names"]
+    assert (stored["roles"]["from_names"], exported["roles"]["from_names"]) == (False, True)
+
+    # What the LLM said is known only for a stored analysis.
+    recorded = next(a for a in stored["activities"] if a["origin"] == "recorded")
+    assert recorded["confidence"] == 0.9 and recorded["reasoning"] and recorded["index"] is not None
+    assert "confidence" not in next(a for a in exported["activities"] if a["origin"] == "recorded")
+

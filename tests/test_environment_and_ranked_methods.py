@@ -16,7 +16,9 @@ import pytest
 from src.matching import PATTERNS
 from src.matching.pattern_matcher import determine_environment, get_context_from_events
 from src.models.event import Event
-from src.models.pattern import MAX_RECOMMENDED_METHODS, Pattern
+from src.models.pattern import (
+    MAX_RECOMMENDED_METHODS, Pattern, level_name, method_family, method_level, why_method_applies,
+)
 from src.parser.csv_loader import CSVLoader
 from src.pipeline.data_pipeline import DataPipeline
 
@@ -50,6 +52,44 @@ def test_delete_element_lists_every_level_including_hardware_simulation() -> Non
         "UI Automation manipulation", "Hardware simulation",
     ]
     assert delete.get_methods_for_context("screen") == ["Hardware simulation"]
+
+
+FAMILIES = {"DOM parsing", "DOM manipulation", "UIA parsing", "UIA manipulation", "Visual recognition",
+            "Hardware simulation"}
+
+
+@pytest.mark.parametrize("name, family", [
+    ("HTML DOM manipulation", "DOM manipulation"), ("DOM manipulation", "DOM manipulation"),
+    ("DOM parsing", "DOM parsing"), ("HTML DOM parsing", "DOM parsing"),
+    ("UI Automation manipulation", "UIA manipulation"), ("UI Automation tree manipulation", "UIA manipulation"),
+    ("UIA Tree Parsing", "UIA parsing"), ("UI Automation tree parsing", "UIA parsing"),
+    ("Visual Recognition", "Visual recognition"), ("Visual recognition", "Visual recognition"),
+    ("Hardware simulation", "Hardware simulation"), ("Telepathy", "Telepathy"),
+])
+def test_a_method_family_merges_the_wording_variants_of_the_pattern_files(name, family) -> None:
+    assert method_family(name) == family
+
+
+def test_every_method_the_pattern_files_define_belongs_to_a_known_family() -> None:
+    for pattern in PATTERNS:
+        for environment in ("web", "desktop", "screen"):
+            for name in pattern.get_methods_for_context(environment):
+                assert method_family(name) in FAMILIES, (pattern.name, name)
+                assert method_level(name) is not None, (pattern.name, name)
+
+
+def test_the_reason_a_method_applies_is_the_one_each_pattern_gives() -> None:
+    for pattern in PATTERNS:
+        for environment in ("web", "desktop", "screen"):
+            levels = [method_level(m) for m in pattern.get_methods_for_context(environment)]
+            given = [v["why"] for v in pattern.describe_methods(environment) if v["applicable"]]
+
+            assert [why_method_applies(level, environment) for level in levels] == given, (pattern.name, environment)
+
+
+def test_the_levels_have_names_and_an_unknown_environment_has_no_reason() -> None:
+    assert [level_name(level) for level in (0, 1, 2)] == ["content-level", "accessibility-level", "visual and input level"]
+    assert why_method_applies(0, "unknown") is None
 
 
 def test_extraction_patterns_end_with_visual_recognition() -> None:

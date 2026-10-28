@@ -43,6 +43,41 @@ def method_level(method_name: str) -> Optional[int]:
     return None
 
 
+def level_name(level: int) -> str:
+    """The name of a method level: content-level, accessibility-level or visual and input level."""
+    return _LEVEL_NAMES[level]
+
+
+def method_family(method_name: str) -> str:
+    """The family of a method, which merges the wording variants of the pattern files.
+
+    "HTML DOM manipulation" and "DOM manipulation" are one family, as are "UIA Tree Parsing" and
+    "UI Automation tree parsing": DOM parsing, DOM manipulation, UIA parsing, UIA manipulation,
+    Visual recognition and Hardware simulation. A method of no known family keeps its name.
+    """
+    level = method_level(method_name)
+    parsing = "pars" in method_name.lower()
+    if level == 0:
+        return "DOM parsing" if parsing else "DOM manipulation"
+    if level == 1:
+        return "UIA parsing" if parsing else "UIA manipulation"
+    if "hardware" in method_name.lower():
+        return "Hardware simulation"
+    if "visual" in method_name.lower():
+        return "Visual recognition"
+    return method_name
+
+
+def why_method_applies(level: int, environment: str) -> Optional[str]:
+    """Why a method of the given level is among the methods of ``environment``, or None when the
+    environment is not web, desktop or screen."""
+    if environment not in _ENVIRONMENT_RANK:
+        return None
+    if level == _ENVIRONMENT_RANK[environment]:
+        return f"A {environment} environment has {_LEVEL_NAMES[level]} methods of its own."
+    return f"Applicable by cumulation: a {environment} object can also be acted on by {_LEVEL_NAMES[level]} methods."
+
+
 def object_type_for(pattern: Optional["Pattern"], environment: str) -> Optional[str]:
     """The object type of an activity: HTML, UI or visual element by environment.
 
@@ -220,9 +255,7 @@ class Pattern:
     @staticmethod
     def _why_applicable(level: int, context: str) -> str:
         """Why a variant of the given level is among the methods of ``context``."""
-        if level == _ENVIRONMENT_RANK[context]:
-            return f"A {context} environment has {_LEVEL_NAMES[level]} methods of its own."
-        return f"Applicable by cumulation: a {context} object can also be acted on by {_LEVEL_NAMES[level]} methods."
+        return why_method_applies(level, context)
 
     def _why_not_applicable(self, level: int, context: str) -> str:
         """Why a variant of the given level is not among the methods of ``context``."""

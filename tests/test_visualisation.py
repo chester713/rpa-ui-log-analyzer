@@ -1,14 +1,17 @@
-"""The layered map: the rows of an export become layers aligned on one sequence.
+"""The sequence graph: the rows of an export become the UI activities, one box each, in the order of the log.
 
-Every row of the exported analysis is one slot: a log event, or an implicit activity inserted before
-the UI activity it precedes. The layers are the context, the context switches, the implicit
-activities, the UI activities, the log events, the execution environment and the recommended
-methods. A stored analysis and its exported CSV give the same map; only the context columns differ,
-because a file does not say which attributes the LLM identified.
+Every row of the exported analysis is a log event, or an implicit activity inserted before the UI
+activity it precedes. The graph keeps each activity once, with what its five layers colour it by: where
+it came from (the log or a rule), its pattern, its context, its execution environment and its
+recommended methods. A stored analysis and its exported CSV give the same graph; only the context
+columns differ, because a file does not say which attributes the LLM identified.
 """
 
 import csv
 import io
+import re
+import shutil
+import subprocess
 from pathlib import Path
 
 import pytest
@@ -78,6 +81,11 @@ def model():
     return build_model(rows_from_export(SAMPLE), title="sample.csv")
 
 
+@pytest.fixture()
+def by_no(model):
+    return {a["no"]: a for a in model["activities"]}
+
+
 # ── reading an export ────────────────────────────────────────────────────────
 
 def test_an_export_is_read_row_by_row_with_its_multi_line_values() -> None:
@@ -114,71 +122,147 @@ def test_a_selected_method_without_a_list_is_the_only_method() -> None:
     assert row["activity"]["selected"] == "Hardware simulation"
 
 
-# ── the layers ───────────────────────────────────────────────────────────────
+# ── the activities ───────────────────────────────────────────────────────────
 
-def test_every_row_is_a_slot(model) -> None:
-    assert [s["kind"] for s in model["slots"]] == [
-        "implicit", "event", "implicit", "implicit", "event", "event", "event", "implicit", "event", "event"]
-    assert [s["name"] for s in model["slots"]][1:7] == [
-        "getCell", "Switch context from Microsoft Excel to Edge", "Find text field on rpachallenge.com in Edge",
-        "clickTextField", "paste", "changeField"]
-    assert model["slots"][0]["name"] == FIND_CELL
+def test_the_activities_come_in_the_order_of_the_log_one_box_each(model) -> None:
+    assert [a["no"] for a in model["activities"]] == [1, 2, 3, 4, 5, 6, 7, 8]
+    assert [a["origin"] for a in model["activities"]] == [
+        "find", "recorded", "switch", "find", "recorded", "recorded", "switch", "recorded"]
+    assert model["activities"][0]["name"] == FIND_CELL
     assert model["roles"] == {"event_column": "concept:name", "software": ["application"],
                               "data": ["browser_url", "workbook", "current_worksheet"], "from_names": True}
     assert (model["source"], model["aid"], model["title"]) == ("export", None, "sample.csv")
 
 
-def test_the_context_has_bands_and_every_switch_sits_where_the_application_changes(model) -> None:
-    assert [(b["name"], b["from"], b["to"]) for b in model["bands"]["software"]] == [
-        ("Microsoft Excel", 0, 1), ("Edge", 2, 6), ("Microsoft Excel", 7, 9)]
-    assert [(b["name"], b["software"], b["from"], b["to"]) for b in model["bands"]["data"]] == [
-        ("challenge.xlsx · Sheet1", "Microsoft Excel", 0, 1), ("rpachallenge.com", "Edge", 2, 6),
-        ("challenge.xlsx · Sheet1", "Microsoft Excel", 7, 9)]
-    assert [(s["slot"], s["from"], s["to"]) for s in model["switches"]] == [
-        (2, "Microsoft Excel", "Edge"), (7, "Edge", "Microsoft Excel")]
+def test_identical_names_stay_separate_boxes() -> None:
+    again = _activity(2, "Read cell A2 in Sheet1 of challenge.xlsx in Excel", "Read Element", "Read", "UI element",
+                      "cell A2", "desktop", "UI Automation tree parsing", "UI Automation tree parsing")
+    text = _export(_event(0, "Excel", "getCell", READ), _event(1, "Excel", "getCell", [3, *again[1:]]))
+
+    assert [a["no"] for a in build_model(rows_from_export(text))["activities"]] == [2, 3]
+
+
+def test_an_activity_knows_its_events_pattern_category_and_environment(by_no) -> None:
+    read = by_no[2]
+    assert (read["origin"], read["pattern"], read["category"], read["environment"]) == (
+        "recorded", "Read Element", "Extraction", "desktop")
+    assert [(e["row"], e["name"]) for e in read["events"]] == [(0, "getCell")]
+    write = by_no[6]  # two events make one UI activity
+    assert [(e["row"], e["name"]) for e in write["events"]] == [(2, "paste"), (3, "changeField")]
+    assert (write["category"], write["object_type"], write["target"]) == ("Modification", "HTML element", "text field")
+    switch = by_no[3]
+    assert (switch["origin"], switch["category"], switch["events"]) == ("switch", "Control", [])
+
+
+def test_an_event_keeps_the_values_it_recorded_whole_and_leaves_out_the_empty_ones(by_no) -> None:
+    paste, change = by_no[6]["events"]
+
+    assert paste["attrs"]["clipboard_content"] == "John\n"
+    assert "workbook" not in paste["attrs"]
+    assert change["attrs"]["browser_url"] == "https://rpachallenge.com/"
+
+
+def test_an_activity_has_the_application_and_data_context_of_its_events(by_no) -> None:
+    assert [(by_no[n]["software"], by_no[n]["data"]) for n in (1, 2, 3, 4, 5, 6, 7, 8)] == [
+        ("Microsoft Excel", "challenge.xlsx · Sheet1"), ("Microsoft Excel", "challenge.xlsx · Sheet1"),
+        ("Edge", "rpachallenge.com"), ("Edge", "rpachallenge.com"), ("Edge", "rpachallenge.com"),
+        ("Edge", "rpachallenge.com"), ("Microsoft Excel", "challenge.xlsx · Sheet1"),
+        ("Microsoft Excel", "challenge.xlsx · Sheet1")]
+
+
+def test_the_applications_are_listed_in_the_order_they_appear(model) -> None:
     assert model["software_names"] == ["Microsoft Excel", "Edge"]
 
 
-def test_an_activity_knows_its_slots_events_category_and_methods(model) -> None:
-    by_no = {a["no"]: a for a in model["activities"]}
-
-    assert sorted(by_no) == [1, 2, 3, 4, 5, 6, 7, 8]
-    read = by_no[2]
-    assert (read["type"], read["from"], read["to"], read["events"]) == ("recorded", 1, 1, [1])
-    assert (read["category"], read["environment"], read["covered"]) == ("Extraction", "desktop", True)
-    assert read["selected"] == "UI Automation tree parsing"
-    assert [(m["name"], m["level"]) for m in read["methods"]] == [("UI Automation tree parsing", 1), ("Visual recognition", 2)]
-    write = by_no[6]  # two events make one UI activity
-    assert (write["from"], write["to"], write["events"], write["category"]) == (5, 6, [5, 6], "Modification")
-    assert [m["level"] for m in write["methods"]] == [0, 1, 2]
-    switch = by_no[3]
-    assert (switch["type"], switch["rule"], switch["category"], switch["events"]) == ("implicit", "switch", "Control", [])
+def test_a_switch_says_which_applications_it_switches_between(by_no) -> None:
+    assert by_no[3]["switch"] == {"from": "Microsoft Excel", "to": "Edge"}
+    assert by_no[7]["switch"] == {"from": "Edge", "to": "Microsoft Excel"}
+    assert "switch" not in by_no[2]
 
 
-def test_an_activity_no_pattern_covers_has_no_methods_and_says_why(model) -> None:
-    close = {a["no"]: a for a in model["activities"]}[8]
+def test_a_switch_named_in_other_words_takes_its_applications_from_the_events() -> None:
+    text = _export(
+        _event(0, "Excel", "getCell", READ),
+        _implicit(3, "switch", "Go to the other window", "Switch Context", "Switch", "Context", "", "desktop",
+                  "UI Automation manipulation", "UI Automation manipulation"),
+        _event(1, "Edge", "paste", WRITE),
+    )
 
-    assert (close["covered"], close["pattern"], close["category"], close["methods"], close["selected"]) == (
-        False, None, None, [], None)
+    switch = build_model(rows_from_export(text))["activities"][1]
+
+    assert switch["switch"] == {"from": "Excel", "to": "Edge"}
+
+
+def test_an_activity_no_pattern_covers_has_no_methods_and_says_why(by_no) -> None:
+    close = by_no[8]
+
+    assert (close["pattern"], close["category"], close["methods"], close["selected"]) == (None, None, [], None)
     assert close["note"] == NOT_COVERED
 
 
-def test_an_event_without_an_activity_stays_on_the_map(model) -> None:
-    orphan = model["slots"][9]
-
-    assert (orphan["name"], orphan["activity"], orphan["environment"]) == ("afterCalculate", None, "unknown")
-    assert orphan["software"] == "Microsoft Excel"
-
-
-def test_a_slot_keeps_the_values_it_recorded_whole_and_leaves_out_the_empty_ones(model) -> None:
-    assert model["slots"][5]["attrs"]["clipboard_content"] == "John\n"
-    assert "workbook" not in model["slots"][4]["attrs"]
-    assert model["slots"][4]["attrs"]["browser_url"] == "https://rpachallenge.com/"
+def test_the_figures_count_each_kind_of_activity(model) -> None:
+    assert model["stats"] == {
+        "events": 6, "events_without_activity": 1, "activities": 4,
+        "implicit": {"find": 2, "focus": 0, "switch": 2}, "not_covered": 1, "with_method": 7,
+        "software_contexts": 2,
+    }
 
 
-def test_the_figures_count_each_kind_of_step(model) -> None:
-    assert model["stats"] == {"events": 6, "activities": 4, "implicit": {"find": 2, "focus": 0, "switch": 2},
-                              "not_covered": 1, "software_contexts": 2}
+# ── the methods ──────────────────────────────────────────────────────────────
+
+def test_a_method_has_its_family_level_and_the_reason_it_applies(by_no) -> None:
+    assert [(m["name"], m["family"], m["level"], m["level_name"]) for m in by_no[6]["methods"]] == [
+        ("DOM manipulation", "DOM manipulation", 0, "content-level"),
+        ("UI Automation manipulation", "UIA manipulation", 1, "accessibility-level"),
+        ("Hardware simulation", "Hardware simulation", 2, "visual and input level"),
+    ]
+    assert [m["why"] for m in by_no[6]["methods"]] == [
+        "A web environment has content-level methods of its own.",
+        "Applicable by cumulation: a web object can also be acted on by accessibility-level methods.",
+        "Applicable by cumulation: a web object can also be acted on by visual and input level methods.",
+    ]
+    assert by_no[2]["methods"][0]["why"] == "A desktop environment has accessibility-level methods of its own."
+
+
+def test_the_wording_of_a_pattern_file_is_kept_next_to_its_family(by_no) -> None:
+    assert [(m["name"], m["family"]) for m in by_no[1]["methods"]] == [
+        ("UIA Tree Parsing", "UIA parsing"), ("Visual Recognition", "Visual recognition")]
+
+
+def test_the_selected_method_is_found_by_name_and_is_the_first_when_none_is_named(by_no) -> None:
+    assert [by_no[n]["selected"] for n in (1, 2, 6, 8)] == [0, 0, 0, None]
+    chosen = _activity(1, "Open the file", "Open", "Open", "UI element", "", "desktop", "Hardware simulation",
+                       "UI Automation manipulation > Hardware simulation")
+    unnamed = _activity(2, "Open the file", "Open", "Open", "UI element", "", "desktop", "A method not in the list",
+                        "UI Automation manipulation > Hardware simulation")
+    text = _export(_event(0, "Excel", "open", chosen), _event(1, "Excel", "open", unnamed))
+
+    first, second = build_model(rows_from_export(text))["activities"]
+
+    assert (first["selected"], second["selected"]) == (1, 0)
+
+
+def test_a_method_of_no_known_family_has_a_name_and_no_level() -> None:
+    odd = _activity(1, "Open the file", "Open", "Open", "UI element", "", "desktop", "Telepathy", "Telepathy")
+
+    [method] = build_model(rows_from_export(_export(_event(0, "Excel", "open", odd))))["activities"][0]["methods"]
+
+    assert (method["name"], method["family"], method["level"], method["level_name"], method["why"]) == (
+        "Telepathy", "Telepathy", None, None, None)
+
+
+def test_the_reasons_agree_with_the_ones_each_pattern_gives() -> None:
+    from src.matching import PATTERNS
+
+    for pattern in PATTERNS:
+        for environment in ("web", "desktop", "screen"):
+            names = pattern.get_methods_for_context(environment)
+            text = _export(_event(0, "Excel", "x", _activity(1, "A", pattern.name, "", "", "", environment,
+                                                             names[0] if names else "", " > ".join(names))))
+            [activity] = build_model(rows_from_export(text))["activities"]
+            given = [v["why"] for v in pattern.describe_methods(environment) if v["applicable"]]
+
+            assert [m["why"] for m in activity["methods"]] == given, (pattern.name, environment)
 
 
 # ── the context columns ──────────────────────────────────────────────────────
@@ -245,13 +329,13 @@ def test_the_server_turns_an_export_into_a_model() -> None:
 
     assert response.status_code == 200
     data = response.get_json()
-    assert len(data["slots"]) == 10 and data["title"] == "sample_export.csv"
+    assert len(data["activities"]) == 8 and data["title"] == "sample_export.csv"
 
 
 def test_a_file_saved_with_a_byte_order_mark_is_read() -> None:
     response = _post({"file": (io.BytesIO(b"\xef\xbb\xbf" + SAMPLE.encode("utf-8")), "x.csv")})
 
-    assert response.status_code == 200 and len(response.get_json()["slots"]) == 10
+    assert response.status_code == 200 and len(response.get_json()["activities"]) == 8
 
 
 @pytest.mark.parametrize("data, message", [
@@ -287,14 +371,37 @@ def test_an_analysis_that_is_not_normalised_yet_points_to_step_3(monkeypatch, tm
 
 # ── the page ─────────────────────────────────────────────────────────────────
 
-def test_the_page_puts_log_text_on_the_map_as_text_only() -> None:
-    template = (TEMPLATES / "visualisation.html").read_text(encoding="utf-8")
+def _page() -> str:
+    return (TEMPLATES / "visualisation.html").read_text(encoding="utf-8")
+
+
+def test_the_page_puts_log_text_on_the_graph_as_text_only() -> None:
+    template = _page()
 
     assert "innerHTML" not in template and "insertAdjacentHTML" not in template
     assert "{% raw %}" in template  # the script is not a template
     assert "infer" not in template.lower()
 
 
-def test_the_other_pages_link_to_the_map() -> None:
+def test_the_page_has_the_five_layers_and_the_downloads() -> None:
+    template = _page()
+
+    for label in ("Origin", "Pattern", "Context", "Environment", "Method"):
+        assert f"label: '{label}'" in template
+    assert 'id="svgBtn"' in template and 'id="pngBtn"' in template
+
+
+@pytest.mark.skipif(shutil.which("node") is None, reason="node is not installed")
+def test_the_script_of_the_page_is_valid_javascript(tmp_path) -> None:
+    script = re.search(r"\{% raw %\}(.*?)\{% endraw %\}", _page(), re.S).group(1)
+    path = tmp_path / "page.js"
+    path.write_text(script, encoding="utf-8")
+
+    result = subprocess.run(["node", "--check", str(path)], capture_output=True, text=True)
+
+    assert result.returncode == 0, result.stderr
+
+
+def test_the_other_pages_link_to_the_graph() -> None:
     for name in ("results.html", "workspace.html", "history.html"):
         assert "/visualisation/{{ entry.id }}" in (TEMPLATES / name).read_text(encoding="utf-8"), name
